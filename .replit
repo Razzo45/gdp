@@ -1,0 +1,40 @@
+entrypoint = "src/app/page.tsx"
+modules = ["nodejs-22"]
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+# Autoscale is fine for the web tier; the embedded worker runs in the same
+# process (RUN_WORKER=1). For a dedicated worker use a Reserved VM and run
+# `npm run worker` with RUN_WORKER=0 on the web deployment.
+deploymentTarget = "autoscale"
+build = ["sh", "-c", "npm ci && npm run build && npm run db:migrate"]
+run = ["sh", "-c", "npm run start"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[env]
+PORT = "3000"
+NEXT_TELEMETRY_DISABLED = "1"
+
+[workflows]
+runButton = "Dev"
+
+[[workflows.workflow]]
+name = "Dev"
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[[workflows.workflow]]
+name = "Tests"
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm test"

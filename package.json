@@ -1,0 +1,48 @@
+{
+  "name": "gdp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Golden Data Program: multi-user rubric, golden autorating, human AI eval and stability platform",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port ${PORT:-3000}",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
+    "db:grant-admin": "tsx --conditions=react-server scripts/grant-admin.ts",
+    "db:seed": "tsx --conditions=react-server scripts/seed.ts",
+    "mock:catalog": "tsx scripts/mock-catalog.ts",
+    "worker": "tsx --conditions=react-server scripts/worker.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.28.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
+    "drizzle-orm": "^0.45.4",
+    "jose": "^6.2.12",
+    "jszip": "^3.10.2",
+    "next": "^16.4.0",
+    "postgres": "^3.4.9",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.11",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.3"
+  }
+}
