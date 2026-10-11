@@ -1,4 +1,4 @@
-import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
+import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
 import { pct } from './format';
 import type { SubmissionView } from '@/lib/services/view';
 
@@ -6,7 +6,17 @@ import type { SubmissionView } from '@/lib/services/view';
  * Compact Golden / AI Score / Stability rail — the same three numbers the
  * legacy header showed, with the same pass rules.
  */
-export function ScoreStrip({ view, golden: showGolden = true, human = true, stability: showStability = true }: { view: SubmissionView; golden?: boolean; human?: boolean; stability?: boolean }) {
+export function ScoreStrip({
+  view,
+  golden: showGolden = true,
+  stability: showStability = true,
+  compact = false,
+}: {
+  view: SubmissionView;
+  golden?: boolean;
+  stability?: boolean;
+  compact?: boolean;
+}) {
   const golden = view.golden?.gate;
   const cal = view.handoff.calibrationPercent;
   const stability = view.stability?.gate;
@@ -21,7 +31,7 @@ export function ScoreStrip({ view, golden: showGolden = true, human = true, stab
         : golden?.ok ? 'Must be 100%' : golden?.unanswered ? `${golden.unanswered} statements left to review` : 'Must be 100%',
       tone: golden?.ok ? 'ok' : golden?.percent === null ? 'muted' : 'fix',
     },
-    human && {
+    {
       label: 'AI Score',
       value: pct(cal),
       rule: `Must be ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}%`,
@@ -31,10 +41,34 @@ export function ScoreStrip({ view, golden: showGolden = true, human = true, stab
       label: 'Stability',
       href: '#stability',
       value: scores?.length === 3 ? scores.map((s) => pct(s)).join(' · ') : '—',
-      rule: stability?.repeatable ? `Spread ≤ ${STABILITY_MAX_SPREAD_POINTS}%` : stability?.complete ? `Spread: ${stability.spread?.toFixed(1) ?? '—'}% (maximum ${STABILITY_MAX_SPREAD_POINTS}%)` : '3 passes required',
-      tone: (view.stability?.calibrationGateActive ? stability?.ok : stability?.repeatable) ? 'ok' : stability?.complete ? 'fix' : 'muted',
+      rule: stability?.ok
+        ? `Each ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}% · spread ≤ ${STABILITY_MAX_SPREAD_POINTS}`
+        : stability?.complete
+          ? !stability.inBand
+            ? `Each pass must be ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}%`
+            : view.stability?.calibrationGateActive && !stability.withinTolerance
+              ? `Each pass must be within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} pts of the human score`
+              : `Spread: ${stability.spread?.toFixed(1) ?? '—'} (maximum ${STABILITY_MAX_SPREAD_POINTS})`
+          : '3 passes required',
+      tone: stability?.ok ? 'ok' : stability?.complete ? 'fix' : 'muted',
     },
   ].filter(Boolean) as { label: string; href?: string; value: string; rule: string; tone: string }[];
+
+  if (compact) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5" id="submission-score-summary">
+        {cells.map((c) => (
+          <span
+            key={c.label}
+            className={`badge ${c.tone === 'ok' ? 'badge-ok' : c.tone === 'fix' ? 'badge-warn' : 'badge-muted'}`}
+            title={c.rule}
+          >
+            {c.label} {c.value}
+          </span>
+        ))}
+      </div>
+    );
+  }
 
   const cols = cells.length === 1 ? 'grid-cols-1' : cells.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
 

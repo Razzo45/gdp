@@ -8,7 +8,8 @@
  *    while ids, enums and file references are never rewritten.
  */
 import { deliveryId, FAMILY_LABELS, seatsInDisplayOrder, type Family } from '@/domain/rubric';
-import { formatPercent, STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
+import { pct } from '@/components/format';
+import { STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
 import { declaredRubricItemFields, taskPerformanceDeclaration } from './read';
 
 const replacements: Record<string, string> = {
@@ -76,12 +77,12 @@ export interface PerformanceSummaryInput {
 const ascii = (text: string) => catalogAsciiText(text).replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
 
 export function taskPerformanceSummaries(input: PerformanceSummaryInput): Record<string, string | null> {
-  const golden = input.goldenPercent === null ? null : `Golden output score: ${formatPercent(input.goldenPercent)}.`;
-  const human = input.calibrationPercent === null ? null : `AI output human evaluation score: ${formatPercent(input.calibrationPercent)}.`;
+  const golden = input.goldenPercent === null ? null : `Golden output score: ${pct(input.goldenPercent)}.`;
+  const human = input.calibrationPercent === null ? null : `AI output human evaluation score: ${pct(input.calibrationPercent)}.`;
   let stability: string | null = null;
   if (input.stabilityScores && input.stabilityScores.length === 3 && input.stabilityScores.every(Number.isFinite)) {
     const spread = Math.max(...input.stabilityScores) - Math.min(...input.stabilityScores);
-    const runs = input.stabilityScores.map((s, i) => `Run ${i + 1} ${formatPercent(s)}`).join(', ');
+    const runs = input.stabilityScores.map((s, i) => `Run ${i + 1} ${pct(s)}`).join(', ');
     const rounded = Math.round(spread * 10) / 10;
     const verdict = spread <= STABILITY_MAX_SPREAD_POINTS ? 'within' : 'outside';
     stability = `Stability runs: ${runs}. Maximum drift between runs: ${rounded} percentage points. Result: ${verdict} the ${STABILITY_MAX_SPREAD_POINTS} percentage point limit.`;

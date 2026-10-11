@@ -2,7 +2,7 @@ import 'server-only';
 
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { submissions, type Submission } from '@/db/schema';
+import { submissions, type Rubric, type RubricStatement, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { handoffGates, handoffTransitionGate, type HandoffGates, type HandoffTarget } from '@/domain/gates';
 import { holdsRubricSeat, isController, type Actor } from '@/lib/auth/permissions';
@@ -13,9 +13,9 @@ import { scheduleReap } from '@/lib/ai/reaper';
 import { isLivePushLease } from '@/domain/pushLease';
 import { conflict, forbidden, invalid, ServiceError } from './errors';
 import { submittedCalibration } from './review';
-import { currentRubric, goldenState, statementsOf } from './rubric';
-import { stabilityView } from './stability';
-import { getSubmission, readSource, recordEvent, watchedProjectFor } from './submissions';
+import { currentRubric, goldenState, statementsOf, type GoldenState } from './rubric';
+import { stabilityView, type StabilityView } from './stability';
+import { getSubmission, recordEvent, watchedProjectFor } from './submissions';
 
 /**
  * Handoff: the PM-facing status ladder and the push into the Catalog.
@@ -39,21 +39,36 @@ export interface HandoffView {
   pushedAt: string | null;
 }
 
-export async function handoffView(database: DbOrTx, submission: Submission): Promise<HandoffView> {
-  const rubric = await currentRubric(database, submission.id);
+export type HandoffLoaded = {
+  rubric?: Rubric | null;
+  statements?: RubricStatement[];
+  golden?: GoldenState | null;
+  calibration?: { scorePercent: number } | null;
+  stability?: StabilityView | null;
+};
+
+export async function handoffView(database: DbOrTx, submission: Submission, loaded: HandoffLoaded = {}): Promise<HandoffView> {
+  const rubric = loaded.rubric !== undefined ? loaded.rubric : await currentRubric(database, submission.id);
   if (!rubric) {
     return { gates: handoffGates({ golden: null, calibrationPercent: null, stability: null, stabilityAccepted: false }), goldenPercent: null, calibrationPercent: null, stabilityScores: null, status: submission.handoffStatus, pushedAt: submission.pushedAt };
   }
-  const statements = await statementsOf(database, rubric.id);
-  const golden = await goldenState(database, rubric.id, statements);
-  const calibration = await submittedCalibration(database, rubric.id);
-  const stability = await stabilityView(database, rubric.id);
-  const gates = handoffGates({ golden: golden.gate, calibrationPercent: calibration?.scorePercent ?? null, stability: stability.gate, stabilityAccepted: stability.accepted !== null });
+  const statements = loaded.statements ?? await statementsOf(database, rubric.id);
+  const [golden, calibration, stability] = await Promise.all([
+    loaded.golden !== undefined ? loaded.golden : goldenState(database, rubric.id, statements),
+    loaded.calibration !== undefined ? loaded.calibration : submittedCalibration(database, rubric.id),
+    loaded.stability !== undefined ? loaded.stability : stabilityView(database, rubric.id, { statements }),
+  ]);
+  const gates = handoffGates({
+    golden: golden?.gate ?? null,
+    calibrationPercent: calibration?.scorePercent ?? null,
+    stability: stability?.gate ?? null,
+    stabilityAccepted: stability?.accepted != null,
+  });
   return {
     gates,
-    goldenPercent: golden.gate.percent,
+    goldenPercent: golden?.gate.percent ?? null,
     calibrationPercent: calibration?.scorePercent ?? null,
-    stabilityScores: stability.gate?.complete ? stability.gate.scores : null,
+    stabilityScores: stability?.gate?.complete ? stability.gate.scores : null,
     status: submission.handoffStatus,
     pushedAt: submission.pushedAt,
   };
@@ -123,14 +138,17 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   if (submission.pushedAt) throw conflict('This task was already pushed.');
   if (isLivePushLease(submission.pushReceipt)) throw conflict('A push is already in progress for this task.');
 
-  const view = await handoffView(database, submission);
-  if (!(view.gates.golden && view.gates.calibration && view.gates.stability)) throw conflict(view.gates.reasons.join(' '));
-
   const rubric = await currentRubric(database, submissionId);
   if (!rubric) throw conflict('There is no rubric.');
   const statements = await statementsOf(database, rubric.id);
-  const golden = await goldenState(database, rubric.id, statements);
-  const watched = await watchedProjectFor(database, submission.projectId);
+  const [golden, calibration, stability, watched] = await Promise.all([
+    goldenState(database, rubric.id, statements),
+    submittedCalibration(database, rubric.id),
+    stabilityView(database, rubric.id, { statements }),
+    watchedProjectFor(database, submission.projectId),
+  ]);
+  const view = await handoffView(database, submission, { rubric, statements, golden, calibration, stability });
+  if (!(view.gates.golden && view.gates.calibration && view.gates.stability)) throw conflict(view.gates.reasons.join(' '));
   if (!watched || !watched.handoffStatusId) throw conflict('This project has no handoff status configured. Ask a PM to set it under Settings → Projects.');
 
   const recoveredEarly = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);
@@ -229,5 +247,3 @@ async function reconcileLocalPush(
   scheduleReap();
   return { rubricItems: items.length, moves: [handoffStatusId] };
 }
-
-export { readSource };

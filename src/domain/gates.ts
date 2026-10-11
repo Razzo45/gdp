@@ -4,8 +4,9 @@
  *
  *   Golden        every statement graded Yes, no errors            → 100%
  *   Calibration   human AI-output score inside [20, 50] inclusive
- *   Stability     three passes, spread ≤ 5 points, and every pass within
- *                 20 points of the human calibration score
+ *   Stability     three passes, spread ≤ 5 points, every pass inside
+ *                 [20, 50]. After review, every pass must also sit within
+ *                 20 points of the human score (delivery only).
  */
 
 export const GOLDEN_REQUIRED_PERCENT = 100;
@@ -80,6 +81,7 @@ export interface StabilityGate {
   scores: number[];
   spread: number | null;
   repeatable: boolean;
+  inBand: boolean;
   withinTolerance: boolean;
   complete: boolean;
   /** Statements whose verdict differs between passes. */
@@ -90,14 +92,14 @@ export interface StabilityGate {
 export function stabilityGate(input: {
   passes: { answers: Record<string, Verdict>; errors: Record<string, string> }[];
   statementIds: readonly string[];
-  calibrationPercent: number | null;
+  calibrationPercent?: number | null;
   /**
-   * Official (post-approval) gate compares each pass to the human score.
-   * Rubric-team preview runs before review set this false — repeatability only.
+   * Delivery (after review) also compares each pass to the human score.
+   * First-instance preview has no human eval — band and spread only.
    */
   calibrationGateActive?: boolean;
 }): StabilityGate {
-  const calGate = input.calibrationGateActive !== false;
+  const calGate = input.calibrationGateActive === true;
   const reasons: string[] = [];
   const complete =
     input.passes.length === STABILITY_PASSES &&
@@ -109,10 +111,11 @@ export function stabilityGate(input: {
   const scores = input.passes.map((pass) => scoreBreakdown(pass.answers, input.statementIds).percent ?? 0);
   const spread = scores.length === 0 ? null : Math.max(...scores) - Math.min(...scores);
   const repeatable = complete && spread !== null && spread <= STABILITY_MAX_SPREAD_POINTS;
+  const inBand = complete && scores.every((score) => calibrationInBand(score));
   const withinTolerance =
     !calGate ||
     (complete &&
-      input.calibrationPercent !== null &&
+      input.calibrationPercent != null &&
       scores.every((score) => Math.abs(score - input.calibrationPercent!) <= STABILITY_CALIBRATION_TOLERANCE_POINTS));
   const flips = complete
     ? input.statementIds.filter((id) => new Set(input.passes.map((pass) => pass.answers[id])).size > 1)
@@ -120,15 +123,17 @@ export function stabilityGate(input: {
 
   if (!complete) reasons.push(`Stability needs ${STABILITY_PASSES} complete passes with every statement graded.`);
   if (complete && !repeatable) reasons.push(`Pass scores must be within ${STABILITY_MAX_SPREAD_POINTS} points of each other.`);
-  if (calGate && complete && input.calibrationPercent === null) reasons.push('A submitted human AI evaluation is required.');
-  if (calGate && complete && input.calibrationPercent !== null && !withinTolerance) {
+  if (complete && !inBand) reasons.push(`Every pass must score between ${CALIBRATION_MIN_PERCENT}% and ${CALIBRATION_MAX_PERCENT}%.`);
+  if (calGate && complete && input.calibrationPercent == null) reasons.push('A submitted human AI evaluation is required.');
+  if (calGate && complete && input.calibrationPercent != null && !withinTolerance) {
     reasons.push(`Every pass must be within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} points of the human AI score.`);
   }
   return {
-    ok: complete && repeatable && withinTolerance,
+    ok: complete && repeatable && inBand && withinTolerance,
     scores,
     spread,
     repeatable,
+    inBand,
     withinTolerance,
     complete,
     flips,
@@ -158,7 +163,7 @@ export function handoffGates(input: {
   if (!calibration) reasons.push(`The human AI score must be between ${CALIBRATION_MIN_PERCENT}% and ${CALIBRATION_MAX_PERCENT}%.`);
   if (!stability) {
     reasons.push(
-      `Three Stability scores must be within ${STABILITY_MAX_SPREAD_POINTS} points of each other, within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} points of the human AI score, and accepted.`,
+      `Three Stability scores must each be ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}%, within ${STABILITY_MAX_SPREAD_POINTS} points of each other, within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} points of the human AI score, and accepted.`,
     );
   }
   return { golden, calibration, stability, reasons };
@@ -175,10 +180,4 @@ export function handoffTransitionGate(target: HandoffTarget, gates: HandoffGates
     return { ok: false, error: gates.reasons.join(' ') };
   }
   return { ok: true };
-}
-
-export function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '—';
-  const rounded = Math.round(value * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }

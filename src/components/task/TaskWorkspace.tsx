@@ -42,6 +42,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   const [view, setView] = useState(initial);
   const [toast, setToast] = useState<{ message: string; tone: 'ok' | 'bad' } | null>(null);
   const [briefOpen, setBriefOpen] = useState(true);
+  const [headerOpen, setHeaderOpen] = useState(true);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -52,6 +53,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
       if (stored === 'collapsed') setBriefOpen(false);
       else if (stored === 'open') setBriefOpen(true);
       else if (initial.stability && initial.stability.passes.length > 0) setBriefOpen(false);
+      const header = sessionStorage.getItem('gdp.taskHeader');
+      if (header === 'collapsed') setHeaderOpen(false);
+      else if (header === 'open') setHeaderOpen(true);
     } catch {
       if (initial.stability && initial.stability.passes.length > 0) setBriefOpen(false);
     }
@@ -61,6 +65,15 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     setBriefOpen(open);
     try {
       sessionStorage.setItem('gdp.taskBrief', open ? 'open' : 'collapsed');
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  const toggleHeader = useCallback((open: boolean) => {
+    setHeaderOpen(open);
+    try {
+      sessionStorage.setItem('gdp.taskHeader', open ? 'open' : 'collapsed');
     } catch {
       /* private mode */
     }
@@ -109,10 +122,13 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     return <div className="card text-sm text-muted">Loading the task…</div>;
   }
 
+  const stabilityFirst = s.stage === 'stability' || Boolean(view.stability && view.stability.passes.length > 0);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
 
+      {headerOpen ? (
       <header className="card shrink-0 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -144,7 +160,12 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
               ) : null}
             </p>
           </div>
-          <HeaderActions view={view} refresh={refresh} notify={notify} />
+          <div className="flex flex-wrap items-start justify-end gap-2">
+            <HeaderActions view={view} refresh={refresh} notify={notify} />
+            <button className="btn btn-ghost btn-sm" type="button" aria-expanded={true} onClick={() => toggleHeader(false)}>
+              Hide
+            </button>
+          </div>
         </div>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-stretch">
           <div className="min-w-0 xl:max-w-sm">
@@ -153,11 +174,29 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           <ScoreStrip
             view={view}
             golden={view.can.seeScoreGolden}
-            human
             stability={view.can.seeScoreStability}
           />
         </div>
       </header>
+      ) : (
+      <button
+        className="card flex shrink-0 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
+        type="button"
+        aria-expanded={false}
+        title="Show seats and scores"
+        onClick={() => toggleHeader(true)}
+      >
+        <StageBadge stage={s.stage} />
+        <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
+        <ScoreStrip
+          view={view}
+          golden={view.can.seeScoreGolden}
+          stability={view.can.seeScoreStability}
+          compact
+        />
+        <span className="ml-auto shrink-0 text-sm font-semibold text-muted">Show header</span>
+      </button>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:overflow-hidden">
         {briefOpen ? (
@@ -178,10 +217,11 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           </button>
         )}
         <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-y-auto">
+          {view.can.seeStability && stabilityFirst ? <StabilityPanel {...panel} /> : null}
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
           {view.can.seeReviewPanel &&
             (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && <ReviewPanel {...panel} />}
-          {view.can.seeStability && <StabilityPanel {...panel} />}
+          {view.can.seeStability && !stabilityFirst ? <StabilityPanel {...panel} /> : null}
           {view.can.seeHandoff && (s.stage === 'handoff' || s.stage === 'done' || s.handoffStatus) && <HandoffPanel {...panel} />}
           {s.stage === 'done' && (
             <p className="card text-sm text-muted">

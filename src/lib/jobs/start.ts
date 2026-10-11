@@ -12,7 +12,7 @@ import { currentRubric, ensureCurrentRubric, statementsOf } from '@/lib/services
 import { getSubmission, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
 
-/** User-facing entry points that put work on the queue, with the seat and stage checks. */
+/** User-facing entry points that put work on the queue, with the seat checks. */
 
 function requireGemini(): void {
   try {
@@ -63,7 +63,6 @@ export async function startGoldenAutorate(actor: Actor, submissionId: string, in
     db().transaction(async (tx) => {
       const submission = await getSubmission(tx, submissionId);
       if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
-      if (submission.stage !== 'rubric') throw conflict(`Golden grading is locked while the task is in ${submission.stage}.`);
       const rubric = await currentRubric(tx, submissionId);
       if (!rubric) throw conflict('Write or generate a rubric first.');
       const statements = await statementsOf(tx, rubric.id);
@@ -82,15 +81,10 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
     db().transaction(async (tx) => {
       const submission = await getSubmission(tx, submissionId);
       if (!canRunStability(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
-      if (submission.stage === 'review') throw conflict('Stability cannot run while review is pending.');
-      if (submission.stage !== 'rubric' && submission.stage !== 'stability') {
-        throw conflict('Stability runs while the rubric team is preparing, after review returns it, or after approval.');
-      }
       const rubric = await currentRubric(tx, submissionId);
       if (!rubric) throw conflict('There is no rubric.');
-      const official = submission.stage === 'stability';
-      if (official && !(await submittedCalibration(tx, rubric.id))) throw conflict('A submitted human AI evaluation is required.');
       if ((await listAiOutputs(tx, submissionId)).length === 0) throw conflict('No AI output files are attached.');
+      const official = Boolean(await submittedCalibration(tx, rubric.id));
       const job = await enqueue(tx, {
         kind: 'stability_run',
         submissionId,

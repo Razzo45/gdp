@@ -31,13 +31,16 @@ describe('taskLens', () => {
     expect(claimableSeat(actor(['reviewer'], 'rita'), { rubricAssigneeId: 'ana', reviewerId: null, stage: 'review' })).toBe('review');
   });
 
-  it('lets admin and the seated rubric creator run Stability', () => {
+  it('lets admin and the seated rubric creator run Stability at any stage', () => {
     expect(canRunStability(actor(['admin'], 'a'), seat)).toBe(true);
     expect(canRunStability(actor(['rubric_creator'], 'ana'), seat)).toBe(true);
     expect(canRunStability(actor(['rubric_creator'], 'other'), seat)).toBe(false);
     expect(canRunStability(actor(['reviewer'], 'rita'), seat)).toBe(false);
-    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'review' })).toBe(false);
+    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'review' })).toBe(true);
     expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'stability' })).toBe(true);
+    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'handoff' })).toBe(true);
+    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'done' })).toBe(true);
+    expect(canRunStability(actor(['rubric_creator'], 'ana'), { ...seat, stage: 'review' })).toBe(true);
   });
 
   it('follows the review seat when someone holds both hats', () => {

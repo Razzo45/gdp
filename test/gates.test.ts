@@ -38,46 +38,58 @@ describe('stabilityGate', () => {
   const pass = (yes: number) => ({ answers: Object.fromEntries(ids.map((id, i) => [id, i < yes])), errors: {} });
 
   it('requires three complete passes', () => {
-    const g = stabilityGate({ passes: [pass(2), pass(2)], statementIds: ids, calibrationPercent: 40 });
+    const g = stabilityGate({ passes: [pass(2), pass(2)], statementIds: ids, calibrationGateActive: false });
     expect(g.complete).toBe(false);
     expect(g.ok).toBe(false);
   });
 
-  it('passes when spread ≤ 5 and every pass within 20 of calibration', () => {
-    const g = stabilityGate({ passes: [pass(2), pass(2), pass(2)], statementIds: ids, calibrationPercent: 40 });
-    expect(g).toMatchObject({ ok: true, spread: 0, repeatable: true, withinTolerance: true, flips: [] });
+  it('on the first instance, passes when spread ≤ 5 and every pass is 20–50% (no human score yet)', () => {
+    const g = stabilityGate({ passes: [pass(2), pass(2), pass(2)], statementIds: ids, calibrationGateActive: false });
+    expect(g).toMatchObject({ ok: true, spread: 0, repeatable: true, inBand: true, flips: [] });
+    expect(g.reasons.join(' ')).not.toMatch(/human AI/);
   });
 
   it('fails on spread over 5 and reports flips', () => {
-    const g = stabilityGate({ passes: [pass(2), pass(3), pass(2)], statementIds: ids, calibrationPercent: 40 });
+    const g = stabilityGate({ passes: [pass(2), pass(3), pass(2)], statementIds: ids, calibrationGateActive: false });
     expect(g.spread).toBe(20);
     expect(g.repeatable).toBe(false);
     expect(g.ok).toBe(false);
     expect(g.flips).toEqual(['c']);
   });
 
-  it('fails when a pass is more than 20 points from the human score', () => {
-    const g = stabilityGate({ passes: [pass(4), pass(4), pass(4)], statementIds: ids, calibrationPercent: 40 });
-    expect(g.repeatable).toBe(true);
-    expect(g.withinTolerance).toBe(false);
-    expect(g.ok).toBe(false);
+  it('fails when a pass is under 20% or over 50%', () => {
+    const high = stabilityGate({ passes: [pass(4), pass(4), pass(4)], statementIds: ids, calibrationGateActive: false });
+    expect(high.scores).toEqual([80, 80, 80]);
+    expect(high.inBand).toBe(false);
+    expect(high.ok).toBe(false);
+    expect(high.reasons.join(' ')).toMatch(/20% and 50%/);
+
+    const low = stabilityGate({ passes: [pass(0), pass(0), pass(0)], statementIds: ids, calibrationGateActive: false });
+    expect(low.scores).toEqual([0, 0, 0]);
+    expect(low.inBand).toBe(false);
+    expect(low.ok).toBe(false);
   });
 
-  it('fails without a submitted calibration when the official gate is on', () => {
-    const g = stabilityGate({ passes: [pass(2), pass(2), pass(2)], statementIds: ids, calibrationPercent: null });
+  it('for delivery, also requires every pass within 20 points of the human score', () => {
+    const ten = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'];
+    const at = (yes: number) => ({ answers: Object.fromEntries(ten.map((id, i) => [id, i < yes])), errors: {} });
+    const g = stabilityGate({ passes: [at(2), at(2), at(2)], statementIds: ten, calibrationPercent: 50, calibrationGateActive: true });
+    expect(g.scores).toEqual([20, 20, 20]);
+    expect(g.inBand).toBe(true);
+    expect(g.withinTolerance).toBe(false);
+    expect(g.ok).toBe(false);
+    expect(g.reasons.join(' ')).toMatch(/human AI score/);
+  });
+
+  it('for delivery, requires a submitted human score', () => {
+    const g = stabilityGate({ passes: [pass(2), pass(2), pass(2)], statementIds: ids, calibrationPercent: null, calibrationGateActive: true });
     expect(g.ok).toBe(false);
     expect(g.reasons.join(' ')).toMatch(/human AI evaluation/);
   });
 
-  it('lets the rubric team preview repeatability before review (no human score)', () => {
-    const g = stabilityGate({ passes: [pass(2), pass(2), pass(2)], statementIds: ids, calibrationPercent: null, calibrationGateActive: false });
-    expect(g).toMatchObject({ ok: true, repeatable: true, withinTolerance: true });
-    expect(g.reasons.join(' ')).not.toMatch(/human AI evaluation/);
-  });
-
   it('treats an errored statement as incomplete', () => {
     const broken = { ...pass(2), errors: { a: 'rate limit' } };
-    expect(stabilityGate({ passes: [broken, pass(2), pass(2)], statementIds: ids, calibrationPercent: 40 }).complete).toBe(false);
+    expect(stabilityGate({ passes: [broken, pass(2), pass(2)], statementIds: ids, calibrationGateActive: false }).complete).toBe(false);
   });
 });
 

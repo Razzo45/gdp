@@ -288,7 +288,6 @@ export async function persistLint(actor: Actor, submissionId: string, results: R
 /* ─────────────────────────────────────────── bank replacement ── */
 
 export type { BankCandidate } from '@/domain/bank';
-export { parseBank as bankOf } from '@/domain/bank';
 
 function unusedCandidate(rubric: Rubric, rows: RubricStatement[], claimKey: string): BankCandidate {
   const seatedKeys = new Set(rows.map((s) => s.claimKey).filter(Boolean));
@@ -401,13 +400,6 @@ export async function addFromBank(actor: Actor, submissionId: string, input: { c
 }
 
 /* ────────────────────────────────────────────────── import ── */
-
-/**
- * Parses pasted text into statements. One per line; an optional leading
- * `Tag |` or `Tag:` picks the tag; questions are turned into affirmatives;
- * blank lines, numbering and bullets are ignored.
- */
-export { parseImport };
 
 export async function importStatements(actor: Actor, submissionId: string, input: { text: string; revision: number }): Promise<SaveResult & { imported: number; skipped: string[] }> {
   const parsed = parseImport(input.text);

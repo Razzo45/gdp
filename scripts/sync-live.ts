@@ -14,6 +14,7 @@ import {
   type LegacyAppRole,
   type LegacyReviewStatus,
 } from '@/domain/legacyImport';
+import { canReplaceWatches, catchupExistingValues } from '@/domain/catchup';
 import { workStateOf } from '@/domain/workState';
 import { readCatalogSubmission } from '@/lib/catalog/read';
 import { installFactoryVersion } from '@/lib/services/rubric';
@@ -27,8 +28,8 @@ import { installFactoryVersion } from '@/lib/services/rubric';
  *   npm run db:sync-live -- --apply --new-only --board-only --no-catalog
  *
  * --new-only    insert catalog ids we do not have; never overwrite Railway rows
- * --board-only  new rows only if they are on a watched work/handoff status
- *               (tasks already on Railway are always refreshed)
+ * --board-only  insert only if the Catalog id is on a watched work/handoff status.
+ *               Existing Railway rows refresh title/status/source only — never stage or seats.
  */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -272,11 +273,15 @@ async function main() {
   if (apply) {
     if (!newOnly) {
       const liveProjectIds = [...watchBy.keys()];
-      const existingWatches = await database.select({ projectId: watchedProjects.projectId }).from(watchedProjects);
-      for (const row of existingWatches) {
-        if (!liveProjectIds.includes(row.projectId)) {
-          await database.delete(watchedProjects).where(eq(watchedProjects.projectId, row.projectId));
+      if (canReplaceWatches(liveProjectIds)) {
+        const existingWatches = await database.select({ projectId: watchedProjects.projectId }).from(watchedProjects);
+        for (const row of existingWatches) {
+          if (!liveProjectIds.includes(row.projectId)) {
+            await database.delete(watchedProjects).where(eq(watchedProjects.projectId, row.projectId));
+          }
         }
+      } else {
+        console.warn('skip watch replace: live returned no watched projects');
       }
     }
     for (const watch of watchBy.values()) {
@@ -362,7 +367,7 @@ async function main() {
     }
 
     const source = { submission: item.submission, project: item.project } as Record<string, unknown>;
-    const values = {
+    const liveRow = {
       catalogSubmissionId: item.catalogId,
       projectId: str(item.row, 'project_id') || catalogStatus?.projectId || '',
       statusId: liveStatus.statusId,
@@ -376,6 +381,7 @@ async function main() {
       rubricAssigneeId: known(seats.rubric),
       reviewerId: known(seats.review),
     };
+    const values = have ? catchupExistingValues(have, liveRow) : liveRow;
     const claimedAt = values.rubricAssigneeId || values.reviewerId ? values.lastSeenAt : null;
     const row = have
       ? (

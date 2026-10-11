@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS, STABILITY_PASSES } from '@/domain/gates';
+import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS, STABILITY_PASSES } from '@/domain/gates';
 import { api, uuid } from '../client';
 import { formatDate, pct } from '../format';
 import { Pill } from '../StageBadge';
 import type { PanelProps } from './TaskWorkspace';
 import { seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels } from '@/domain/rubric';
 
-/** Three autorater passes over the AI output. Preview before review is repeatability only; after approval, spread ≤5 and each pass within 20 of the human score, then explicit accept. */
+/** Three autorater passes over the AI output. First instance: 20–50% and spread ≤5. After review, each pass must also sit within 20 of the human score before delivery. */
 export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(true);
@@ -16,9 +16,9 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const statements = seatsInDisplayOrder(view.rubric?.statements ?? []);
   const seats = seatIndexById(statements);
   const running = view.jobs.find((j) => j.kind === 'stability_run' && (j.status === 'queued' || j.status === 'running'));
-  const official = view.submission.stage === 'stability';
+  const official = Boolean(view.stability?.calibrationGateActive);
   const canRun = view.can.runStability;
-  const canAccept = official && canRun;
+  const canAccept = official && canRun && view.submission.stage === 'stability';
 
   async function act(path: string, body: Record<string, unknown>, ok: string) {
     setBusy(true);
@@ -39,22 +39,20 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const rows = showAll ? statements : statements.filter((s) => flips.has(s.id) || passes.some((p) => p.errors[s.id]));
 
   const locked =
-    !canRun && view.submission.stage === 'review'
-      ? 'Stability is locked while review is pending.'
-      : !canRun && !view.can.holdsRubricSeat
-        ? 'Claim the rubric seat, or ask a PM to assign it, to run Stability.'
-        : canRun && view.aiOutputs.length === 0
-          ? 'Attach the AI output first.'
-          : null;
+    !canRun && !view.can.holdsRubricSeat
+      ? 'Claim the rubric seat, or ask a PM to assign it, to run Stability.'
+      : canRun && view.aiOutputs.length === 0
+        ? 'Attach the AI output first.'
+        : null;
 
   return (
-    <section className="card space-y-3" id="stability">
+    <section className="card scroll-mt-4 space-y-3" id="stability">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold">Repeatability & Stability</h2>
         <span className="text-sm text-muted">
           {official
-            ? `${STABILITY_PASSES} passes · spread ≤ ${STABILITY_MAX_SPREAD_POINTS} pts · each within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} pts of the human score (${pct(view.handoff.calibrationPercent)})`
-            : `${STABILITY_PASSES} passes against the current rubric and AI files to measure repeatability. Reviewer scores do not participate.`}
+            ? `${STABILITY_PASSES} passes · each ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}% · spread ≤ ${STABILITY_MAX_SPREAD_POINTS} pts · each within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} pts of the human score (${pct(view.handoff.calibrationPercent)})`
+            : `${STABILITY_PASSES} passes · each ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}% · spread ≤ ${STABILITY_MAX_SPREAD_POINTS} pts. The human-score check applies after review.`}
         </span>
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)}
@@ -104,6 +102,9 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
           <li>
             Spread: <strong>{gate.spread === null ? '—' : `${(Math.round(gate.spread * 10) / 10).toFixed(1)} pts`}</strong> {gate.complete && (gate.repeatable ? <span className="text-ok">within limit</span> : <span className="text-bad">over {STABILITY_MAX_SPREAD_POINTS}</span>)}
           </li>
+          <li>
+            Band: {gate.complete && (gate.inBand ? <span className="text-ok">every pass {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}%</span> : <span className="text-bad">a pass is under {CALIBRATION_MIN_PERCENT}% or over {CALIBRATION_MAX_PERCENT}%</span>)}
+          </li>
           {official && (
             <li>
               Against the human score: {gate.complete && (gate.withinTolerance ? <span className="text-ok">all passes within {STABILITY_CALIBRATION_TOLERANCE_POINTS} pts</span> : <span className="text-bad">a pass is more than {STABILITY_CALIBRATION_TOLERANCE_POINTS} pts away</span>)}
@@ -152,66 +153,74 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         <div>
           <div className="flex items-center gap-2 text-sm text-muted">
             <span>{showAll ? 'All statements' : `Flips and errors (${rows.length})`}</span>
-            <button className="underline" onClick={() => setShowAll((v) => !v)}>
+            <button className="underline" type="button" onClick={() => setShowAll((v) => !v)}>
               {showAll ? 'show flips only' : 'show all'}
             </button>
           </div>
-          <div className="overflow-x-auto">
-          <table className="mt-2 w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-surface text-left text-muted">
-              <tr>
-                <th className="py-2 pr-3">Seat</th>
-                <th className="py-2 pr-3">Statement</th>
-                {[1, 2, 3].map((i) => (
-                  <th key={i} className="w-[18%] py-2 pr-3 align-bottom">
-                    P{i}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {rows.map((s) => (
-                <tr key={s.id} className={flips.has(s.id) ? 'bg-warn-soft' : ''}>
-                  <td className="py-2 pr-3 align-top font-mono tabular-nums">
-                    <a className="underline" href={`#rubric-statement-${s.id}`}>
-                      {seats.get(s.id) ?? '—'}
+          {rows.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted">No flips, no errors.</p>
+          ) : (
+            <ol className="mt-1 divide-y divide-line">
+              {rows.map((s) => {
+                const error = passes.map((p) => p.errors[s.id]).find((e): e is string => Boolean(e));
+                const notes = passes
+                  .map((p) => ({ pass: p.passIndex, text: p.evidence[s.id] }))
+                  .filter((e): e is { pass: number; text: string } => Boolean(e.text));
+                return (
+                  <li
+                    key={s.id}
+                    className={`grid scroll-mt-24 gap-3 rounded-2xl py-4 [content-visibility:auto] [contain-intrinsic-size:0_8rem] md:grid-cols-[2.5rem_minmax(0,1fr)_auto] ${flips.has(s.id) ? 'bg-warn-soft px-3' : ''}`}
+                  >
+                    <a className="font-mono text-xs tabular-nums text-muted underline" href={`#rubric-statement-${s.id}`}>
+                      {String(seats.get(s.id) ?? '').padStart(2, '0')}
                     </a>
-                  </td>
-                  <td className="py-2 pr-3 align-top text-base leading-snug">
-                    {s.statement}
-                    {passes.map((p) => p.errors[s.id]).filter((e): e is string => Boolean(e)).slice(0, 1).map((e) => (
-                      <div key={e} className="text-bad">
-                        {seatLabel(seats.get(s.id))}: {withSeatLabels(e, seats)}
-                      </div>
-                    ))}
-                  </td>
-                  {[1, 2, 3].map((i) => {
-                    const p = passes.find((x) => x.passIndex === i);
-                    const v = p?.answers[s.id];
-                    const ev = p?.evidence[s.id];
-                    return (
-                      <td key={i} className="py-2 pr-3 align-top">
-                        <div className={`text-base font-medium ${v === true ? 'text-ok' : v === false || p?.errors[s.id] ? 'text-bad' : ''}`}>
-                          {v === true ? 'Yes' : v === false ? 'No' : p?.errors[s.id] ? 'err' : '—'}
-                        </div>
-                        {ev ? <p className="mt-1 text-sm leading-snug text-muted">{ev}</p> : null}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-2 text-center text-muted">
-                    No flips, no errors.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          </div>
+                    <div className="min-w-0">
+                      <p className="text-[15px] leading-relaxed text-pretty break-words">{s.statement}</p>
+                      {error ? (
+                        <p className="mt-1 text-sm text-bad">
+                          {seatLabel(seats.get(s.id))}: {withSeatLabels(error, seats)}
+                        </p>
+                      ) : null}
+                      {notes.length > 0 ? (
+                        <details className="mt-2 text-sm text-muted">
+                          <summary className="cursor-pointer select-none rounded-sm text-ink underline decoration-line underline-offset-2 hover:text-accent-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                            Evidence
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {notes.map((note) => (
+                              <p key={note.pass} className="whitespace-pre-wrap leading-snug">
+                                <span className="font-medium text-ink">P{note.pass}: </span>
+                                {note.text}
+                              </p>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-start gap-1 self-start">
+                      {[1, 2, 3].map((i) => {
+                        const p = passes.find((x) => x.passIndex === i);
+                        return <PassMark key={i} label={`P${i}`} value={p?.answers[s.id]} error={p?.errors[s.id]} />;
+                      })}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
         </div>
       )}
     </section>
+  );
+}
+
+function PassMark({ label, value, error }: { label: string; value: boolean | null | undefined; error?: string }) {
+  const text = value === true ? 'Yes' : value === false ? 'No' : error ? 'err' : '—';
+  const tone = value === true ? 'text-ok' : value === false || error ? 'text-bad' : 'text-muted';
+  return (
+    <div className="w-14 text-center" aria-label={`${label} ${text}`}>
+      <div className="text-xs text-muted">{label}</div>
+      <div className={`text-base font-semibold ${tone}`}>{text}</div>
+    </div>
   );
 }

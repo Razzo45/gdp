@@ -297,14 +297,10 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const { job } = ctx;
   const database = db();
   const submission = await getSubmission(database, job.submissionId);
-  if (submission.stage !== 'rubric' && submission.stage !== 'stability') {
-    throw new ServiceError(409, `Stability cannot run while the task is in ${submission.stage}.`);
-  }
   const rubric = await currentRubric(database, job.submissionId);
   if (!rubric || rubric.id !== job.rubricId) throw new ServiceError(409, 'The rubric changed before the run started.');
-  const official = submission.stage === 'stability' || (job.payload as { calibrationGateActive?: boolean }).calibrationGateActive === true;
   const calibration = await submittedCalibration(database, rubric.id);
-  if (official && !calibration) throw new ServiceError(409, 'A submitted human AI evaluation is required before stability.');
+  const official = calibration != null;
   const statements = await statementsOf(database, rubric.id);
   const groupId = (job.payload as { groupId?: string }).groupId ?? crypto.randomUUID();
   const { gradeContext } = taskContextOf(submission);

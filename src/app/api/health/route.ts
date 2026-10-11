@@ -10,7 +10,6 @@ import { sesConfigured } from '@/lib/mail/ses';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const renderer = await rendererAvailable().catch(() => false);
   const extras = () => {
     try {
       return { storage: storageDriver(), gemini: geminiConfigured(), catalog: catalogConfigured(), ses: sesConfigured() };
@@ -18,10 +17,13 @@ export async function GET() {
       return { storage: 'unknown', gemini: false, catalog: false, ses: false };
     }
   };
-  try {
-    await db().execute(sql`select 1`);
-    return json({ ok: true, database: true, renderer, ...extras() });
-  } catch {
-    return json({ ok: false, database: false, renderer, ...extras(), error: 'database unreachable' }, 503);
-  }
+  const [renderer, database] = await Promise.all([
+    rendererAvailable().catch(() => false),
+    db()
+      .execute(sql`select 1`)
+      .then(() => true)
+      .catch(() => false),
+  ]);
+  if (!database) return json({ ok: false, database: false, renderer, ...extras(), error: 'database unreachable' }, 503);
+  return json({ ok: true, database: true, renderer, ...extras() });
 }

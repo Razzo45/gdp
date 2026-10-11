@@ -24,10 +24,10 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const q = params['q']?.trim() || undefined;
   const mine = params['mine'] === '1';
   const pm = isController(actor);
-  const rows = await listSubmissions(actor, { workState, q, mine });
-  const all = workState || q ? await listSubmissions(actor, { mine }) : rows;
-  const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, all.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
-  const listed = workState || q ? rows : rows.filter((row) => row.workState !== 'other');
+  const listedQuery = await listSubmissions(actor, { mine, q });
+  const listed = workState ? listedQuery.filter((r) => r.workState === workState) : listedQuery;
+  const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
+  const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
 
   return (
     <Page>

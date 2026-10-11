@@ -2,7 +2,7 @@ import 'server-only';
 
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { stabilityAcceptances, stabilityFlipNotes, stabilityPasses, submissions, type FlipNoteAction, type StabilityAcceptance, type StabilityFlipNote, type StabilityPass } from '@/db/schema';
+import { stabilityAcceptances, stabilityFlipNotes, stabilityPasses, submissions, type FlipNoteAction, type RubricStatement, type StabilityAcceptance, type StabilityFlipNote, type StabilityPass } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { stabilityGate, type StabilityGate } from '@/domain/gates';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
@@ -35,11 +35,17 @@ export async function latestGroup(database: DbOrTx, rubricId: string): Promise<S
   return database.select().from(stabilityPasses).where(and(eq(stabilityPasses.rubricId, rubricId), eq(stabilityPasses.groupId, newest.groupId))).orderBy(stabilityPasses.passIndex);
 }
 
-export async function stabilityView(database: DbOrTx, rubricId: string, options: { calibrationGateActive?: boolean } = {}): Promise<StabilityView> {
-  const calibrationGateActive = options.calibrationGateActive !== false;
-  const passes = await latestGroup(database, rubricId);
-  const statements = await statementsOf(database, rubricId);
-  const calibration = await submittedCalibration(database, rubricId);
+export async function stabilityView(
+  database: DbOrTx,
+  rubricId: string,
+  options: { calibrationGateActive?: boolean; statements?: Pick<RubricStatement, 'id'>[]; calibration?: { scorePercent: number } | null } = {},
+): Promise<StabilityView> {
+  const [passes, statements, calibration] = await Promise.all([
+    latestGroup(database, rubricId),
+    options.statements ?? statementsOf(database, rubricId),
+    options.calibration !== undefined ? options.calibration : submittedCalibration(database, rubricId),
+  ]);
+  const calibrationGateActive = options.calibrationGateActive ?? calibration != null;
   const groupId = passes[0]?.groupId ?? null;
   const gate = passes.length
     ? stabilityGate({
@@ -49,12 +55,12 @@ export async function stabilityView(database: DbOrTx, rubricId: string, options:
         calibrationGateActive,
       })
     : null;
-  const accepted = groupId
-    ? ((await database.select().from(stabilityAcceptances).where(and(eq(stabilityAcceptances.rubricId, rubricId), eq(stabilityAcceptances.groupId, groupId))).limit(1))[0] ?? null)
-    : null;
-  const flipNotes = groupId
-    ? await database.select().from(stabilityFlipNotes).where(and(eq(stabilityFlipNotes.rubricId, rubricId), eq(stabilityFlipNotes.groupId, groupId)))
-    : [];
+  const [accepted, flipNotes] = groupId
+    ? await Promise.all([
+        database.select().from(stabilityAcceptances).where(and(eq(stabilityAcceptances.rubricId, rubricId), eq(stabilityAcceptances.groupId, groupId))).limit(1).then((rows) => rows[0] ?? null),
+        database.select().from(stabilityFlipNotes).where(and(eq(stabilityFlipNotes.rubricId, rubricId), eq(stabilityFlipNotes.groupId, groupId))),
+      ])
+    : [null, [] as StabilityFlipNote[]];
   return { groupId, passes, gate, accepted, calibrationPercent: calibration?.scorePercent ?? null, calibrationGateActive, flipNotes };
 }
 

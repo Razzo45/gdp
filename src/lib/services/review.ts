@@ -4,12 +4,13 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { calibrations, reviewFeedback, submissions, type Calibration } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown } from '@/domain/gates';
+import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate } from '@/domain/gates';
 import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid, notFound } from './errors';
 import { pruneCalibrations, pruneReviewFeedback } from './retention';
 import { listAiOutputs } from './files';
 import { currentRubric, goldenState, statementsOf } from './rubric';
+import { latestGroup } from './stability';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -31,6 +32,14 @@ export async function sendToReview(actor: Actor, submissionId: string): Promise<
     const statements = await statementsOf(tx, rubric.id);
     const golden = await goldenState(tx, rubric.id, statements);
     if (!golden.gate.ok) throw conflict(`Golden must grade 100% before review: ${golden.gate.reasons.join(' ')}`);
+    const preview = stabilityGate({
+      passes: await latestGroup(tx, rubric.id),
+      statementIds: statements.map((row) => row.id),
+      calibrationGateActive: false,
+    });
+    if (preview.complete && !preview.inBand) {
+      throw conflict(`Stability must score between ${CALIBRATION_MIN_PERCENT}% and ${CALIBRATION_MAX_PERCENT}% before sending to review.`);
+    }
     const outputs = await listAiOutputs(tx, submissionId);
     if (outputs.length === 0) throw conflict('Upload the AI output before sending the task to review.');
     await tx

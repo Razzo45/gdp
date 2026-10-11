@@ -9,7 +9,7 @@ import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
 import { currentActor } from '@/lib/auth/identity';
-import { claimableSeat, isController } from '@/lib/auth/permissions';
+import { claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { dashboardOverview } from '@/lib/services/dashboard';
 import { listSubmissions } from '@/lib/services/submissions';
 
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
 export default async function Dashboard() {
   const actor = await currentActor();
   if (!actor) redirect('/login');
-  if (isController(actor)) return <PmDashboard actorId={actor.id} />;
+  if (isController(actor)) return <PmDashboard actor={actor} />;
 
   const all = await listSubmissions(actor);
   const mine = all.filter((s) => s.rubricAssigneeId === actor.id || s.reviewerId === actor.id);
@@ -64,9 +64,7 @@ export default async function Dashboard() {
   );
 }
 
-async function PmDashboard({ actorId }: { actorId: string }) {
-  const actor = await currentActor();
-  if (!actor) redirect('/login');
+async function PmDashboard({ actor }: { actor: Actor }) {
   const board = await dashboardOverview(actor);
   const mine = board.mine;
 
@@ -176,7 +174,7 @@ async function PmDashboard({ actorId }: { actorId: string }) {
           <summary className="cursor-pointer select-none font-semibold">Seats you hold ({mine.length})</summary>
           <p className="mt-1 text-sm text-muted">PMs assign work; this only appears if a seat is already on your account.</p>
           <div className="mt-3">
-            <SeatList rows={mine} actorId={actorId} />
+            <SeatList rows={mine} actorId={actor.id} />
           </div>
         </details>
       )}

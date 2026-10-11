@@ -40,5 +40,3 @@ export async function api<T = Record<string, unknown>>(path: string, init: { met
 }
 
 export const uuid = (): string => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-
-export { formatDate, pct, timeAgo } from './format';

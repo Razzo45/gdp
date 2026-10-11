@@ -68,6 +68,13 @@ describe('seats', () => {
     expect(slot?.title).toBe('');
   });
 
+  it('lists parked tasks for a PM so a catchup rewrite cannot empty the board', async () => {
+    const s = await makeSubmission(db, { stage: 'parked', title: 'Parked deck' });
+    const rows = await listSubmissions(pm);
+    expect(rows.map((r) => r.id)).toContain(s.id);
+    expect(rows.find((r) => r.id === s.id)?.workState).toBe('other');
+  });
+
   it('lets PMs assign and lists claims', async () => {
     const s = await makeSubmission(db);
     await expectStatus(assignSeat(creator, s.id, 'rubric', creator2.id), 403);

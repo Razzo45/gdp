@@ -7,8 +7,8 @@ import type { HandoffStatus, ReviewStatus, Stage } from '@/db/schema';
 export const WORK_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'handoff', 'submitted', 'other'] as const;
 export type WorkState = (typeof WORK_STATES)[number];
 
-/** Filter bar on the live board — Other stays off this panel. */
-export const BOARD_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'submitted'] as const;
+/** Filter bar on the live board. Other stays visible so a bad catchup cannot hide work. */
+export const BOARD_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'handoff', 'platform_returned', 'submitted', 'other'] as const;
 
 export const WORK_STATE_LABEL: Record<WorkState, string> = {
   unassigned: 'Unassigned',

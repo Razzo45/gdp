@@ -76,18 +76,20 @@ const TRACKED_ACTIONS = [
 /** PM / admin glance: stuck work, throughput, and who is moving or blocked. */
 export async function dashboardOverview(actor: Actor, now = Date.now()): Promise<DashboardOverview> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can open the operations dashboard.');
-  const rows = await listSubmissions(actor);
-  const people = await listUsers(actor);
   const since = new Date(periodStarts(now).month - 90 * 86_400_000).toISOString();
-  const events = await db()
-    .select({
-      submissionId: submissionEvents.submissionId,
-      actorId: submissionEvents.actorId,
-      action: submissionEvents.action,
-      createdAt: submissionEvents.createdAt,
-    })
-    .from(submissionEvents)
-    .where(gte(submissionEvents.createdAt, since));
+  const [rows, people, events] = await Promise.all([
+    listSubmissions(actor),
+    listUsers(actor),
+    db()
+      .select({
+        submissionId: submissionEvents.submissionId,
+        actorId: submissionEvents.actorId,
+        action: submissionEvents.action,
+        createdAt: submissionEvents.createdAt,
+      })
+      .from(submissionEvents)
+      .where(gte(submissionEvents.createdAt, since)),
+  ]);
 
   const eventsByTask = new Map<string, { action: string; createdAt: string }[]>();
   for (const event of events) {

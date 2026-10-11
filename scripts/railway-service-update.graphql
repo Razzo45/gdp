@@ -21,7 +21,7 @@ mutation WireServices($workerId: String!, $catchupId: String!, $environmentId: S
       builder: DOCKERFILE
       dockerfilePath: "Dockerfile"
       region: "europe-west4-drams3a"
-      cronSchedule: "*/20 * * * *"
+      cronSchedule: "0 6 * * *"
       restartPolicyType: NEVER
     }
   )

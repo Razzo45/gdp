@@ -39,6 +39,7 @@ export interface SubmissionView {
     editRubric: boolean;
     holdsRubricSeat: boolean;
     runStability: boolean;
+    runGolden: boolean;
     review: boolean;
     control: boolean;
     claimRubric: boolean;
@@ -62,18 +63,23 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
   const database = db();
   const submission = await getVisibleSubmission(database, actor, id);
   const source = readSource(submission);
-  const rubric = await currentRubric(database, id);
+  const [rubric, aiOutputs, feedback, jobs, events] = await Promise.all([
+    currentRubric(database, id),
+    listAiOutputs(database, id),
+    feedbackFor(database, id),
+    jobsForSubmission(database, id, 12),
+    database.select().from(submissionEvents).where(eq(submissionEvents.submissionId, id)).orderBy(desc(submissionEvents.createdAt)).limit(40),
+  ]);
   const statements = rubric ? await statementsOf(database, rubric.id) : [];
-  const golden = rubric ? await goldenState(database, rubric.id, statements) : null;
-  const aiOutputs = await listAiOutputs(database, id);
-  const latest = rubric ? await latestCalibration(database, rubric.id) : null;
-  const submitted = rubric ? await submittedCalibration(database, rubric.id) : null;
-  const feedback = await feedbackFor(database, id);
-  const officialStability = submission.stage === 'stability' || submission.stage === 'handoff' || submission.stage === 'done';
-  const stability = rubric ? await stabilityView(database, rubric.id, { calibrationGateActive: officialStability }) : null;
-  const handoff = await handoffView(database, submission);
-  const jobs = await jobsForSubmission(database, id, 12);
-  const events = await database.select().from(submissionEvents).where(eq(submissionEvents.submissionId, id)).orderBy(desc(submissionEvents.createdAt)).limit(40);
+  const [golden, latest, submitted, stability] = rubric
+    ? await Promise.all([
+        goldenState(database, rubric.id, statements),
+        latestCalibration(database, rubric.id),
+        submittedCalibration(database, rubric.id),
+        stabilityView(database, rubric.id, { statements }),
+      ])
+    : [null, null, null, null];
+  const handoff = await handoffView(database, submission, { rubric, statements, golden, calibration: submitted, stability });
 
   const ids = new Set<string>();
   for (const v of [submission.rubricAssigneeId, submission.reviewerId, latest?.reviewerId, ...events.map((e) => e.actorId), ...feedback.map((f) => f.reviewerId)]) if (v) ids.add(v);
@@ -167,6 +173,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       editRubric: holdsRubricSeat(actor, submission) && submission.stage === 'rubric',
       holdsRubricSeat: holdsRubricSeat(actor, submission),
       runStability: canRunStability(actor, submission),
+      runGolden: holdsRubricSeat(actor, submission),
       review: holdsReviewSeat(actor, submission) && submission.stage === 'review',
       control: isController(actor),
       claimRubric: submission.rubricAssigneeId === null && (isController(actor) || actor.roles.has('rubric_creator')),

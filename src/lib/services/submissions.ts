@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, desc, eq, getTableColumns, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '@/db/client';
 import { profiles, submissionEvents, submissions, userRoles, watchedProjects, type Submission } from '@/db/schema';
@@ -157,17 +157,12 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
       .limit(500),
     database.select().from(watchedProjects),
   ]);
-  const onBoard = (row: { projectId: string; statusId: string | null }) => {
-    const watch = watches.find((item) => item.projectId === row.projectId);
-    if (!watch || !row.statusId) return false;
-    return row.statusId === watch.workStatusId || row.statusId === watch.handoffStatusId || (watch.statusIds ?? []).includes(row.statusId);
-  };
+  const watchByProject = new Map(watches.map((item) => [item.projectId, item]));
   const statusName = (row: { projectId: string; statusId: string | null }) => {
-    const watch = watches.find((item) => item.projectId === row.projectId);
-    const names = readProjectStatuses(watch?.project ?? null);
+    const names = readProjectStatuses(watchByProject.get(row.projectId)?.project ?? null);
     return names?.statuses.find((item) => item.id === row.statusId)?.name ?? null;
   };
-  return rows.filter((r) => !isController(actor) || Boolean(filter.q) || onBoard(r.submission)).map((r) => {
+  return rows.map((r) => {
     const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
     const blinded = !isController(actor) && !held;
     const workState = workStateOf(r.submission);
@@ -292,12 +287,11 @@ export interface ClaimsOverviewRow {
 export async function claimsOverview(actor: Actor): Promise<ClaimsOverviewRow[]> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can see the claims overview.');
   const database = db();
-  const people = await database.select().from(profiles).where(eq(profiles.isActive, true)).orderBy(profiles.email);
-  const roleRows = await database.select().from(userRoles);
-  const held = await database
-    .select()
-    .from(submissions)
-    .where(or(isNotNull(submissions.rubricAssigneeId), isNotNull(submissions.reviewerId)));
+  const [people, roleRows, held] = await Promise.all([
+    database.select().from(profiles).where(eq(profiles.isActive, true)).orderBy(profiles.email),
+    database.select().from(userRoles),
+    database.select().from(submissions).where(or(isNotNull(submissions.rubricAssigneeId), isNotNull(submissions.reviewerId))),
+  ]);
 
   const roles = new Map<string, string[]>();
   for (const r of roleRows) roles.set(r.userId, [...(roles.get(r.userId) ?? []), r.role]);
@@ -320,9 +314,4 @@ export async function claimsOverview(actor: Actor): Promise<ClaimsOverviewRow[]>
 
 export async function watchedProjectFor(database: DbOrTx, projectId: string) {
   return (await database.select().from(watchedProjects).where(eq(watchedProjects.projectId, projectId)).limit(1))[0] ?? null;
-}
-
-export async function submissionsByCatalogIds(database: DbOrTx, ids: string[]): Promise<Submission[]> {
-  if (ids.length === 0) return [];
-  return database.select().from(submissions).where(inArray(submissions.catalogSubmissionId, ids));
 }
