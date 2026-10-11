@@ -19,7 +19,7 @@ Catalog webhook ──▶ task lands ──▶ creator claims rubric seat
 
 Next.js 16 (App Router, Node runtime) · React 19 · TypeScript · Tailwind 4 ·
 Drizzle + postgres-js · Supabase (Auth, Postgres, private Storage) ·
-`@google/genai` · LibreOffice (optional, for Office → PDF) · vitest + pglite.
+`@google/genai` · LibreOffice **in the Cloud Run / Replit image** (Office → PDF → one image per slide) · vitest + pglite.
 
 ## Local setup
 
@@ -67,8 +67,9 @@ creators. "AI output" files to upload are written to `fixtures/ai-outputs/`;
 they differ from the Golden on purpose (missing slides, wrong figure, other
 font, hidden draft slide, typo). `curl -X POST localhost:4010/emit/<id>` sends
 a signed webhook; `localhost:4010/state` shows what was saved and moved by a
-push. Without LibreOffice on PATH, Office files are graded from the OOXML
-manifest + text digest.
+push. On Cloud Run the image already ships LibreOffice; the worker renders each
+PPTX slide to a still. This laptop does not need soffice. `/api/health` returns
+`renderer: true` when the image is wired.
 
 ## GCP
 
@@ -104,13 +105,30 @@ were already gone upstream and cannot be copied.
 
 ## Replit
 
-`.replit` and `replit.nix` are included. Set the variables from `.env.example`
-as Secrets. The build step runs migrations; the web process also runs the job
-worker (`RUN_WORKER=1`). `replit.nix` installs LibreOffice so decks are
-rendered to PDF for grading; without it Office files are graded from their
-OOXML manifest and text digest.
+Import this repo on the `replit` branch (or connect the existing Repl to it).
+`.replit` already sets `STORAGE_DRIVER=supabase` and `RUN_WORKER=1`. Copy the
+Secrets you already have — do not invent a second Supabase project.
 
-Health: `GET /api/health` (checks the database).
+**Use from Replit Secrets (same names):**
+
+| Secret | Why |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Auth + Storage (existing project) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser Auth (publishable/anon) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Invites + private Storage (CORS already on this project) |
+| `DATABASE_URL` | Neon `app.*` only. Never the live GDP / `public.wirestock_*` Postgres. |
+| `GEMINI_API_KEY` | Autorater |
+| `WIRESTOCK_API_TOKEN` | Catalog |
+| `WIRESTOCK_WEBHOOK_SECRET` | Catalog webhooks |
+| `STORAGE_BUCKET` | Optional; defaults to `gdp-private` |
+| `PUBLIC_APP_URL` | Optional; falls back to `REPLIT_DEV_DOMAIN` |
+
+Auth and file uploads go to the existing Supabase project (signed PUT, same
+CORS). Task rows stay on Neon. The build step runs migrations; the web
+process also runs the job worker. `replit.nix` installs LibreOffice so decks
+render to PDF for grading.
+
+Health: `GET /api/health` (database + renderer).
 
 ## Scripts
 

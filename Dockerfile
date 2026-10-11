@@ -19,10 +19,14 @@ ENV RUN_WORKER=0
 RUN npm run build && npm prune --omit=dev && npm install tsx --omit=dev --no-save
 
 FROM node:22-bookworm-slim AS runner
+# LibreOffice is part of this image (not a laptop install). Impress renders
+# PPTX → PDF; the app then stills each page for Golden / Stability.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    fonts-dejavu-core \
     fonts-liberation \
+    fonts-noto-core \
     libreoffice-calc \
     libreoffice-impress \
     libreoffice-writer \

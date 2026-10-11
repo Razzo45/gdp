@@ -21,12 +21,14 @@
     "db:import-eval": "tsx --conditions=react-server scripts/import-eval.ts",
     "db:repair-pipeline": "tsx --conditions=react-server scripts/repair-pipeline.ts",
     "db:sync-live": "tsx --conditions=react-server scripts/sync-live.ts",
+    "setup:renderer": "tsx scripts/ensure-libreoffice.ts",
     "mock:catalog": "tsx scripts/mock-catalog.ts",
     "worker": "tsx --conditions=react-server scripts/worker.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.22.0",
     "@google/genai": "^2.28.0",
+    "@napi-rs/canvas": "^1.0.11",
     "@silurus/ooxml": "^0.88.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
@@ -34,6 +36,7 @@
     "jose": "^6.2.12",
     "jszip": "^3.10.2",
     "next": "^16.4.0",
+    "pdfjs-dist": "^6.4.299",
     "postgres": "^3.4.9",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

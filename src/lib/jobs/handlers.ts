@@ -221,13 +221,21 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
   if (statements.length === 0) return { graded: 0 };
   const { gradeContext } = taskContextOf(submission);
 
-  await ctx.tick({ done: 0, total: statements.length, note: isStatementLane(job.payload) ? 'Reusing the staged Golden' : 'Reading the Golden output' });
   const catalog = readSource(submission);
   const goldenMeta = catalog?.goldenFiles ?? [];
   if (goldenMeta.length === 0) throw new ServiceError(422, 'This task has no Golden output file in the Catalog.');
   const catalogInputs = catalog?.inputFiles ?? [];
   const grade = scopedStatements(statements, goldenMeta, catalogInputs, all);
   const needed = neededFileIds(grade, goldenMeta, catalogInputs);
+  await ctx.tick({
+    done: 0,
+    total: statements.length,
+    note: isStatementLane(job.payload)
+      ? 'Reusing prepared Golden files'
+      : goldenMeta.length === 1
+        ? `Preparing ${goldenMeta[0]!.name}`
+        : `Preparing ${goldenMeta.length} Golden files`,
+  });
   const [golden, inputs] = await Promise.all([
     prepareCatalogFiles(submission, 'golden', 'CONSIDERED OUTPUT', needed.outputIds),
     needed.inputIds.length ? prepareCatalogFiles(submission, 'inputs', 'SUBMITTED INPUT', needed.inputIds) : Promise.resolve({ files: [], fingerprint: '' }),
@@ -235,7 +243,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
   const outputs = golden.files;
   const refs = inputs.files;
   if (outputs.length === 0) throw new ServiceError(422, 'This task has no Golden output file in the Catalog.');
-  await ctx.tick({ done: 0, total: statements.length, note: 'Grading' });
+  await ctx.tick({ done: 0, total: statements.length, note: `Grading 0 of ${statements.length} seats` });
 
   const basisFor = (s: (typeof statements)[number]) => ({
     statementHash: statementHash(s),
@@ -264,7 +272,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
     await database.insert(goldenRatings).values(rows);
     await pruneGoldenRatings(database, rubric.id);
     for (const row of rows) written.add(row.statementId);
-    await ctx.tick({ done: written.size, total: statements.length, note: 'Grading' }, { graded: [...written] });
+    await ctx.tick({ done: written.size, total: statements.length, note: `Grading ${written.size} of ${statements.length} seats` }, { graded: [...written] });
   };
 
   const result = await gradeStatements({

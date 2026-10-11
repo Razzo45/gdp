@@ -101,5 +101,5 @@ function refuse(request: NextRequest, pathname: string, passThrough: NextRespons
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\.(?:png|svg|jpg|webp|ico)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|api/local-storage|.*\\.(?:png|svg|jpg|webp|ico)$).*)'],
 };

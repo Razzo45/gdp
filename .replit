@@ -19,6 +19,10 @@ externalPort = 80
 [env]
 PORT = "3000"
 NEXT_TELEMETRY_DISABLED = "1"
+# Use the existing Replit Supabase project (Auth + private Storage + CORS).
+# DATABASE_URL must stay the Neon/app.* URL — never the live GDP Postgres.
+STORAGE_DRIVER = "supabase"
+RUN_WORKER = "1"
 
 [workflows]
 runButton = "Dev"

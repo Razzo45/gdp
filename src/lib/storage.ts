@@ -1,8 +1,11 @@
 import 'server-only';
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { env, storageDriver } from '@/lib/env';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
@@ -31,8 +34,8 @@ function localFile(objectPath: string): string {
   return `${localRoot()}${path.sep}${safe.join(path.sep)}`;
 }
 
-function localSignature(objectPath: string, expires: number): string {
-  return createHmac('sha256', env().AUTH_LOCAL_SECRET).update(`${objectPath}\n${expires}`).digest('hex');
+function localSignature(objectPath: string, expires: number, method: 'GET' | 'PUT' = 'GET'): string {
+  return createHmac('sha256', env().AUTH_LOCAL_SECRET).update(`${method}\n${objectPath}\n${expires}`).digest('hex');
 }
 
 /** Validates a URL produced by `signedUrl` in local mode and returns the bytes. */
@@ -40,13 +43,40 @@ export async function readLocalSigned(objectPath: string, expires: string, signa
   if (storageDriver() !== 'local') return null;
   const exp = Number(expires);
   if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return null;
-  const expected = Buffer.from(localSignature(objectPath, exp), 'hex');
+  const expected = Buffer.from(localSignature(objectPath, exp, 'GET'), 'hex');
   const given = Buffer.from(signature, 'hex');
   if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
   const bytes = await getObject(objectPath);
   if (!bytes) return null;
   const mime = await readFile(`${localFile(objectPath)}.mime`, 'utf8').catch(() => 'application/octet-stream');
   return { bytes, mime };
+}
+
+/** Streams a PUT from a local signed URL onto disk. Does not buffer the body. */
+export async function writeLocalSigned(
+  objectPath: string,
+  expires: string,
+  signature: string,
+  body: ReadableStream<Uint8Array> | null,
+  mime: string,
+): Promise<boolean> {
+  if (storageDriver() !== 'local' || !body) return false;
+  const exp = Number(expires);
+  if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return false;
+  const expected = Buffer.from(localSignature(objectPath, exp, 'PUT'), 'hex');
+  const given = Buffer.from(signature, 'hex');
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return false;
+  const file = localFile(objectPath);
+  await mkdir(path.dirname(file), { recursive: true });
+  try {
+    await pipeline(Readable.fromWeb(body as import('node:stream/web').ReadableStream), createWriteStream(file));
+    await writeFile(`${file}.mime`, mime, 'utf8');
+    return true;
+  } catch {
+    await rm(file, { force: true }).catch(() => undefined);
+    await rm(`${file}.mime`, { force: true }).catch(() => undefined);
+    return false;
+  }
 }
 
 /* ─────────────────────────────────────────── supabase driver ── */
@@ -119,7 +149,7 @@ export async function removeObject(objectPath: string): Promise<void> {
 export async function signedUrl(objectPath: string, seconds = 300): Promise<string | null> {
   if (storageDriver() === 'local') {
     const expires = Math.floor(Date.now() / 1000) + seconds;
-    const query = new URLSearchParams({ path: objectPath, expires: String(expires), sig: localSignature(objectPath, expires) });
+    const query = new URLSearchParams({ path: objectPath, expires: String(expires), sig: localSignature(objectPath, expires, 'GET') });
     return `/api/local-storage?${query}`;
   }
   if (storageDriver() === 'gcs') {
@@ -128,6 +158,72 @@ export async function signedUrl(objectPath: string, seconds = 300): Promise<stri
   }
   const { data } = await supabaseAdmin().storage.from(env().STORAGE_BUCKET).createSignedUrl(objectPath, seconds);
   return data?.signedUrl ?? null;
+}
+
+/** Short-lived PUT target. The browser writes bytes here; the app never buffers them. */
+export async function signedPutUrl(objectPath: string, mime: string, seconds = 3_600): Promise<{ url: string; headers: Record<string, string> }> {
+  if (storageDriver() === 'local') {
+    const expires = Math.floor(Date.now() / 1000) + seconds;
+    const query = new URLSearchParams({ path: objectPath, expires: String(expires), sig: localSignature(objectPath, expires, 'PUT') });
+    return { url: `/api/local-storage?${query}`, headers: { 'Content-Type': mime } };
+  }
+  if (storageDriver() === 'gcs') {
+    const [url] = await (await gcsFile(objectPath)).getSignedUrl({
+      version: 'v4',
+      action: 'write',
+      expires: Date.now() + seconds * 1000,
+      contentType: mime,
+    });
+    if (!url) throw new Error('Could not create an upload URL.');
+    return { url, headers: { 'Content-Type': mime } };
+  }
+  await ensureBucket();
+  const { data, error } = await supabaseAdmin().storage.from(env().STORAGE_BUCKET).createSignedUploadUrl(objectPath);
+  if (error || !data?.signedUrl) throw new Error(`Could not create an upload URL: ${error?.message ?? 'unknown'}`);
+  return { url: data.signedUrl, headers: { 'Content-Type': mime } };
+}
+
+export async function objectStat(objectPath: string): Promise<{ size: number } | null> {
+  if (storageDriver() === 'local') {
+    const info = await stat(localFile(objectPath)).catch(() => null);
+    return info?.isFile() ? { size: info.size } : null;
+  }
+  if (storageDriver() === 'gcs') {
+    const [meta] = await (await gcsFile(objectPath)).getMetadata().catch(() => [null]);
+    const size = Number(meta?.size ?? NaN);
+    return Number.isFinite(size) ? { size } : null;
+  }
+  const slash = objectPath.lastIndexOf('/');
+  const prefix = slash >= 0 ? objectPath.slice(0, slash) : '';
+  const name = slash >= 0 ? objectPath.slice(slash + 1) : objectPath;
+  const { data } = await supabaseAdmin().storage.from(env().STORAGE_BUCKET).list(prefix, { search: name, limit: 20 });
+  const hit = data?.find((row) => row.name === name);
+  const raw = hit?.metadata && typeof hit.metadata === 'object' && 'size' in hit.metadata ? hit.metadata.size : undefined;
+  const size = Number(raw ?? NaN);
+  return hit && Number.isFinite(size) ? { size } : null;
+}
+
+/** SHA-256 of the stored object, streamed. */
+export async function hashObject(objectPath: string): Promise<string | null> {
+  if (storageDriver() === 'local') {
+    const file = localFile(objectPath);
+    if (!(await stat(file).catch(() => null))) return null;
+    return hashStream(createReadStream(file));
+  }
+  if (storageDriver() === 'gcs') {
+    return hashStream((await gcsFile(objectPath)).createReadStream());
+  }
+  const bytes = await getObject(objectPath);
+  return bytes ? createHash('sha256').update(bytes).digest('hex') : null;
+}
+
+function hashStream(stream: NodeJS.ReadableStream): Promise<string> {
+  const hash = createHash('sha256');
+  return new Promise((resolve, reject) => {
+    stream.on('data', (chunk: Buffer | string) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 async function gcsFile(objectPath: string) {

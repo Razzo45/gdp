@@ -100,6 +100,10 @@ export function env(): Env {
   if (cached) return cached;
   // `KEY=` in an env file means "not set", not "empty string".
   const raw = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined && value.trim() !== ''));
+  if (!raw['PUBLIC_APP_URL']) {
+    const domain = (process.env['REPLIT_DEV_DOMAIN'] ?? process.env['REPLIT_DOMAINS']?.split(',')[0] ?? '').trim();
+    if (domain) raw['PUBLIC_APP_URL'] = domain.startsWith('http') ? domain : `https://${domain}`;
+  }
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
