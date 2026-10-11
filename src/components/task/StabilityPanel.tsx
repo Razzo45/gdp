@@ -16,6 +16,11 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const statements = seatsInDisplayOrder(view.rubric?.statements ?? []);
   const seats = seatIndexById(statements);
   const running = view.jobs.find((j) => j.kind === 'stability_run' && (j.status === 'queued' || j.status === 'running'));
+  const live = running?.progress ?? {};
+  const liveScores = live.passes ?? {};
+  const liveNote = running ? live.note || (running.status === 'queued' ? 'Queued — next to run' : 'Starting Stability…') : null;
+  const liveDone = live.done ?? 0;
+  const liveTotal = live.total ?? STABILITY_PASSES;
   const official = Boolean(view.stability?.calibrationGateActive);
   const canRun = view.can.runStability;
   const canAccept = official && canRun && view.submission.stage === 'stability';
@@ -81,15 +86,30 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         </span>
       </div>
 
-      {passes.length > 0 && (
+      {liveNote ? (
+        <div className="rounded-xl border border-line bg-accent-soft/40 p-3 text-sm">
+          <div className="font-medium">{liveNote}</div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
+            <div className="h-full bg-accent" style={{ width: `${Math.round(Math.min(1, liveTotal ? liveDone / liveTotal : 0.15) * 100)}%` }} />
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {liveDone} of {liveTotal} passes
+          </p>
+        </div>
+      ) : null}
+
+      {(passes.length > 0 || running) && (
         <div className="grid shrink-0 grid-cols-3 gap-2 text-center text-sm">
           {[1, 2, 3].map((i) => {
             const p = passes.find((x) => x.passIndex === i);
+            const liveScore = liveScores[String(i)];
             const errors = p ? Object.keys(p.errors).length : 0;
             return (
               <div key={i} className="rounded-md border border-line p-2">
                 <div className="text-sm text-muted">Pass {i}</div>
-                <div className="text-lg font-semibold tabular-nums">{p ? pct(p.scorePercent) : running ? '…' : '—'}</div>
+                <div className="text-lg font-semibold tabular-nums">
+                  {p ? pct(p.scorePercent) : liveScore != null ? pct(liveScore) : running ? '…' : '—'}
+                </div>
                 {errors > 0 && <div className="text-xs text-bad">{errors} errors</div>}
               </div>
             );

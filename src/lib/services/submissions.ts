@@ -116,10 +116,10 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   const q = filter.q?.trim();
   if (q) conditions.push(or(ilike(submissions.title, `%${q}%`), ilike(submissions.catalogSubmissionId, `%${q}%`)));
   if (filter.workState === 'unassigned') {
-    conditions.push(and(eq(submissions.stage, 'rubric'), isNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+    conditions.push(sql`false`);
   }
   if (filter.workState === 'preparing') {
-    conditions.push(and(eq(submissions.stage, 'rubric'), isNotNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+    conditions.push(and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
   }
   if (filter.workState === 'in_review') conditions.push(eq(submissions.stage, 'review'));
   if (filter.workState === 'review_returned') conditions.push(and(eq(submissions.stage, 'rubric'), eq(submissions.reviewStatus, 'changes_requested')));

@@ -320,7 +320,7 @@ describe('legacy snapshot import', () => {
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'h2', catalogStatusName: 'H2. Golden Output Ready for Review', reviewStatus: 'pending' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'off' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ handoffStatus: 'bounced' }).stage).toBe('handoff');
-    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('unassigned');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('preparing');
     expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: null })).toBe('preparing');
     expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: 'changes_requested' })).toBe('review_returned');
     expect(workStateOf({ stage: 'review', rubricAssigneeId: 'x', reviewStatus: 'pending' })).toBe('in_review');

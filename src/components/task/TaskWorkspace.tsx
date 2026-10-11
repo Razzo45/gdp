@@ -106,6 +106,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
       }
     };
     const visible = () => document.visibilityState === 'visible';
+    if (busy && visible()) void pulse();
     const handle = busy ? setInterval(() => { if (visible()) void pulse(); }, TASK_STATUS_PULSE_MS) : undefined;
     const onVisible = () => { if (visible()) void pulse(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -121,8 +122,6 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   if (!ready) {
     return <div className="card text-sm text-muted">Loading the task…</div>;
   }
-
-  const stabilityFirst = s.stage === 'stability' || Boolean(view.stability && view.stability.passes.length > 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
@@ -217,11 +216,10 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           </button>
         )}
         <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-y-auto">
-          {view.can.seeStability && stabilityFirst ? <StabilityPanel {...panel} /> : null}
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
+          {view.can.seeStability && <StabilityPanel {...panel} />}
           {view.can.seeReviewPanel &&
             (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && <ReviewPanel {...panel} />}
-          {view.can.seeStability && !stabilityFirst ? <StabilityPanel {...panel} /> : null}
           {view.can.seeHandoff && (s.stage === 'handoff' || s.stage === 'done' || s.handoffStatus) && <HandoffPanel {...panel} />}
           {s.stage === 'done' && (
             <p className="card text-sm text-muted">

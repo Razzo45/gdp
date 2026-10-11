@@ -8,6 +8,7 @@ import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
+import { jobProgressView } from '@/domain/freshness';
 import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, RUBRIC_TARGET, correctTag, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
@@ -334,7 +335,17 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         )}
       </div>
 
-      {(genJob || rateJob) && <JobProgressCard job={genJob ?? rateJob!} />}
+      {(genJob || rateJob || busy === 'golden' || busy === 'generate') && (
+        <JobProgressCard
+          job={
+            genJob ??
+            rateJob ??
+            (busy === 'generate'
+              ? { kind: 'rubric_generate', status: 'queued', progress: { note: 'Starting rubric generation…' } }
+              : { kind: 'golden_autorate', status: 'queued', progress: { note: 'Starting Golden…', done: 0, total: drafts.length } })
+          }
+        />
+      )}
 
       {editable && drafts.length > 0 && drafts.length < target && FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
@@ -532,38 +543,20 @@ function progressLabel(job: { progress?: { done?: number; total?: number; note?:
 
 function JobProgressCard({ job }: { job: { kind: string; status: string; progress?: { done?: number; total?: number; note?: string; stages?: { name: string; detail: string; state: string }[]; seeds?: { total: number; ok: number; thin: number; failed: number } } } }) {
   const p = job.progress ?? {};
-  const golden = job.kind === 'golden_autorate';
-  const graded = golden && (p.done ?? 0) > 0 && (p.total ?? 0) > 0;
-  const ratio = golden
-    ? graded
-      ? Math.min(1, (p.done ?? 0) / (p.total ?? 1))
-      : null
-    : p.total
-      ? Math.min(1, (p.done ?? 0) / p.total)
-      : job.status === 'running'
-        ? 0.15
-        : 0;
-  const title = job.kind === 'rubric_generate'
-    ? job.status === 'queued'
-      ? 'Queued — next to generate'
-      : 'Rubric regeneration in progress'
-    : p.note || (job.status === 'queued' ? 'Golden autorate queued' : 'Golden autorate');
+  const live = job.kind === 'rubric_generate'
+    ? {
+        title: job.status === 'queued' ? 'Queued — next to generate' : p.note || 'Rubric regeneration in progress',
+        ratio: p.total ? Math.min(1, (p.done ?? 0) / p.total) : job.status === 'running' ? 0.15 : 0,
+        detail: p.note && p.seeds ? `${p.seeds.ok} ok · ${p.seeds.thin} thin · ${p.seeds.failed} failed` : p.note ?? null,
+      }
+    : jobProgressView(job);
   return (
     <div className="rounded-xl border border-line bg-accent-soft/40 p-3 text-sm">
-      <div className="font-medium">{title}</div>
-      {ratio !== null && (
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
-          <div className="h-full bg-accent" style={{ width: `${Math.round(ratio * 100)}%` }} />
-        </div>
-      )}
-      {golden && graded && (
-        <p className="mt-1 text-xs text-muted">
-          {p.done} of {p.total} seats
-        </p>
-      )}
-      {!golden && (
-        <p className="mt-1 text-xs text-muted">{p.note}{p.seeds ? ` · ${p.seeds.ok} ok · ${p.seeds.thin} thin · ${p.seeds.failed} failed` : ''}</p>
-      )}
+      <div className="font-medium">{live.title}</div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
+        <div className="h-full bg-accent" style={{ width: `${Math.round(live.ratio * 100)}%` }} />
+      </div>
+      {live.detail ? <p className="mt-1 text-xs text-muted">{live.detail}</p> : null}
       {p.stages && p.stages.length > 0 && (
         <table className="mt-2 w-full text-xs">
           <tbody>

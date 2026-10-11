@@ -1,4 +1,4 @@
-import './env';
+import './railway-target';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
@@ -19,7 +19,7 @@ import {
 } from '@/db/schema';
 import { sha256, sourceFingerprint, statementHash } from '@/domain/fingerprint';
 import { isLiveHumanNote } from '@/domain/golden';
-import { factoryStatementsFromLegacy, latestLegacyRun, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts } from '@/domain/legacyImport';
+import { factoryStatementsFromLegacy, latestLegacyRun, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts, seedsFromLegacy } from '@/domain/legacyImport';
 import { installFactoryVersion } from '@/lib/services/rubric';
 import { pruneCalibrations, pruneGoldenRatings, pruneReviewFeedback, pruneStabilityGroups } from '@/lib/services/retention';
 import { putObject } from '@/lib/storage';
@@ -123,6 +123,7 @@ async function downloadAi(storagePath: string): Promise<Uint8Array | null> {
 async function main() {
   const apply = arg('--apply');
   const stabilityOnly = arg('--stability-only');
+  const fillMissing = arg('--fill-missing');
   const target = process.env['DATABASE_URL']?.trim() ?? '';
   if (!target) throw new Error('DATABASE_URL is not set.');
   if (isSupabaseHost(target)) throw new Error('Refusing: DATABASE_URL is a Supabase host.');
@@ -178,16 +179,35 @@ async function main() {
   });
 
   for (const row of plan) matchedSeats += row.seats.size;
-  console.log(`Target (${apply ? 'APPLY' : 'dry-run'}): ${neonSubs.length} tasks, ${plan.filter((p) => p.rubric).length} with a rubric, ${matchedSeats} seats remapped.`);
+  const missingRubric = plan.filter((item) => !item.rubric && item.run && factoryStatementsFromLegacy(item.run['rows']).length);
+  console.log(`Target (${apply ? 'APPLY' : 'dry-run'}): ${neonSubs.length} tasks, ${plan.filter((p) => p.rubric).length} with a rubric, ${matchedSeats} seats remapped, ${missingRubric.length} missing rubrics that have a live run.`);
   console.log(`Sources: quality=${quality.length} rubric_answers=${answers.length} calibrations=${cals.length} stability=${stability.length} reviews=${reviews.length}`);
 
   if (!apply) {
-    console.log('Re-run with --apply to write Golden, human AI eval, stability, and AI files.');
+    console.log('Re-run with --apply [--fill-missing] to write Golden, human AI eval, stability, and AI files.');
     process.exit(0);
   }
 
   if (stabilityOnly) {
     console.log('Stability-only pass: existing Golden / calibration rows are left alone.');
+  }
+  if (fillMissing) {
+    console.log('Fill-missing: keep Railway Golden/calibration/stability that already exist on the current rubric.');
+  }
+
+  for (const item of plan) {
+    if (item.rubric || !item.run) continue;
+    const factory = factoryStatementsFromLegacy(item.run['rows']);
+    if (!factory.length) continue;
+    const rubric = await installFactoryVersion(database, item.sub.id, knownUser(str(item.run, 'created_by') || null), {
+      seeds: seedsFromLegacy(item.run),
+      statements: factory,
+      generation: { provenance: 'import-eval-restore', catalogId: item.sub.catalogSubmissionId },
+    });
+    const statements = await database.select().from(rubricStatements).where(eq(rubricStatements.rubricId, rubric.id));
+    item.rubric = rubric;
+    item.statements = statements;
+    item.seats = mapLegacySeatIds((item.run['rows'] as { id?: unknown; statement?: unknown }[]) ?? [], statements);
   }
 
   for (const item of plan) {
@@ -211,13 +231,18 @@ async function main() {
       stability.filter((row) => str(row, 'submission_id') === internal),
       (row) => str(row, 'created_at'),
     );
-    const refs = aiRefsFrom(qFor, answerRows, calFor, stabFor);
-
-    await database.delete(goldenRatings).where(eq(goldenRatings.rubricId, rubric.id));
-    await database.delete(calibrations).where(eq(calibrations.rubricId, rubric.id));
-    await database.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric.id));
-    await database.delete(stabilityPasses).where(eq(stabilityPasses.rubricId, rubric.id));
-    await database.delete(reviewFeedback).where(eq(reviewFeedback.submissionId, sub.id));
+    const keepGolden = fillMissing && (await database.select({ id: goldenRatings.id }).from(goldenRatings).where(eq(goldenRatings.rubricId, rubric.id)).limit(1))[0];
+    const keepCal = fillMissing && (await database.select({ id: calibrations.id }).from(calibrations).where(eq(calibrations.rubricId, rubric.id)).limit(1))[0];
+    const keepStab = fillMissing && (await database.select({ id: stabilityPasses.id }).from(stabilityPasses).where(eq(stabilityPasses.rubricId, rubric.id)).limit(1))[0];
+    const keepReview = fillMissing && (await database.select({ id: reviewFeedback.id }).from(reviewFeedback).where(eq(reviewFeedback.submissionId, sub.id)).limit(1))[0];
+    const refs = keepGolden && keepCal && keepStab ? [] : aiRefsFrom(qFor, answerRows, calFor, stabFor);
+    if (!keepGolden) await database.delete(goldenRatings).where(eq(goldenRatings.rubricId, rubric.id));
+    if (!keepCal) await database.delete(calibrations).where(eq(calibrations.rubricId, rubric.id));
+    if (!keepStab) {
+      await database.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric.id));
+      await database.delete(stabilityPasses).where(eq(stabilityPasses.rubricId, rubric.id));
+    }
+    if (!keepReview) await database.delete(reviewFeedback).where(eq(reviewFeedback.submissionId, sub.id));
 
     const fileIds: string[] = [];
     const fileShas: string[] = [];
@@ -251,7 +276,7 @@ async function main() {
 
     const basisFiles = { aiOutputIds: fileIds, aiOutputShas: fileShas, provenance: 'legacy-snapshot' };
 
-    if (qFor.length) {
+    if (!keepGolden && qFor.length) {
       for (const result of qFor) {
         const grades = record(result['grades']);
         const verdicts = remapVerdicts(record(grades['answers']), seats);
@@ -274,7 +299,7 @@ async function main() {
           goldenJobs += 1;
         }
       }
-    } else {
+    } else if (!keepGolden) {
       for (const row of answerRows) {
         const sources = record(row['sources']);
         const verdicts = remapVerdicts(record(row['answers']), seats);
@@ -302,7 +327,7 @@ async function main() {
       }
     }
 
-    for (const row of answerRows) {
+    for (const row of keepGolden ? [] : answerRows) {
       const sources = record(row['sources']);
       const verdicts = remapVerdicts(record(row['answers']), seats);
       const evidence = remapEvidence(record(row['evidence']), seats);
@@ -346,7 +371,7 @@ async function main() {
             at: str(row, 'calibrated_at', 'updated_at'),
           }));
 
-    for (const cal of calSources) {
+    for (const cal of keepCal ? [] : calSources) {
       const mapped = remapVerdicts(cal.answers, seats);
       if (!Object.keys(mapped).length) continue;
       const evidence = remapEvidence(cal.evidence, seats);
@@ -363,7 +388,7 @@ async function main() {
       calRows += 1;
     }
 
-    for (const group of stabFor) {
+    for (const group of keepStab ? [] : stabFor) {
       const groupId = str(group, 'group_id') || crypto.randomUUID();
       const passes = Array.isArray(group['runs']) ? (group['runs'] as Record<string, unknown>[]) : [];
       for (const pass of passes) {
@@ -401,7 +426,7 @@ async function main() {
     const review = reviews.find((row) => str(row, 'submission_id') === internal);
     const note = feedback.find((row) => str(row, 'submission_id') === internal);
     const status = str(review ?? note ?? {}, 'status');
-    if ((review || note) && (status === 'approved' || status === 'changes_requested')) {
+    if (!keepReview && (review || note) && (status === 'approved' || status === 'changes_requested')) {
       await database.insert(reviewFeedback).values({
         submissionId: sub.id,
         rubricId: rubric.id,
@@ -485,6 +510,10 @@ async function main() {
       }
     }
     if (!item || !item.rubric || seats.size === 0) {
+      if (fillMissing) {
+        console.warn(`Stability ${str(group, 'id') || hostId} has no host task; fill-missing will not invent one.`);
+        continue;
+      }
       if (!hostId || !legacyStatements.length || !fallbackProject) {
         console.warn(`Stability ${str(group, 'id') || hostId} has no host task and no statements to reconstruct.`);
         continue;

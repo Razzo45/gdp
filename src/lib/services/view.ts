@@ -3,7 +3,7 @@ import 'server-only';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { jobs, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
-import type { StatusPulse } from '@/domain/freshness';
+import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import type { GoldenGate, HandoffGates, StabilityGate, Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
@@ -207,7 +207,7 @@ export async function submissionPulse(actor: Actor, id: string): Promise<StatusP
     lens === 'reviewer'
       ? []
       : await database
-          .select({ id: jobs.id, status: jobs.status })
+          .select({ id: jobs.id, status: jobs.status, progress: jobs.progress })
           .from(jobs)
           .where(eq(jobs.submissionId, id))
           .orderBy(desc(jobs.createdAt))
@@ -220,7 +220,7 @@ export async function submissionPulse(actor: Actor, id: string): Promise<StatusP
     rubricAssigneeId: submission.rubricAssigneeId,
     reviewerId: submission.reviewerId,
     revision: submission.revision,
-    jobs: visible,
+    jobs: visible.map((job) => ({ id: job.id, status: job.status, progressKey: progressKeyOf(job.progress) })),
   };
 }
 
