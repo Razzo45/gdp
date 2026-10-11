@@ -6,7 +6,7 @@ import { jobs, profiles, submissionEvents, type AiOutputFile, type Job, type Rub
 import type { StatusPulse } from '@/domain/freshness';
 import type { GoldenGate, HandoffGates, StabilityGate, Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
-import { canReview, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
 import { jobsForSubmission } from '@/lib/jobs/queue';
 import { listAiOutputs } from './files';
@@ -166,7 +166,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       lens,
       editRubric: holdsRubricSeat(actor, submission) && submission.stage === 'rubric',
       holdsRubricSeat: holdsRubricSeat(actor, submission),
-      runStability: holdsRubricSeat(actor, submission) && (submission.stage === 'rubric' || submission.stage === 'stability'),
+      runStability: canRunStability(actor, submission),
       review: holdsReviewSeat(actor, submission) && submission.stage === 'review',
       control: isController(actor),
       claimRubric: submission.rubricAssigneeId === null && (isController(actor) || actor.roles.has('rubric_creator')),

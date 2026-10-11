@@ -47,6 +47,10 @@ function isSupabaseHost(url: string): boolean {
   return /supabase\.(co|com)|pooler\.supabase/i.test(url);
 }
 
+function missingTable(message: string): boolean {
+  return /could not find the table|schema cache|does not exist|Invalid schema|PGRST205|PGRST106/i.test(message);
+}
+
 async function pool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = [];
   let i = 0;
@@ -112,27 +116,42 @@ async function main() {
   if (!url || !key) throw new Error('Live read credentials are missing.');
   const live = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  const [subs, watches, assigns, reviews, reviewsV1, states, handoffs, runs, people, roles, grants] = await Promise.all([
-    live.from('wirestock_submissions').select('*'),
-    live.from('watched_projects').select('*'),
-    live.from('wirestock_submission_assignments').select('*'),
-    live.from('wirestock_submission_reviews').select('*'),
-    live.from('wirestock_reviews_v1').select('*'),
-    live.from('wirestock_submission_states').select('*'),
-    live.from('wirestock_submission_handoffs').select('*'),
-    live.from('wirestock_rubric_runs').select('id,submission_id,rows,seeds,created_at'),
-    live.from('profiles').select('*'),
-    live.from('roles').select('*'),
-    live.from('user_roles').select('*'),
-  ]);
-  for (const result of [subs, watches, assigns, reviews, reviewsV1, states, handoffs, runs, people]) {
-    if (result.error) throw new Error(result.error.message);
-  }
+  const readLive = async (name: string, columns = '*'): Promise<Record<string, unknown>[]> => {
+    const result = await live.from(name).select(columns);
+    if (result.error) {
+      if (missingTable(result.error.message)) {
+        console.warn(`skip ${name}: not on live PostgREST`);
+        return [];
+      }
+      throw new Error(`${name}: ${result.error.message}`);
+    }
+    const out: Record<string, unknown>[] = [];
+    if (Array.isArray(result.data)) {
+      for (const row of result.data as unknown[]) {
+        if (isRecord(row)) out.push(row);
+      }
+    }
+    return out;
+  };
 
-  const watchBy = new Map((watches.data ?? []).filter(isRecord).map((row) => [str(row, 'project_id'), row]));
-  const stateBy = new Map((states.data ?? []).filter(isRecord).map((row) => [str(row, 'submission_id'), str(row, 'state')]));
-  const handoffBy = new Map((handoffs.data ?? []).filter(isRecord).map((row) => [str(row, 'submission_id'), str(row, 'status')]));
-  const reviewRows = [...(reviews.data ?? []), ...(reviewsV1.data ?? [])].filter(isRecord);
+  const [subs, watches, assigns, reviews, reviewsV1, states, handoffs, runs, people, roles, grants] = await Promise.all([
+    readLive('wirestock_submissions'),
+    readLive('watched_projects'),
+    readLive('wirestock_submission_assignments'),
+    readLive('wirestock_submission_reviews'),
+    readLive('wirestock_reviews_v1'),
+    readLive('wirestock_submission_states'),
+    readLive('wirestock_submission_handoffs'),
+    readLive('wirestock_rubric_runs', 'id,submission_id,rows,seeds,created_at'),
+    readLive('profiles'),
+    readLive('roles'),
+    readLive('user_roles'),
+  ]);
+
+  const watchBy = new Map(watches.map((row) => [str(row, 'project_id'), row]));
+  const stateBy = new Map(states.map((row) => [str(row, 'submission_id'), str(row, 'state')]));
+  const handoffBy = new Map(handoffs.map((row) => [str(row, 'submission_id'), str(row, 'status')]));
+  const reviewRows = [...reviews, ...reviewsV1];
   const reviewOf = (internalId: string): LegacyReviewStatus | null => {
     const row = reviewRows
       .filter((r) => str(r, 'submission_id') === internalId)
@@ -142,7 +161,7 @@ async function main() {
     return null;
   };
   const runsBy = new Map<string, Record<string, unknown>[]>();
-  for (const run of (runs.data ?? []).filter(isRecord)) {
+  for (const run of runs) {
     const id = str(run, 'submission_id');
     const list = runsBy.get(id) ?? [];
     list.push(run);
@@ -150,7 +169,7 @@ async function main() {
   }
   const seatsOf = (internalId: string) => {
     const seats = { rubric: null as string | null, review: null as string | null };
-    for (const raw of (assigns.data ?? []).filter(isRecord).filter((row) => str(row, 'submission_id') === internalId)) {
+    for (const raw of assigns.filter((row) => str(row, 'submission_id') === internalId)) {
       const seat = assignmentSeat(str(raw, 'team_role_key'));
       const who = str(raw, 'assignee_id');
       if (seat && who) seats[seat] = who;
@@ -159,13 +178,13 @@ async function main() {
   };
 
   const roleById = new Map<string, string>();
-  for (const raw of (roles.data ?? []).filter(isRecord)) {
+  for (const raw of roles) {
     const id = str(raw, 'id');
     const name = str(raw, 'key', 'name', 'slug', 'role_key', 'role');
     if (id && name) roleById.set(id, name);
   }
   const roleKeys = new Map<string, string[]>();
-  for (const raw of (grants.error ? [] : grants.data ?? []).filter(isRecord)) {
+  for (const raw of grants) {
     const userId = str(raw, 'user_id', 'userId');
     if (!userId) continue;
     const key = str(raw, 'role', 'role_key', 'team_role_key') || roleById.get(str(raw, 'role_id')) || '';
@@ -175,7 +194,7 @@ async function main() {
     roleKeys.set(userId, list);
   }
   const plannedPeople = new Map<string, { email: string; displayName: string; roles: LegacyAppRole[] }>();
-  for (const raw of (people.data ?? []).filter(isRecord)) {
+  for (const raw of people) {
     const id = str(raw, 'id');
     const email = str(raw, 'email').toLowerCase();
     if (!id || !email) continue;
@@ -185,14 +204,14 @@ async function main() {
       roles: mapLegacyRoles(roleKeys.get(id) ?? []),
     });
   }
-  for (const raw of (assigns.data ?? []).filter(isRecord)) {
+  for (const raw of assigns) {
     const userId = str(raw, 'assignee_id');
     if (!userId || plannedPeople.has(userId)) continue;
     plannedPeople.set(userId, { email: `imported-${userId}@gdp.invalid`, displayName: 'Imported user', roles: mapLegacyRoles([str(raw, 'team_role_key')]) });
   }
 
-  const projectIds = [...new Set((subs.data ?? []).filter(isRecord).map((row) => str(row, 'project_id')).filter(Boolean))];
-  console.log(`Live: ${(subs.data ?? []).length} submissions, ${watchBy.size} watches, ${plannedPeople.size} people.`);
+  const projectIds = [...new Set(subs.map((row) => str(row, 'project_id')).filter(Boolean))];
+  console.log(`Live: ${subs.length} submissions, ${watchBy.size} watches, ${plannedPeople.size} people.`);
   const projectCache = new Map<string, unknown>();
   if (!skipCatalog) {
     console.log('Refreshing Catalog payloads…');
@@ -203,7 +222,7 @@ async function main() {
     console.log(`Catalog projects ${projectCache.size} / ${projectIds.length}`);
   }
 
-  const refreshed = await pool((subs.data ?? []).filter(isRecord), skipCatalog ? 1 : 4, async (row) => {
+  const refreshed = await pool(subs, skipCatalog ? 1 : 4, async (row) => {
     const catalogId = str(row, 'submission_id');
     const fetched = !skipCatalog && catalogId ? await catalogJson(`/project-submissions/${encodeURIComponent(catalogId)}`) : null;
     const liveSubmission = row['submission'];

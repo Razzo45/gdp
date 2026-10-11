@@ -3,7 +3,7 @@ import 'server-only';
 import { db } from '@/db/client';
 import type { Job } from '@/db/schema';
 import { MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
-import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
+import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
 import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/errors';
 import { listAiOutputs } from '@/lib/services/files';
@@ -81,7 +81,7 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
   return wrap(() =>
     db().transaction(async (tx) => {
       const submission = await getSubmission(tx, submissionId);
-      if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
+      if (!canRunStability(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
       if (submission.stage === 'review') throw conflict('Stability cannot run while review is pending.');
       if (submission.stage !== 'rubric' && submission.stage !== 'stability') {
         throw conflict('Stability runs while the rubric team is preparing, after review returns it, or after approval.');

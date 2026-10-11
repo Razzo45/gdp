@@ -56,6 +56,12 @@ export function holdsRubricSeat(actor: Actor, seat: SeatView): boolean {
   return isController(actor) || (seat.rubricAssigneeId !== null && seat.rubricAssigneeId === actor.id);
 }
 
+/** Admin, PM, or the seated rubric creator — the people who run Stability. */
+export function canRunStability(actor: Actor, seat: SeatView): boolean {
+  if (seat.stage === 'review' || (seat.stage && seat.stage !== 'rubric' && seat.stage !== 'stability')) return false;
+  return holdsRubricSeat(actor, seat) || (canCreateRubrics(actor) && canSeeSubmission(actor, seat));
+}
+
 /** May this actor perform the human AI evaluation and decide the review? */
 export function holdsReviewSeat(actor: Actor, seat: SeatView): boolean {
   return isController(actor) || (seat.reviewerId !== null && seat.reviewerId === actor.id);

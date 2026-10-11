@@ -29,28 +29,43 @@ export function ScoreStrip({ view, golden: showGolden = true, human = true, stab
     },
     showStability && {
       label: 'Stability',
+      href: '#stability',
       value: scores?.length === 3 ? scores.map((s) => pct(s)).join(' · ') : '—',
       rule: stability?.repeatable ? `Spread ≤ ${STABILITY_MAX_SPREAD_POINTS}%` : stability?.complete ? `Spread: ${stability.spread?.toFixed(1) ?? '—'}% (maximum ${STABILITY_MAX_SPREAD_POINTS}%)` : '3 passes required',
       tone: (view.stability?.calibrationGateActive ? stability?.ok : stability?.repeatable) ? 'ok' : stability?.complete ? 'fix' : 'muted',
     },
-  ].filter(Boolean) as { label: string; value: string; rule: string; tone: string }[];
+  ].filter(Boolean) as { label: string; href?: string; value: string; rule: string; tone: string }[];
 
   const cols = cells.length === 1 ? 'grid-cols-1' : cells.length === 2 ? 'grid-cols-2' : 'grid-cols-3';
 
   return (
     <div className={`grid min-w-0 flex-1 ${cols} gap-2`} id="submission-score-summary">
       {cells.map((c) => (
-        <div key={c.label} className="min-w-0 rounded-2xl border border-line bg-surface px-3 py-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-muted">{c.label}</span>
-            <span className={`badge ${c.tone === 'ok' ? 'badge-ok' : c.tone === 'fix' ? 'badge-warn' : 'badge-muted'}`}>
-              {c.tone === 'ok' ? 'Pass' : c.tone === 'fix' ? 'Fix' : 'In progress'}
-            </span>
-          </div>
-          <div className="mt-1 truncate text-lg font-semibold tabular-nums tracking-tight">{c.value}</div>
-          <div className="truncate text-[11px] text-quiet" title={c.rule}>{c.rule}</div>
-        </div>
+        <Cell key={c.label} href={c.href} tone={c.tone} label={c.label} value={c.value} rule={c.rule} />
       ))}
     </div>
+  );
+}
+
+function Cell({ href, tone, label, value, rule }: { href?: string; tone: string; label: string; value: string; rule: string }) {
+  const inner = (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted">{label}</span>
+        <span className={`badge ${tone === 'ok' ? 'badge-ok' : tone === 'fix' ? 'badge-warn' : 'badge-muted'}`}>
+          {tone === 'ok' ? 'Pass' : tone === 'fix' ? 'Fix' : 'In progress'}
+        </span>
+      </div>
+      <div className="mt-1 truncate text-lg font-semibold tabular-nums tracking-tight">{value}</div>
+      <div className="truncate text-[11px] text-quiet" title={rule}>{rule}</div>
+    </>
+  );
+  const cls = 'min-w-0 rounded-2xl border border-line bg-surface px-3 py-2.5';
+  return href ? (
+    <a href={href} className={`${cls} block no-underline`}>
+      {inner}
+    </a>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }

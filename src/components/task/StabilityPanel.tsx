@@ -38,18 +38,48 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const flips = new Set(gate?.flips ?? []);
   const rows = showAll ? statements : statements.filter((s) => flips.has(s.id) || passes.some((p) => p.errors[s.id]));
 
+  const locked =
+    !canRun && view.submission.stage === 'review'
+      ? 'Stability is locked while review is pending.'
+      : !canRun && !view.can.holdsRubricSeat
+        ? 'Claim the rubric seat, or ask a PM to assign it, to run Stability.'
+        : canRun && view.aiOutputs.length === 0
+          ? 'Attach the AI output first.'
+          : null;
+
   return (
-    <section className="card flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
+    <section className="card space-y-3" id="stability">
+      <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold">Repeatability & Stability</h2>
         <span className="text-sm text-muted">
           {official
             ? `${STABILITY_PASSES} passes · spread ≤ ${STABILITY_MAX_SPREAD_POINTS} pts · each within ${STABILITY_CALIBRATION_TOLERANCE_POINTS} pts of the human score (${pct(view.handoff.calibrationPercent)})`
             : `${STABILITY_PASSES} passes against the current rubric and AI files to measure repeatability. Reviewer scores do not participate.`}
         </span>
-        <span className="ml-auto flex items-center gap-2">
+        <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)}
           {stability?.acceptedAt && <Pill tone="ok">accepted {formatDate(stability.acceptedAt)}</Pill>}
+          {canRun && (
+            canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt ? (
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                type="button"
+                onClick={() => act(`/api/submissions/${view.submission.id}/stability/accept`, { groupId: stability.groupId }, 'Accepted by the Rubric Team for final submission.')}
+              >
+                Use this Stability result
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                disabled={busy || running !== undefined || view.aiOutputs.length === 0}
+                type="button"
+                onClick={() => act(`/api/submissions/${view.submission.id}/stability`, { requestId: uuid() }, 'Stability run started.')}
+              >
+                {running ? 'Running…' : 'Run Stability'}
+              </button>
+            )
+          )}
         </span>
       </div>
 
@@ -95,28 +125,10 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         </ul>
       )}
 
-      {canRun && (
-        <div className="flex shrink-0 flex-col items-start gap-2">
+      {(canRun || locked) && (
+        <div className="flex flex-col items-start gap-2">
+          {locked ? <p className="text-sm text-muted">{locked}</p> : null}
           <div className="flex flex-wrap gap-2">
-            {canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt ? (
-              <button
-                className="btn btn-primary"
-                disabled={busy}
-                type="button"
-                onClick={() => act(`/api/submissions/${view.submission.id}/stability/accept`, { groupId: stability.groupId }, 'Accepted by the Rubric Team for final submission.')}
-              >
-                Use this Stability result
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary"
-                disabled={busy || running !== undefined || view.aiOutputs.length === 0}
-                type="button"
-                onClick={() => act(`/api/submissions/${view.submission.id}/stability`, { requestId: uuid() }, 'Stability run started.')}
-              >
-                {running ? 'Running…' : 'Run Stability'}
-              </button>
-            )}
             {canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt && (
               <button
                 className="btn"
@@ -133,19 +145,18 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
               </button>
             )}
           </div>
-          {view.aiOutputs.length === 0 && <p className="text-sm text-muted">Attach the AI output first.</p>}
         </div>
       )}
 
       {passes.length > 0 && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center gap-2 text-sm text-muted">
+        <div>
+          <div className="flex items-center gap-2 text-sm text-muted">
             <span>{showAll ? 'All statements' : `Flips and errors (${rows.length})`}</span>
             <button className="underline" onClick={() => setShowAll((v) => !v)}>
               {showAll ? 'show flips only' : 'show all'}
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div className="overflow-x-auto">
           <table className="mt-2 w-full text-sm">
             <thead className="sticky top-0 z-10 bg-surface text-left text-muted">
               <tr>

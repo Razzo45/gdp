@@ -181,8 +181,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
           {view.can.seeReviewPanel &&
             (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && <ReviewPanel {...panel} />}
-          {view.can.seeStability &&
-            (view.can.runStability || s.stage === 'handoff' || (view.stability && view.stability.passes.length > 0)) && <StabilityPanel {...panel} />}
+          {view.can.seeStability && <StabilityPanel {...panel} />}
           {view.can.seeHandoff && (s.stage === 'handoff' || s.stage === 'done' || s.handoffStatus) && <HandoffPanel {...panel} />}
           {s.stage === 'done' && (
             <p className="card text-sm text-muted">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canSeeSubmission, claimableSeat, taskLens, type Actor } from '@/lib/auth/permissions';
+import { canRunStability, canSeeSubmission, claimableSeat, taskLens, type Actor } from '@/lib/auth/permissions';
 
 const seat = { rubricAssigneeId: 'ana', reviewerId: null as string | null, stage: 'rubric' };
 
@@ -29,6 +29,15 @@ describe('taskLens', () => {
     expect(canSeeSubmission(actor(['rubric_creator'], 'ana'), seat)).toBe(true);
     expect(canSeeSubmission(actor(['rubric_creator'], 'other'), seat)).toBe(false);
     expect(claimableSeat(actor(['reviewer'], 'rita'), { rubricAssigneeId: 'ana', reviewerId: null, stage: 'review' })).toBe('review');
+  });
+
+  it('lets admin and the seated rubric creator run Stability', () => {
+    expect(canRunStability(actor(['admin'], 'a'), seat)).toBe(true);
+    expect(canRunStability(actor(['rubric_creator'], 'ana'), seat)).toBe(true);
+    expect(canRunStability(actor(['rubric_creator'], 'other'), seat)).toBe(false);
+    expect(canRunStability(actor(['reviewer'], 'rita'), seat)).toBe(false);
+    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'review' })).toBe(false);
+    expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'stability' })).toBe(true);
   });
 
   it('follows the review seat when someone holds both hats', () => {
