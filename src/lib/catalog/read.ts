@@ -309,12 +309,10 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
     values,
     fields,
     files,
-    inputFiles: inputs
-      .map((entry) => {
-        const file = byId.get(entry.id);
-        return file ? { ...file, role: entry.role } : undefined;
-      })
-      .filter((f): f is CatalogFile => f !== undefined),
+    inputFiles: inputs.flatMap((entry) => {
+      const file = byId.get(entry.id);
+      return file ? [{ ...file, role: entry.role }] : [];
+    }),
     goldenFiles: golden.map((id) => byId.get(id)).filter((f): f is CatalogFile => f !== undefined),
     transitions,
     author,
