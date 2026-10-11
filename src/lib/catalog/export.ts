@@ -78,7 +78,11 @@ export interface PerformanceSummaryInput {
 
 const ascii = (text: string) => catalogAsciiText(text).replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
 
-export function taskPerformanceSummaries(input: PerformanceSummaryInput): Record<string, string | null> {
+export function taskPerformanceSummaries(input: PerformanceSummaryInput): {
+  goldenOutput: string | null;
+  aiOutputHumanEval: string | null;
+  stabilityScores: string | null;
+} {
   const golden = input.goldenPercent === null ? null : `Golden output score: ${pct(input.goldenPercent)}.`;
   const human = input.calibrationPercent === null ? null : `AI output human evaluation score: ${pct(input.calibrationPercent)}.`;
   let stability: string | null = null;
@@ -103,7 +107,7 @@ export function catalogTaskPerformance(input: PerformanceSummaryInput, project: 
   const summaries = taskPerformanceSummaries(input);
   const wanted = declared.size === 0 ? new Set(Object.keys(summaries)) : declared;
   const written: Record<string, string> = {};
-  for (const field of Object.keys(summaries)) {
+  for (const field of ['goldenOutput', 'aiOutputHumanEval', 'stabilityScores'] as const) {
     if (!wanted.has(field)) continue;
     const text = ascii(summaries[field] ?? '');
     if (text === '') return null;
