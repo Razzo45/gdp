@@ -6,6 +6,7 @@ import { db } from '@/db/client';
 import { profiles, submissionEvents, submissions, userRoles, watchedProjects, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
+import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
@@ -61,6 +62,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
       return created!;
     }
     const changed = existing.sourceFingerprint !== fp;
+    const statusMoved = existing.statusId !== read.statusId;
     const [updated] = await tx
       .update(submissions)
       .set({
@@ -69,11 +71,11 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
         source,
         sourceFingerprint: fp,
         lastSeenAt: now,
-        ...(changed ? { upstreamChangedAt: now } : {}),
+        ...(changed || statusMoved ? { upstreamChangedAt: now } : {}),
       })
       .where(eq(submissions.id, existing.id))
       .returning();
-    if (changed) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
+    if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
     return updated!;
   });
 }
@@ -113,8 +115,12 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   if (filter.mine) conditions.push(or(eq(submissions.rubricAssigneeId, actor.id), eq(submissions.reviewerId, actor.id)));
   const q = filter.q?.trim();
   if (q) conditions.push(or(ilike(submissions.title, `%${q}%`), ilike(submissions.catalogSubmissionId, `%${q}%`)));
-  if (filter.workState === 'unassigned') conditions.push(sql`false`);
-  if (filter.workState === 'preparing') conditions.push(and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+  if (filter.workState === 'unassigned') {
+    conditions.push(and(eq(submissions.stage, 'rubric'), isNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+  }
+  if (filter.workState === 'preparing') {
+    conditions.push(and(eq(submissions.stage, 'rubric'), isNotNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+  }
   if (filter.workState === 'in_review') conditions.push(eq(submissions.stage, 'review'));
   if (filter.workState === 'review_returned') conditions.push(and(eq(submissions.stage, 'rubric'), eq(submissions.reviewStatus, 'changes_requested')));
   if (filter.workState === 'stability') conditions.push(eq(submissions.stage, 'stability'));
@@ -187,12 +193,23 @@ export async function peekClaim(actor: Actor, submissionId: string): Promise<{ s
 
 /* ─────────────────────────────────────────────── seats ── */
 
-type Seat = 'rubric' | 'review';
+type Seat = AssignmentSeat;
 
 const seatColumns = {
   rubric: { holder: submissions.rubricAssigneeId, claimedAt: submissions.rubricClaimedAt, key: 'rubricAssigneeId' as const, at: 'rubricClaimedAt' as const },
   review: { holder: submissions.reviewerId, claimedAt: submissions.reviewClaimedAt, key: 'reviewerId' as const, at: 'reviewClaimedAt' as const },
 };
+
+function seatStageError(seat: Seat): string {
+  return seat === 'rubric'
+    ? 'The rubric seat can only be assigned while the task is with the Rubric Team.'
+    : 'The review seat can only be assigned while the task is in review.';
+}
+
+function seatTeamError(seat: Seat): string {
+  const team = seatTeamLabel(seat);
+  return `Assign the ${seat} seat to the ${team} or a ${team} member.`;
+}
 
 /** Take a free seat for yourself. Atomic: the row must still be unclaimed. */
 export async function claimSeat(actor: Actor, submissionId: string, seat: Seat): Promise<Submission> {
@@ -221,6 +238,7 @@ export async function releaseSeat(actor: Actor, submissionId: string, seat: Seat
   const column = seatColumns[seat];
   return db().transaction(async (tx) => {
     const current = await getSubmission(tx, submissionId);
+    if (!canAssignSeatAt(current, seat)) throw conflict(seatStageError(seat));
     const holder = current[column.key];
     if (holder === null) return current;
     const [updated] = await tx
@@ -234,14 +252,18 @@ export async function releaseSeat(actor: Actor, submissionId: string, seat: Seat
   });
 }
 
-/** PMs hand a seat to a specific user (or clear it with null). */
+/** PMs hand a seat to a team member, or to the team pool (`userId` null). */
 export async function assignSeat(actor: Actor, submissionId: string, seat: Seat, userId: string | null): Promise<Submission> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can assign seats.');
   const column = seatColumns[seat];
   return db().transaction(async (tx) => {
+    const current = await getSubmission(tx, submissionId);
+    if (!canAssignSeatAt(current, seat)) throw conflict(seatStageError(seat));
     if (userId) {
       const target = (await tx.select().from(profiles).where(eq(profiles.id, userId)).limit(1))[0];
       if (!target || !target.isActive) throw invalid('That user is not active on the platform.');
+      const grants = await tx.select().from(userRoles).where(eq(userRoles.userId, userId));
+      if (!isEligibleAssignee(grants.map((g) => g.role), seat)) throw invalid(seatTeamError(seat));
     }
     const now = new Date().toISOString();
     const [updated] = await tx
@@ -262,8 +284,8 @@ export interface ClaimsOverviewRow {
   name: string;
   email: string;
   roles: string[];
-  rubricSeats: { submissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
-  reviewSeats: { submissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
+  rubricSeats: { submissionId: string; catalogSubmissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
+  reviewSeats: { submissionId: string; catalogSubmissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
 }
 
 /** Who holds what, for PMs. */
@@ -287,10 +309,10 @@ export async function claimsOverview(actor: Actor): Promise<ClaimsOverviewRow[]>
     roles: roles.get(p.id) ?? [],
     rubricSeats: held
       .filter((s) => s.rubricAssigneeId === p.id)
-      .map((s) => ({ submissionId: s.id, title: s.title, stage: s.stage, claimedAt: s.rubricClaimedAt, landedAt: s.landedAt })),
+      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, stage: s.stage, claimedAt: s.rubricClaimedAt, landedAt: s.landedAt })),
     reviewSeats: held
       .filter((s) => s.reviewerId === p.id)
-      .map((s) => ({ submissionId: s.id, title: s.title, stage: s.stage, claimedAt: s.reviewClaimedAt, landedAt: s.landedAt })),
+      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, stage: s.stage, claimedAt: s.reviewClaimedAt, landedAt: s.landedAt })),
   }));
 }
 

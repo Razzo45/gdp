@@ -27,10 +27,10 @@ export interface SubmissionView {
   people: Record<string, { name: string; email: string }>;
   brief: { projectName: string; statusName: string | null; author: string | null; fields: CatalogField[]; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
   rubric: { id: string; version: number; revision: number; seeds: string[]; generation: Record<string, unknown>; statements: RubricStatement[]; quotas: Record<string, number>; target: number } | null;
-  golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
+  golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string; model: string | null }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
   aiOutputs: AiOutputFile[];
   review: { latest: { id: string; answers: Record<string, boolean>; evidence: Record<string, string>; scorePercent: number; submitted: boolean; reviewerId: string | null; createdAt: string } | null; submittedPercent: number | null; feedback: { decision: string; feedback: string; reviewerId: string | null; createdAt: string }[] };
-  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[]; unacknowledgedFlips: string[] } | null;
+  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
   events: Pick<SubmissionEvent, 'id' | 'actorId' | 'action' | 'detail' | 'createdAt'>[];
@@ -148,7 +148,6 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
             acceptedAt: stability.accepted?.createdAt ?? null,
             calibrationGateActive: stability.calibrationGateActive,
             flipNotes: stability.flipNotes.map((n) => ({ statementId: n.statementId, action: n.action, note: n.note })),
-            unacknowledgedFlips: stability.unacknowledgedFlips,
           },
     handoff: { gates: handoff.gates, goldenPercent: handoff.goldenPercent, calibrationPercent: handoff.calibrationPercent, stabilityScores: handoff.stabilityScores },
     jobs: (lens === 'reviewer' ? [] : lens === 'rubric' ? jobs.filter((j) => j.status === 'queued' || j.status === 'running') : jobs).map((j) => ({

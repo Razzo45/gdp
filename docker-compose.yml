@@ -1,0 +1,12 @@
+# Slot this image in. Fill .env first (copy .env.example). See CONNECT.md.
+services:
+  web:
+    build: .
+    image: gdp:local
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      PORT: "8080"
+      RUN_WORKER: "1"
+    command: ["./start.sh", "web"]

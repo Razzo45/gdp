@@ -1,5 +1,5 @@
 import { json } from '@/lib/api';
-import { readLocalSigned } from '@/lib/storage';
+import { readLocalSigned, writeLocalSigned } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,4 +35,16 @@ export async function GET(request: Request): Promise<Response> {
   return new Response(Buffer.from(bytes), {
     headers: { ...headers, 'Content-Length': String(bytes.byteLength) },
   });
+}
+
+/** Receives a signed PUT from the browser. Auth is the HMAC, not the session. */
+export async function PUT(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const objectPath = url.searchParams.get('path') ?? '';
+  const expires = url.searchParams.get('expires') ?? '';
+  const signature = url.searchParams.get('sig') ?? '';
+  const mime = (request.headers.get('content-type') ?? 'application/octet-stream').split(';')[0]?.trim() || 'application/octet-stream';
+  const ok = await writeLocalSigned(objectPath, expires, signature, request.body, mime);
+  if (!ok) return json({ error: 'That upload link is invalid or has expired.' }, 404);
+  return new Response(null, { status: 204 });
 }

@@ -8,7 +8,7 @@ import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, correctTag, familyOfStatement, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, RUBRIC_TARGET, correctTag, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
@@ -18,6 +18,7 @@ import type { PanelProps } from './TaskWorkspace';
 
 type Draft = {
   id: string;
+  family: Family;
   tag: string;
   statement: string;
   notes: string;
@@ -30,7 +31,17 @@ type Draft = {
 
 type Proposal = { statementId: string; kind: 'polish' | 'harden' | 'lint' | 'swap'; text: string; original?: string; rationale?: string; claimKey?: string };
 
-const toDraft = (s: RubricStatement): Draft => ({ id: s.id, tag: correctTag(s.statement, s.tag), statement: s.statement, notes: s.notes, scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile, claimKey: s.claimKey });
+const toDraft = (s: RubricStatement): Draft => ({
+  id: s.id,
+  family: seatedFamily(s),
+  tag: s.tag,
+  statement: s.statement,
+  notes: s.notes,
+  scope: s.scope,
+  inputFileIds: s.inputFileIds,
+  outputFile: s.outputFile,
+  claimKey: s.claimKey,
+});
 const FAMILY_ORDER: Family[] = ['format', 'content', 'visual'];
 const FAMILY_HEADING: Record<Family, string> = { format: 'Format & File', content: 'Content', visual: 'Visual' };
 
@@ -207,16 +218,17 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
   const counts = useMemo(() => {
     const c: Record<Family, number> = { format: 0, content: 0, visual: 0 };
-    for (const d of drafts) c[familyOfStatement(d.statement, d.tag)] += 1;
+    for (const d of drafts) c[seatedFamily(d)] += 1;
     return c;
   }, [drafts]);
   const quotas = rubric?.quotas ?? { format: 5, content: 15, visual: 30 };
+  const target = rubric?.target ?? RUBRIC_TARGET;
   const golden = view.golden;
   const genJob = view.jobs.find((j) => j.kind === 'rubric_generate' && (j.status === 'queued' || j.status === 'running'));
   const rateJob = view.jobs.find((j) => j.kind === 'golden_autorate' && (j.status === 'queued' || j.status === 'running'));
   const autorateLocked = Boolean(rateJob);
-  const groups = FAMILY_ORDER.map((family) => ({ family, rows: drafts.filter((d) => familyOfStatement(d.statement, d.tag) === family) }));
-  const orderedDrafts = useMemo(() => seatsInDisplayOrder(drafts.map((d) => ({ ...d, family: familyOfStatement(d.statement, d.tag) }))), [drafts]);
+  const groups = FAMILY_ORDER.map((family) => ({ family, rows: drafts.filter((d) => seatedFamily(d) === family) }));
+  const orderedDrafts = useMemo(() => seatsInDisplayOrder(drafts.map((d) => ({ ...d, family: seatedFamily(d) }))), [drafts]);
   const weightById = useMemo(() => {
     const weights = normalisedWeights(orderedDrafts.length);
     return new Map(orderedDrafts.map((d, i) => [d.id, weights[i]!]));
@@ -324,7 +336,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
       {(genJob || rateJob) && <JobProgressCard job={genJob ?? rateJob!} />}
 
-      {editable && FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && drafts.length > 0 && (
+      {editable && drafts.length > 0 && drafts.length < target && FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
           <strong>Some rubric sections need more checks</strong>
           <ul className="mt-1 text-xs">
@@ -467,7 +479,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                   bank={bank}
                   seated={drafts.map((d) => {
                     const live = rubric?.statements.find((s) => s.id === d.id);
-                    return { id: d.id, claimKey: live?.claimKey || d.id, statement: d.statement, tag: d.tag, family: familyOfStatement(d.statement, d.tag), notes: d.notes };
+                    return { id: d.id, claimKey: live?.claimKey || d.id, statement: d.statement, tag: d.tag, family: seatedFamily(d), notes: d.notes };
                   })}
                   focus={bankFocus}
                   editable={editable && !autorateLocked}
@@ -510,19 +522,43 @@ function progressLabel(job: { progress?: { done?: number; total?: number; note?:
   const p = job.progress ?? {};
   if (p.note) return p.note;
   if (p.total) return `${p.done ?? 0}/${p.total}`;
-  return job.status === 'queued' ? 'Queued — next to generate' : 'In progress';
+  return job.status === 'queued' ? 'Queued' : 'Working';
 }
 
 function JobProgressCard({ job }: { job: { kind: string; status: string; progress?: { done?: number; total?: number; note?: string; stages?: { name: string; detail: string; state: string }[]; seeds?: { total: number; ok: number; thin: number; failed: number } } } }) {
   const p = job.progress ?? {};
-  const ratio = p.total ? Math.min(1, (p.done ?? 0) / p.total) : job.status === 'running' ? 0.15 : 0;
+  const golden = job.kind === 'golden_autorate';
+  const graded = golden && (p.done ?? 0) > 0 && (p.total ?? 0) > 0;
+  const ratio = golden
+    ? graded
+      ? Math.min(1, (p.done ?? 0) / (p.total ?? 1))
+      : null
+    : p.total
+      ? Math.min(1, (p.done ?? 0) / p.total)
+      : job.status === 'running'
+        ? 0.15
+        : 0;
+  const title = job.kind === 'rubric_generate'
+    ? job.status === 'queued'
+      ? 'Queued — next to generate'
+      : 'Rubric regeneration in progress'
+    : p.note || (job.status === 'queued' ? 'Golden autorate queued' : 'Golden autorate');
   return (
     <div className="rounded-xl border border-line bg-accent-soft/40 p-3 text-sm">
-      <div className="font-medium">{job.kind === 'rubric_generate' ? (job.status === 'queued' ? 'Queued — next to generate' : 'Rubric regeneration in progress') : 'Autorating golden files'}</div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
-        <div className="h-full bg-accent" style={{ width: `${Math.round(ratio * 100)}%` }} />
-      </div>
-      <p className="mt-1 text-xs text-muted">{p.note}{p.seeds ? ` · ${p.seeds.ok} ok · ${p.seeds.thin} thin · ${p.seeds.failed} failed` : ''}</p>
+      <div className="font-medium">{title}</div>
+      {ratio !== null && (
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface">
+          <div className="h-full bg-accent" style={{ width: `${Math.round(ratio * 100)}%` }} />
+        </div>
+      )}
+      {golden && graded && (
+        <p className="mt-1 text-xs text-muted">
+          {p.done} of {p.total} seats
+        </p>
+      )}
+      {!golden && (
+        <p className="mt-1 text-xs text-muted">{p.note}{p.seeds ? ` · ${p.seeds.ok} ok · ${p.seeds.thin} thin · ${p.seeds.failed} failed` : ''}</p>
+      )}
       {p.stages && p.stages.length > 0 && (
         <table className="mt-2 w-full text-xs">
           <tbody>
@@ -610,12 +646,33 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
   const open = editing === d.id;
   const mine = proposal?.statementId === d.id;
   const weight = weightById.get(d.id);
+  const [note, setNote] = useState(golden?.evidence[d.id] ?? '');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setNote(golden?.evidence[d.id] ?? '');
+  }, [d.id, golden?.evidence[d.id], golden?.sources[d.id]]);
+
+  async function persist(next: boolean, evidence: string) {
+    const text = evidence.trim();
+    if (text.length < EVIDENCE_MIN_CHARS) {
+      notify(`Add the observation supporting this grade (at least ${EVIDENCE_MIN_CHARS} characters).`, 'bad');
+      return;
+    }
+    try {
+      await api(`/api/submissions/${view.submission.id}/golden/override`, { body: { statementId: d.id, verdict: next, evidence: text } });
+      notify(`${seatLabel(n)} marked ${next ? 'Yes' : 'No'} · Source: human.`);
+      await refresh();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not save the override.', 'bad');
+    }
+  }
+
   return (
     <li
       id={`rubric-statement-${d.id}`}
       data-seat-row
       tabIndex={0}
-      className="grid scroll-mt-24 gap-3 rounded-2xl border border-line p-4 outline-none focus-visible:ring-2 focus-visible:ring-accent target:border-accent md:grid-cols-[2.25rem_minmax(0,1fr)_12rem]"
+      className="grid scroll-mt-24 gap-3 rounded-2xl border border-line p-4 outline-none focus-visible:ring-2 focus-visible:ring-accent target:border-accent md:grid-cols-[2.25rem_minmax(0,1fr)]"
       onKeyDown={(event) => {
         if (!editable) return;
         const next = gradeFromKey(event);
@@ -628,28 +685,86 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
       <div className="font-mono text-xs tabular-nums text-muted" title={seatLabel(n)}>
         {String(n).padStart(pad, '0')}
       </div>
-      <div className="min-w-0 space-y-1.5">
-        {open && editable ? (
-          <textarea
-            className="input min-h-[3rem]"
-            rows={3}
-            value={d.statement}
-            onChange={(e) => {
-              const statement = e.target.value;
-              const files = catalogFiles(view);
-              const patch: Partial<Draft> = { statement, tag: correctTag(statement, d.tag) };
-              if (!d.outputFile) Object.assign(patch, inferFileScope(statement, files.inputs, files.goldens));
-              onUpdate(d.id, patch);
-            }}
-          />
-        ) : (
-          <p className="text-[15px] leading-relaxed">
-            {d.statement}
-            {softIds.has(d.id) && <span className="badge badge-warn ml-2 align-middle">Soft</span>}
-          </p>
-        )}
-        {open && editable && <SeatScopeLine d={d} view={view} onUpdate={onUpdate} />}
-        {d.notes && <p className="text-xs text-muted">Only if {d.notes}</p>}
+      <div className="min-w-0 space-y-2">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <div className="min-w-0 space-y-2">
+            {open && editable ? (
+              <textarea
+                className="input min-h-[3rem]"
+                rows={3}
+                value={d.statement}
+                onChange={(e) => {
+                  const statement = e.target.value;
+                  const files = catalogFiles(view);
+                  const patch: Partial<Draft> = { statement, tag: correctTag(statement, d.tag) };
+                  if (!d.outputFile) Object.assign(patch, inferFileScope(statement, files.inputs, files.goldens));
+                  onUpdate(d.id, patch);
+                }}
+              />
+            ) : (
+              <p className="text-[15px] leading-relaxed">
+                {d.statement}
+                {softIds.has(d.id) && <span className="badge badge-warn ml-2 align-middle">Soft</span>}
+              </p>
+            )}
+            {open && editable && <SeatScopeLine d={d} view={view} onUpdate={onUpdate} />}
+            {d.notes && <p className="text-xs text-muted">Only if {d.notes}</p>}
+            {editable ? (
+              <label className="block">
+                <span className="text-xs font-medium text-muted">Evidence</span>
+                <textarea
+                  className="input mt-1 min-h-24"
+                  placeholder="Add the observation supporting this grade"
+                  value={note}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setNote(text);
+                    if (timer.current) clearTimeout(timer.current);
+                    timer.current = setTimeout(() => {
+                      if (verdict === null || verdict === undefined) return;
+                      if (text.trim().length < EVIDENCE_MIN_CHARS) return;
+                      if (text.trim() === (golden?.evidence[d.id] ?? '').trim()) return;
+                      void persist(verdict, text);
+                    }, 600);
+                  }}
+                />
+              </label>
+            ) : (
+              (golden?.evidence[d.id] || audit?.human?.evidence) && (
+                <p className="text-sm leading-relaxed text-muted">{golden?.evidence[d.id] || audit?.human?.evidence}</p>
+              )
+            )}
+            {source === 'human' && audit?.ai && (
+              <p className="text-xs text-quiet">
+                AI{audit.ai.model ? ` · ${audit.ai.model}` : ''}: {audit.ai.verdict === true ? 'Yes' : audit.ai.verdict === false ? 'No' : '—'}
+                {audit.ai.evidence ? ` — ${audit.ai.evidence}` : ''}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col items-center justify-center gap-1.5 self-center">
+            <Choice
+              value={verdict ?? null}
+              disabled={!editable}
+              clearable={false}
+              onChange={(v) => {
+                if (v === null || v === verdict) return;
+                void persist(v, note);
+              }}
+            />
+            {weight !== undefined && (
+              <span className="tabular-nums text-xs text-muted" title="Percentage share of the rubric score">
+                {formatWeight(weight)}
+              </span>
+            )}
+            {source === 'ai' && (
+              <p className="text-[11px] text-quiet">
+                Source: AI{audit?.ai?.model ? ` · ${audit.ai.model}` : ''}
+              </p>
+            )}
+            {source === 'human' && <p className="text-[11px] text-quiet">Source: Human</p>}
+            {source === 'stale' && <p className="text-[11px] text-quiet">Source: Stale — statement edited</p>}
+          </div>
+        </div>
         {lint.overall === 'fail' && (
           <div className="rounded-2xl border border-warn bg-warn-soft px-3 py-2 text-xs text-warn">
             <p className="font-semibold">Things to check ({lint.reasons.length})</p>
@@ -680,11 +795,11 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
           </div>
         )}
         {editable && (
-          <div className="flex flex-wrap items-center gap-1">
-            <button className="seat-act" type="button" onClick={() => onEdit(open ? null : d.id)}>{open ? 'Done' : 'Edit'}</button>
-            <button className="seat-act" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'polish')}>Polish</button>
-            <button className="seat-act" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'harden')}>Harden</button>
-            <button className="seat-act" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>Suggest replacement</button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button className="seat-pill seat-pill-edit" type="button" onClick={() => onEdit(open ? null : d.id)}>{open ? 'Done' : 'Edit'}</button>
+            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'polish')}>Polish</button>
+            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'harden')}>Harden</button>
+            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>Suggest replacement</button>
             <button className="seat-act ml-auto" disabled={busy !== null} type="button" onClick={() => onReassess(d)} title="Reassess only this statement against the Golden">
               Reassess
             </button>
@@ -704,110 +819,7 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
           </p>
         )}
       </div>
-      <GoldenGrade n={n} d={d} view={view} editable={editable} golden={golden} verdict={verdict ?? null} source={source} audit={audit} error={error} weight={weight} notify={notify} refresh={refresh} />
     </li>
-  );
-}
-
-function GoldenGrade({
-  n,
-  d,
-  view,
-  editable,
-  golden,
-  verdict,
-  source,
-  audit,
-  error,
-  weight,
-  notify,
-  refresh,
-}: {
-  n: number;
-  d: Draft;
-  view: PanelProps['view'];
-  editable: boolean;
-  golden: PanelProps['view']['golden'];
-  verdict: boolean | null;
-  source: 'ai' | 'human' | 'stale' | undefined;
-  audit: { ai?: { verdict: boolean | null; evidence: string }; human?: { verdict: boolean | null; evidence: string } } | undefined;
-  error: string | undefined;
-  weight: number | undefined;
-  notify: PanelProps['notify'];
-  refresh: PanelProps['refresh'];
-}) {
-  const [note, setNote] = useState(golden?.evidence[d.id] ?? '');
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    setNote(golden?.evidence[d.id] ?? '');
-  }, [d.id, golden?.evidence[d.id], golden?.sources[d.id]]);
-
-  async function persist(next: boolean, evidence: string) {
-    const text = evidence.trim();
-    if (text.length < EVIDENCE_MIN_CHARS) {
-      notify(`Add the observation supporting this grade (at least ${EVIDENCE_MIN_CHARS} characters).`, 'bad');
-      return;
-    }
-    try {
-      await api(`/api/submissions/${view.submission.id}/golden/override`, { body: { statementId: d.id, verdict: next, evidence: text } });
-      notify(`${seatLabel(n)} marked ${next ? 'Yes' : 'No'} · Source: human.`);
-      await refresh();
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not save the override.', 'bad');
-    }
-  }
-
-  return (
-    <div className="space-y-2 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
-        <Choice
-          value={verdict}
-          disabled={!editable}
-          clearable={false}
-          onChange={(v) => {
-            if (v === null || v === verdict) return;
-            void persist(v, note);
-          }}
-        />
-        {weight !== undefined && (
-          <span className="shrink-0 tabular-nums text-muted" title="Percentage share of the rubric score">
-            {formatWeight(weight)}
-          </span>
-        )}
-      </div>
-      {source === 'human' && audit?.ai && (
-        <p className="text-quiet">
-          AI: {audit.ai.verdict === true ? 'Yes' : audit.ai.verdict === false ? 'No' : '—'}
-          {audit.ai.evidence ? ` — ${audit.ai.evidence}` : ''}
-        </p>
-      )}
-      {error && <p className="text-bad">{error}</p>}
-      {editable ? (
-        <label className="block">
-          <span className="text-[11px] text-muted">Evidence</span>
-          <textarea
-            className="input mt-0.5 min-h-16 text-xs"
-            placeholder="Add the observation supporting this grade"
-            value={note}
-            disabled={!editable}
-            onChange={(e) => {
-              const text = e.target.value;
-              setNote(text);
-              if (timer.current) clearTimeout(timer.current);
-              timer.current = setTimeout(() => {
-                if (verdict === null) return;
-                if (text.trim().length < EVIDENCE_MIN_CHARS) return;
-                if (text.trim() === (golden?.evidence[d.id] ?? '').trim()) return;
-                void persist(verdict, text);
-              }, 600);
-            }}
-          />
-        </label>
-      ) : (
-        (golden?.evidence[d.id] || audit?.human?.evidence) && <p className="text-muted">{golden?.evidence[d.id] || audit?.human?.evidence}</p>
-      )}
-      {source && <p className="text-[11px] text-quiet">Source: {source}</p>}
-    </div>
   );
 }
 

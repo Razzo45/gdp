@@ -1,6 +1,7 @@
-# Cloud Run image. One image, two services:
-#   web     node server.js          RUN_WORKER=0
-#   worker  /app/start.sh worker    HTTP /health on $PORT (Cloud Run requires a listener)
+# Hostable image. Fill connectors in .env — see CONNECT.md.
+#   web      ./start.sh web       Next.js on $PORT (default 8080)
+#   worker   ./start.sh worker    job queue (optional second process)
+#   migrate  ./start.sh migrate   apply drizzle/*.sql to DATABASE_URL
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
@@ -19,10 +20,14 @@ ENV RUN_WORKER=0
 RUN npm run build && npm prune --omit=dev && npm install tsx --omit=dev --no-save
 
 FROM node:22-bookworm-slim AS runner
+# LibreOffice is part of this image (not a laptop install). Impress renders
+# PPTX → PDF; the app then stills each page for Golden / Stability.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    fonts-dejavu-core \
     fonts-liberation \
+    fonts-noto-core \
     libreoffice-calc \
     libreoffice-impress \
     libreoffice-writer \
