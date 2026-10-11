@@ -35,11 +35,58 @@ export function shortCatalogId(catalogSubmissionId: string | null | undefined): 
   return id ? id.slice(0, 8) : '—';
 }
 
-/** One-line hint under the short id. Not the full Catalog prompt. */
+const ROLE_OPENER = /^(?:hi,?\s+)?i(?:'m| am)\s+/i;
+const ASKED =
+  /(?:tasked with|asked to|need help|looking to)\s+(?:producing|creating|preparing|making|designing|building|writing|developing|produce|create|prepare|make|design|build|write|develop)\s+/i;
+const DOING = /\b(?:producing|creating|preparing|making|designing|building|writing|developing)\s+(?=an?\s+|the\s+)/i;
+const IMPERATIVE = /^(?:make|create|build|produce|write|design|prepare|develop)\s+/i;
+
+function clipPhrase(text: string, max: number): string {
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return '';
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+function firstPhrase(raw: string): string {
+  let text = raw.replace(/\s+/g, ' ').trim();
+  const clause = text.search(/\s+(?:that|which|so that|who|where)\s+/i);
+  if (clause > 12) text = text.slice(0, clause);
+  const stop = text.search(/[.!?]/);
+  if (stop > 8) text = text.slice(0, stop);
+  text = text.replace(/[:;,]+\s*$/g, '').trim();
+  text = text.replace(/^(?:an?|the)\s+/i, '');
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+function orgOf(text: string): string | null {
+  const match = text.match(/\bat\s+([A-Z][\w&.''-]{1,}(?:\s+(?:and|&|[A-Z][\w&.''-]{1,}))*)/);
+  const org = match?.[1]?.trim() ?? '';
+  return org.length >= 3 ? org : null;
+}
+
+function deliverableOf(text: string): string | null {
+  const labeled = text.match(/^(?:deliverable|task)\s*:\s*(.+)$/i);
+  if (labeled) return firstPhrase(labeled[1] ?? '') || null;
+  for (const pattern of [ASKED, IMPERATIVE, DOING]) {
+    const match = text.match(pattern);
+    if (!match || match.index === undefined) continue;
+    const phrase = firstPhrase(text.slice(match.index + match[0].length));
+    if (phrase) return phrase;
+  }
+  return null;
+}
+
+/** One-line cliff notes under the short id — not the first-person Catalog prompt. */
 export function shortTaskDescriptor(title: string | null | undefined, max = 72): string {
   const text = title?.replace(/\s+/g, ' ').trim() ?? '';
   if (!text) return '';
-  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+  const deliverable = deliverableOf(text);
+  const org = orgOf(text);
+  let phrase = deliverable;
+  if (phrase && org && !phrase.toLowerCase().includes(org.toLowerCase())) phrase = `${phrase} for ${org}`;
+  if (!phrase && !ROLE_OPENER.test(text) && text.length <= max) return text.replace(/[.,;:]+$/, '');
+  if (!phrase) phrase = firstPhrase(text.replace(ROLE_OPENER, '')) || text;
+  return clipPhrase(phrase, max);
 }
 
 export function pct(value: number | null | undefined): string {

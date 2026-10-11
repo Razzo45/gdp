@@ -179,20 +179,32 @@ export function goldenFileIds(values: Record<string, unknown>): string[] {
   return ids;
 }
 
-/** `inputFiles: [{ inputFile: <id> }]` plus any other uploader-typed field. */
-export function inputFileIds(values: Record<string, unknown>, golden: ReadonlySet<string>): string[] {
-  const ids: string[] = [];
-  const add = (v: unknown) => {
-    if (typeof v === 'string' && /^[0-9a-f-]{20,}$/i.test(v.trim()) && !golden.has(v.trim()) && !ids.includes(v.trim())) ids.push(v.trim());
+/** `inputFiles: [{ inputFile: <id>, type?: 'Regular input' | 'Distractor' | 'Style reference' }]`. */
+export function inputFileEntries(values: Record<string, unknown>, golden: ReadonlySet<string>): { id: string; role: string | null }[] {
+  const out: { id: string; role: string | null }[] = [];
+  const seen = new Set<string>();
+  const add = (raw: unknown, role: string | null) => {
+    if (typeof raw !== 'string') return;
+    const id = raw.trim();
+    if (!/^[0-9a-f-]{20,}$/i.test(id) || golden.has(id) || seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, role });
   };
   const inputs = values['inputFiles'];
   if (Array.isArray(inputs)) {
     for (const entry of inputs) {
-      if (entry && typeof entry === 'object') add((entry as Record<string, unknown>)['inputFile']);
-      else add(entry);
+      if (entry && typeof entry === 'object') {
+        const row = entry as Record<string, unknown>;
+        const role = typeof row['type'] === 'string' && row['type'].trim() ? row['type'].trim() : null;
+        add(row['inputFile'], role);
+      } else add(entry, null);
     }
   }
-  return ids;
+  return out;
+}
+
+export function inputFileIds(values: Record<string, unknown>, golden: ReadonlySet<string>): string[] {
+  return inputFileEntries(values, golden).map((entry) => entry.id);
 }
 
 function hiddenKeys(project: ProjectDeclaration | null, statusId: string | null): Set<string> {
@@ -205,7 +217,7 @@ function hiddenKeys(project: ProjectDeclaration | null, statusId: string | null)
   return hidden;
 }
 
-const SKIP_FOR_PROMPT = new Set(['goldenOutput', 'rubrics', 'taskPerformance', 'viewTask']);
+const SKIP_FOR_PROMPT = new Set(['goldenOutput', 'rubrics', 'taskPerformance', 'viewTask', 'inputFiles']);
 
 function flatten(value: unknown, node: SchemaNode | undefined, files: Map<string, CatalogFile>): string {
   if (value === null || value === undefined) return '';
@@ -248,7 +260,7 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
   const byId = new Map(files.map((f) => [f.id, f]));
   const golden = goldenFileIds(values);
   const goldenSet = new Set(golden);
-  const inputs = inputFileIds(values, goldenSet);
+  const inputs = inputFileEntries(values, goldenSet);
   const statusId = body.workflowState?.statusId ?? null;
   const statuses = new Map((project?.workflow?.statuses ?? []).map((s) => [s.statusId ?? '', s.name ?? null]));
   const hidden = hiddenKeys(project, statusId);
@@ -297,7 +309,12 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
     values,
     fields,
     files,
-    inputFiles: inputs.map((id) => byId.get(id)).filter((f): f is CatalogFile => f !== undefined),
+    inputFiles: inputs
+      .map((entry) => {
+        const file = byId.get(entry.id);
+        return file ? { ...file, role: entry.role } : undefined;
+      })
+      .filter((f): f is CatalogFile => f !== undefined),
     goldenFiles: golden.map((id) => byId.get(id)).filter((f): f is CatalogFile => f !== undefined),
     transitions,
     author,

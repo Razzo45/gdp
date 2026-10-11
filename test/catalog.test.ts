@@ -35,7 +35,7 @@ const submission = {
   projectSubmissionId: 'sub-1',
   submission: {
     prompt: 'Build a 12-slide deck — “Q3 résumé”',
-    inputFiles: [{ inputFile: '11111111-2222-3333-4444-555555555555' }],
+    inputFiles: [{ inputFile: '11111111-2222-3333-4444-555555555555', type: 'Distractor' }],
     goldenOutput: [{ goldenFile: '66666666-7777-8888-9999-000000000000' }],
     secret: 'hidden from the prompt',
   },
@@ -63,8 +63,8 @@ describe('readCatalogSubmission', () => {
     expect(read.goldenFiles[0]!.previewUrl).toBe('https://cdn/golden-preview');
     expect(read.inputFiles.map((f) => f.name)).toEqual(['numbers.xlsx']);
     expect(read.inputFiles[0]!.mime).toContain('spreadsheetml');
-    expect(read.fields.map((f) => f.key)).toEqual(['prompt', 'inputFiles']);
-    expect(read.fields[1]!.text).toContain('[file: numbers.xlsx]');
+    expect(read.inputFiles[0]!.role).toBe('Distractor');
+    expect(read.fields.map((f) => f.key)).toEqual(['prompt']);
     expect(read.transitions).toEqual([{ to: 'st-review', toName: 'Review', trigger: 'submit', action: 'Send to review', noteRequired: false }]);
     expect(read.author).toBe('Ana');
     expect(read.title).toMatch(/^Build a 12-slide deck/);

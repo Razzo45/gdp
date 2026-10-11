@@ -15,6 +15,8 @@ export interface CatalogFile {
   downloadUrl: string | null;
   previewUrl: string | null;
   thumbnailUrl: string | null;
+  /** Catalog input role: Regular input, Distractor, Style reference, … */
+  role?: string | null;
 }
 
 export interface CatalogField {

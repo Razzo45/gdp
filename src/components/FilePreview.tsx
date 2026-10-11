@@ -8,6 +8,7 @@ export interface PreviewFile {
   name: string;
   mime?: string;
   extension?: string;
+  role?: string | null;
 }
 
 type Kind = 'image' | 'pdf' | 'office' | 'csv' | 'video' | 'audio' | 'text' | 'html' | 'opaque';
@@ -60,6 +61,13 @@ function withParam(href: string, key: string): string {
   return `${href}${href.includes('?') ? '&' : '?'}${key}=1`;
 }
 
+function roleBadge(role: string): string {
+  const key = role.trim().toLowerCase();
+  if (key === 'distractor') return 'badge-warn';
+  if (key === 'style reference') return 'badge-check';
+  return 'badge-muted';
+}
+
 function officeExt(file: PreviewFile): OfficeExt | null {
   const ext = extOf(file);
   return ext === 'pptx' || ext === 'docx' || ext === 'xlsx' || ext === 'csv' ? ext : null;
@@ -95,6 +103,7 @@ export function FilePreview({ file, href }: { file: PreviewFile; href: string })
         <a className="min-w-0 shrink font-medium break-all hover:underline" href={withParam(href, 'download')} target="_blank" rel="noreferrer">
           {name}
         </a>
+        {file.role && <span className={`badge shrink-0 ${roleBadge(file.role)}`}>{file.role}</span>}
         <span className="badge badge-muted shrink-0">{typeLabel}</span>
         {(viewer || native) && (
           <button className="btn btn-sm ml-auto" type="button" onClick={() => setOpen((v) => !v)}>

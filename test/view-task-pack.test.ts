@@ -50,7 +50,7 @@ describe('share pack', () => {
       statement: 'The delivered video is 16:9.',
     });
     const pack = await sharePack(row.id, viewTaskToken(SECRET, row.id));
-    expect(pack.title).toMatch(/deck for regional leadership/);
+    expect(pack.title).toBe('Deck for regional leadership');
     expect(pack.task).toMatch(/deck for regional leadership/);
     expect(pack.rubric).toEqual([{ id: 's001', statement: 'The delivered video is 16:9.', tag: 'Format/File' }]);
   });

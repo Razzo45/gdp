@@ -1,8 +1,9 @@
 import 'server-only';
 
+import { shortTaskDescriptor } from '@/components/format';
 import { db } from '@/db/client';
 import { deliveryId, seatsInDisplayOrder } from '@/domain/rubric';
-import type { SharePack } from '@/domain/sharePack';
+import { shareVisibleFields, type SharePack } from '@/domain/sharePack';
 import { viewTaskTokenMatches } from '@/domain/viewTask';
 import { env } from '@/lib/env';
 import { taskPerformanceSummaries } from '@/lib/catalog/export';
@@ -28,17 +29,17 @@ export async function sharePack(submissionId: string, token: string | null | und
   const statements = rubric ? await statementsOf(database, rubric.id) : [];
   const view = await handoffView(database, submission, { rubric, statements });
   const ai = await listAiOutputs(database, submissionId);
-  const fields = (source?.fields ?? []).filter((f) => f.key !== 'inputFiles' && f.key !== 'prompt');
+  const fields = shareVisibleFields((source?.fields ?? []).filter((f) => f.key !== 'inputFiles' && f.key !== 'prompt'));
   const task =
     source?.fields.find((f) => /^(prompt|task|instruction|description)$/i.test(f.key))?.text?.trim() ||
     source?.title?.trim() ||
     submission.title;
   return {
     submissionId: submission.id,
-    title: source?.title || submission.title || 'Task',
+    title: shortTaskDescriptor(task) || source?.title || submission.title || 'Task',
     task,
     fields,
-    inputs: (source?.inputFiles ?? []).map((f) => ({ id: f.id, name: f.name, mime: f.mime, kind: 'input' as const })),
+    inputs: (source?.inputFiles ?? []).map((f) => ({ id: f.id, name: f.name, mime: f.mime, kind: 'input' as const, role: f.role ?? null })),
     golden: (source?.goldenFiles ?? []).map((f) => ({ id: f.id, name: f.name, mime: f.mime, kind: 'golden' as const })),
     aiOutputs: ai.map((f) => ({ id: f.id, name: f.name, mime: f.mime, kind: 'ai' as const })),
     performance: taskPerformanceSummaries({
