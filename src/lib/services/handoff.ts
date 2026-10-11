@@ -10,6 +10,7 @@ import { fetchSubmission, saveSubmissionValues, transitionSubmission } from '@/l
 import { catalogRubricItems, catalogTaskPerformance } from '@/lib/catalog/export';
 import { ProjectPayload, readCatalogSubmission } from '@/lib/catalog/read';
 import { scheduleReap } from '@/lib/ai/reaper';
+import { isLivePushLease } from '@/domain/pushLease';
 import { conflict, forbidden, invalid, ServiceError } from './errors';
 import { submittedCalibration } from './review';
 import { currentRubric, goldenState, statementsOf } from './rubric';
@@ -120,6 +121,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   if (!(holdsRubricSeat(actor, submission) || isController(actor))) throw forbidden('You may not push this task.');
   if (submission.handoffStatus !== 'final_review_pass') throw conflict('The task must reach "final review pass" before it is pushed.');
   if (submission.pushedAt) throw conflict('This task was already pushed.');
+  if (isLivePushLease(submission.pushReceipt)) throw conflict('A push is already in progress for this task.');
 
   const view = await handoffView(database, submission);
   if (!(view.gates.golden && view.gates.calibration && view.gates.stability)) throw conflict(view.gates.reasons.join(' '));
@@ -131,7 +133,14 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   const watched = await watchedProjectFor(database, submission.projectId);
   if (!watched || !watched.handoffStatusId) throw conflict('This project has no handoff status configured. Ask a PM to set it under Settings → Projects.');
 
-  // Take a short push lease so two clicks cannot both push.
+  const recoveredEarly = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);
+  if (recoveredEarly) return recoveredEarly;
+
+  if (submission.pushReceipt && !isLivePushLease(submission.pushReceipt)) {
+    await database.update(submissions).set({ pushReceipt: null }).where(and(eq(submissions.id, submissionId), sql`${submissions.pushedAt} is null`));
+  }
+
+  // Take a short push lease so two clicks cannot both push. Expired leases are cleared above.
   const leased = await database
     .update(submissions)
     .set({ pushReceipt: { leaseBy: actor.id, leaseAt: new Date().toISOString() } })
@@ -139,6 +148,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     .returning({ id: submissions.id });
   if (leased.length === 0) throw conflict('A push is already in progress for this task.');
 
+  let catalogTouched = false;
   try {
     const fresh = await fetchSubmission(submission.catalogSubmissionId);
     if (!fresh.ok) throw new ServiceError(502, fresh.error);
@@ -158,6 +168,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
 
     const saved = await saveSubmissionValues(submission.catalogSubmissionId, read.projectId, values);
     if (!saved.ok) throw new ServiceError(saved.status === 400 ? 422 : 502, saved.error);
+    catalogTouched = true;
 
     const moves: string[] = [];
     let at = read.statusId ?? watched.workStatusId;
@@ -180,10 +191,43 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     scheduleReap();
     return { rubricItems: items.items.length, moves };
   } catch (error) {
+    if (catalogTouched) {
+      const recovered = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);
+      if (recovered) return recovered;
+    }
     await database.update(submissions).set({ pushReceipt: null }).where(and(eq(submissions.id, submissionId), sql`${submissions.pushedAt} is null`));
     await recordEvent(database, submissionId, actor.id, 'push_failed', { error: error instanceof Error ? error.message : String(error) });
     throw error;
   }
+}
+
+/** If the Catalog already has the handoff status, finish the local row so a retry is not a dead end. */
+async function reconcileLocalPush(
+  database: ReturnType<typeof db>,
+  actor: Actor,
+  submission: Submission,
+  handoffStatusId: string,
+): Promise<PushResult | null> {
+  const fresh = await fetchSubmission(submission.catalogSubmissionId);
+  if (!fresh.ok) return null;
+  const read = readCatalogSubmission(fresh.submission, fresh.project);
+  if (!read || read.statusId !== handoffStatusId) return null;
+  const items = Array.isArray(read.values['rubrics']) ? read.values['rubrics'] : [];
+  await database.transaction(async (tx) => {
+    await tx
+      .update(submissions)
+      .set({
+        handoffStatus: 'client_visible',
+        stage: 'done',
+        pushedAt: new Date().toISOString(),
+        statusId: read.statusId,
+        pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.length, moves: [handoffStatusId], recovered: true },
+      })
+      .where(and(eq(submissions.id, submission.id), sql`${submissions.pushedAt} is null`));
+    await recordEvent(tx, submission.id, actor.id, 'pushed_to_catalog', { recovered: true, rubricItems: items.length });
+  });
+  scheduleReap();
+  return { rubricItems: items.length, moves: [handoffStatusId] };
 }
 
 export { readSource };

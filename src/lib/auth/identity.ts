@@ -34,7 +34,6 @@ async function loadActor(userId: string, email: string | null): Promise<Actor | 
   let profile = (await database.select().from(profiles).where(eq(profiles.id, userId)).limit(1))[0];
   if (!profile) {
     if (!email) return null;
-    // First sign-in: the Auth user exists, the app profile does not yet.
     const grantAdmin = bootstrapAdminEmails().has(email.toLowerCase());
     await database.transaction(async (tx) => {
       await tx.insert(profiles).values({ id: userId, email }).onConflictDoNothing();
@@ -62,7 +61,7 @@ async function loadActor(userId: string, email: string | null): Promise<Actor | 
  * in a header it strips from inbound requests. Should a route ever run
  * without the proxy, the cookie is verified here instead — still locally.
  */
-export const currentActor = cache(async (): Promise<Actor | null> => {
+export const currentSession = cache(async (): Promise<{ userId: string; email: string | null } | null> => {
   const list = await headers();
   let userId = list.get(VERIFIED_USER_HEADER);
   let email = list.get(VERIFIED_EMAIL_HEADER);
@@ -85,7 +84,13 @@ export const currentActor = cache(async (): Promise<Actor | null> => {
       email = claims.email;
     }
   }
-  const actor = await loadActor(userId, email);
+  return { userId, email };
+});
+
+export const currentActor = cache(async (): Promise<Actor | null> => {
+  const session = await currentSession();
+  if (!session) return null;
+  const actor = await loadActor(session.userId, session.email);
   if (!actor || !actor.isActive) return null;
   return actor;
 });

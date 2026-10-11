@@ -29,6 +29,19 @@ export function formatDate(iso: string | null | undefined): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
 }
 
+/** How the team names a task: the first 8 of the Catalog submission id. */
+export function shortCatalogId(catalogSubmissionId: string | null | undefined): string {
+  const id = catalogSubmissionId?.trim() ?? '';
+  return id ? id.slice(0, 8) : '—';
+}
+
+/** One-line hint under the short id. Not the full Catalog prompt. */
+export function shortTaskDescriptor(title: string | null | undefined, max = 72): string {
+  const text = title?.replace(/\s+/g, ' ').trim() ?? '';
+  if (!text) return '';
+  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
 export function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const rounded = Math.round(value * 10) / 10;

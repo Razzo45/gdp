@@ -44,7 +44,7 @@ export function LoginForm({
         setMessage('If that address has an account, a reset link is on its way.');
         return;
       }
-      await api('/api/auth/password', { body: { password } });
+      await api('/api/auth/password', { body: { password, token: params.get('token') || undefined } });
       window.location.href = '/';
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Something went wrong.');

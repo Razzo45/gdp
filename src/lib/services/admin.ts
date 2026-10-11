@@ -32,17 +32,17 @@ export async function listUsers(actor: Actor): Promise<UserRow[]> {
 }
 
 /** Creates the Auth user (invite email) and the profile with roles, in that order. */
-export async function inviteUser(actor: Actor, input: { email: string; roles: Role[]; displayName?: string }, origin: string): Promise<UserRow> {
+export async function inviteUser(actor: Actor, input: { email: string; roles: Role[]; displayName?: string }, origin: string): Promise<UserRow & { inviteUrl?: string }> {
   if (!canManageUsers(actor)) throw forbidden('Only admins can invite users.');
   const email = input.email.trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw invalid('Enter a valid email address.');
   const roles = [...new Set(input.roles)].filter((r): r is Role => (ROLES as readonly string[]).includes(r));
-  const base = env().PUBLIC_APP_URL ?? origin;
+  const base = (env().PUBLIC_APP_URL ?? origin).replace(/\/$/, '');
   const database = db();
 
   let userId: string | undefined;
+  let inviteUrl: string | undefined;
   if (env().AUTH_MODE === 'local') {
-    // No identity provider: the profile row *is* the account.
     userId = (await database.select({ id: profiles.id }).from(profiles).where(eq(profiles.email, email)).limit(1))[0]?.id ?? crypto.randomUUID();
   } else {
     const admin = supabaseAdmin();
@@ -63,9 +63,16 @@ export async function inviteUser(actor: Actor, input: { email: string; roles: Ro
     if (roles.length) await tx.insert(userRoles).values(roles.map((role) => ({ userId: userId!, role, grantedBy: actor.id })));
   });
   forgetActor(userId);
+  if (env().AUTH_MODE === 'local') {
+    const { issueAuthToken } = await import('@/lib/auth/tokens');
+    const { sendAuthLinkEmail } = await import('@/lib/mail/authMail');
+    const token = await issueAuthToken(userId, 'invite');
+    inviteUrl = `${base}/login?reset=1&token=${token}`;
+    await sendAuthLinkEmail({ recipient: email, kind: 'invite', url: inviteUrl }).catch(() => undefined);
+  }
   const row = (await listUsers(actor)).find((u) => u.id === userId);
   if (!row) throw notFound('The user');
-  return row;
+  return inviteUrl ? { ...row, inviteUrl } : row;
 }
 
 export async function setUserRoles(actor: Actor, userId: string, roles: Role[]): Promise<void> {

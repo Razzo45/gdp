@@ -27,8 +27,6 @@ export interface StabilityView {
   calibrationPercent: number | null;
   calibrationGateActive: boolean;
   flipNotes: StabilityFlipNote[];
-  /** Flips that still need a reason or a rewrite request before accept. */
-  unacknowledgedFlips: string[];
 }
 
 export async function latestGroup(database: DbOrTx, rubricId: string): Promise<StabilityPass[]> {
@@ -57,9 +55,7 @@ export async function stabilityView(database: DbOrTx, rubricId: string, options:
   const flipNotes = groupId
     ? await database.select().from(stabilityFlipNotes).where(and(eq(stabilityFlipNotes.rubricId, rubricId), eq(stabilityFlipNotes.groupId, groupId)))
     : [];
-  const noted = new Set(flipNotes.map((n) => n.statementId));
-  const unacknowledgedFlips = (gate?.flips ?? []).filter((id) => !noted.has(id));
-  return { groupId, passes, gate, accepted, calibrationPercent: calibration?.scorePercent ?? null, calibrationGateActive, flipNotes, unacknowledgedFlips };
+  return { groupId, passes, gate, accepted, calibrationPercent: calibration?.scorePercent ?? null, calibrationGateActive, flipNotes };
 }
 
 export async function acceptStability(actor: Actor, submissionId: string, groupId: string): Promise<void> {
@@ -72,9 +68,6 @@ export async function acceptStability(actor: Actor, submissionId: string, groupI
     const view = await stabilityView(tx, rubric.id);
     if (view.groupId !== groupId) throw conflict('A newer stability run exists; accept that one.');
     if (!view.gate?.ok) throw conflict(`Stability has not passed: ${view.gate?.reasons.join(' ') ?? 'no passes yet.'}`);
-    if (view.unacknowledgedFlips.length) {
-      throw conflict(`Look at each flip before accepting (${view.unacknowledgedFlips.length} left). Acknowledge with a reason, or send the seat back for a rewrite.`);
-    }
     if (view.accepted) return;
     const calibration = await submittedCalibration(tx, rubric.id);
     await tx.insert(stabilityAcceptances).values({

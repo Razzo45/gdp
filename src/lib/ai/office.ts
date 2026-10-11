@@ -26,6 +26,38 @@ const OFFICE_MIME: Record<string, OfficePreviewKind> = {
   'application/vnd.ms-excel': 'xls',
 };
 
+const EMBEDDED_IMAGE: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
+
+const MAX_EMBEDDED_IMAGES = 24;
+const MIN_EMBEDDED_BYTES = 64;
+const MAX_EMBEDDED_BYTES = 12 * 1024 * 1024;
+
+/** Raster images packed in the OOXML media folder — fallback when LibreOffice cannot render. */
+export async function officeEmbeddedImages(bytes: Uint8Array, kind: OfficeKind): Promise<{ name: string; mime: string; bytes: Uint8Array }[]> {
+  const zip = await JSZip.loadAsync(bytes);
+  const prefix = kind === 'pptx' ? 'ppt/media/' : kind === 'docx' ? 'word/media/' : 'xl/media/';
+  const names = Object.keys(zip.files)
+    .filter((n) => !zip.files[n]?.dir && n.replace(/\\/g, '/').startsWith(prefix))
+    .sort((a, b) => a.localeCompare(b));
+  const out: { name: string; mime: string; bytes: Uint8Array }[] = [];
+  for (const name of names) {
+    const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
+    const mime = EMBEDDED_IMAGE[ext];
+    if (!mime) continue;
+    const data = new Uint8Array(await zip.files[name]!.async('uint8array'));
+    if (data.byteLength < MIN_EMBEDDED_BYTES || data.byteLength > MAX_EMBEDDED_BYTES) continue;
+    out.push({ name: name.split('/').pop() ?? name, mime, bytes: data });
+    if (out.length >= MAX_EMBEDDED_IMAGES) break;
+  }
+  return out;
+}
+
 export function officePreviewKind(name: string, mime: string): OfficePreviewKind | null {
   const ext = name.toLowerCase().match(/\.(pptx?|docx?|xlsx?)$/)?.[1];
   if (ext && OFFICE_EXT[ext]) return OFFICE_EXT[ext]!;

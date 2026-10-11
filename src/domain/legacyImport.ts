@@ -1,6 +1,6 @@
 import { classifyCatalogListState, pipelineFromListState } from './catalogListState';
 import { lintStatement, toAffirmativeStatement } from './lint';
-import { correctTag, familyOfStatement, isRubricTag, type Family, type RubricTag } from './rubric';
+import { correctTag, FAMILIES, familyOfStatement, familyOfTag, isRubricTag, type Family, type RubricTag } from './rubric';
 
 export type LegacyAppRole = 'admin' | 'pm' | 'rubric_creator' | 'reviewer';
 export type LegacyAppStage = 'rubric' | 'review' | 'stability' | 'handoff' | 'done' | 'parked';
@@ -135,14 +135,18 @@ export function parseLegacyRubricRows(rows: unknown): LegacyRubricRow[] {
     const key = statement.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    const tag = correctTag(statement, typeof row.tag === 'string' && isRubricTag(row.tag) ? row.tag : undefined);
+    const suggested = typeof row.tag === 'string' && isRubricTag(row.tag) ? row.tag : undefined;
+    const storedFamily = typeof row.family === 'string' ? row.family.trim().toLowerCase() : '';
+    const family = (FAMILIES as readonly string[]).includes(storedFamily) ? (storedFamily as Family) : familyOfStatement(statement, suggested);
+    const guessed = correctTag(statement, suggested);
+    const tag = familyOfTag(guessed) === family ? guessed : tagForStoredFamily(family, statement);
     const notes = String(row.notes ?? row.applicableIf ?? '').slice(0, 600);
     const claim =
       (typeof row.claim_key === 'string' && row.claim_key) ||
       (typeof row.claim === 'string' && row.claim) ||
       claimFromNotes(notes) ||
       slug(statement);
-    out.push({ tag, statement, notes, family: familyOfStatement(statement, tag), claimKey: claim });
+    out.push({ tag, statement, notes, family, claimKey: claim });
   }
   return out;
 }
@@ -247,6 +251,14 @@ export function remapEvidence(legacy: Record<string, unknown> | null | undefined
     if (id && text.trim()) out[id] = text.trim().slice(0, 2000);
   }
   return out;
+}
+
+export function tagForStoredFamily(family: Family, statement: string): RubricTag {
+  const guessed = correctTag(statement);
+  if (familyOfTag(guessed) === family) return guessed;
+  if (family === 'format') return 'Format/File';
+  if (family === 'visual') return 'Visual - Layout';
+  return 'Content - Semantics';
 }
 
 function claimFromNotes(notes: string): string {

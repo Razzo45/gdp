@@ -6,16 +6,16 @@ import { supabaseAuthConfig } from '@/lib/auth/supabasePublic';
  * NEXT_PUBLIC_ Supabase settings only; everything else stays on the server.
  *
  * AUTH_MODE
- *   supabase  (default) Supabase Auth; access tokens verified locally.
- *   local     dev only: seeded users in app.profiles sign in with a shared
- *             password and get a cookie signed with AUTH_LOCAL_SECRET. No
- *             Supabase project is needed at all.
+ *   supabase  Supabase Auth; access tokens verified locally.
+ *   local     app.profiles + per-user password hashes (Railway). Shared
+ *             AUTH_LOCAL_PASSWORD is optional and laptop-only (user picker).
  */
 const Schema = z
   .object({
     AUTH_MODE: z.enum(['supabase', 'local']).default('supabase'),
     AUTH_LOCAL_SECRET: z.string().min(16).default('local-dev-secret-change-me'),
-    AUTH_LOCAL_PASSWORD: z.string().min(4).default('gdp-dev'),
+    /** Laptop-only shared password. Leave unset on Railway. */
+    AUTH_LOCAL_PASSWORD: z.string().min(4).optional(),
 
     NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
     /** Either the legacy anon JWT or a new `sb_publishable_…` key. */
@@ -34,11 +34,9 @@ const Schema = z
     GEMINI_MODEL: z.string().default('gemini-3.8-flash'),
     GEMINI_FACTORY_MODEL: z.string().optional(),
     /**
-     * Adaptive controller. Defaults sized for a Tier 3 Gemini key on a FIFO
-     * queue (one heavy owner). Google no longer publishes RPM/TPM — check
-     * AI Studio. The published hard cap is $200 / 10 min. Start at the
-     * ceiling; 429s still halt + halve and climb back every INCREASE_AFTER
-     * healthy successes.
+     * Adaptive controller. Defaults sized for a high-tier key on a FIFO
+     * queue (one heavy owner). 429s still halt + halve and climb back
+     * every INCREASE_AFTER healthy successes.
      */
     GEMINI_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(96),
     GEMINI_CONCURRENCY_FLOOR: z.coerce.number().int().min(1).max(256).default(16),
@@ -65,9 +63,15 @@ const Schema = z
     BOOTSTRAP_ADMIN_EMAILS: z.string().default(''),
     PUBLIC_APP_URL: z.string().url().optional(),
     STORAGE_BUCKET: z.string().default('gdp-private'),
-    /** `gcs` on Cloud Run, `supabase` if a service key exists, else `local`. */
-    STORAGE_DRIVER: z.enum(['gcs', 'supabase', 'local']).optional(),
+    /** `gcs` on Cloud Run, `s3` on Railway buckets, `supabase` if a service key exists, else `local`. */
+    STORAGE_DRIVER: z.enum(['gcs', 'supabase', 's3', 'local']).optional(),
     STORAGE_LOCAL_DIR: z.string().default('tmp/storage'),
+    /** Railway / S3-compatible bucket. Separate from SES AWS_* keys. */
+    STORAGE_S3_ENDPOINT: z.string().url().optional(),
+    STORAGE_S3_BUCKET: z.string().optional(),
+    STORAGE_S3_ACCESS_KEY_ID: z.string().optional(),
+    STORAGE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+    STORAGE_S3_REGION: z.string().default('auto'),
     /** Set to "0" on web instances when a dedicated worker process runs the queue. */
     RUN_WORKER: z.string().default('1'),
     LIBREOFFICE_BIN: z.string().optional(),
@@ -89,6 +93,13 @@ const Schema = z
     }
     if (value.STORAGE_DRIVER === 'gcs' && !value.STORAGE_BUCKET) {
       ctx.addIssue({ code: 'custom', path: ['STORAGE_BUCKET'], message: 'required when STORAGE_DRIVER=gcs' });
+    }
+    if (value.STORAGE_DRIVER === 's3') {
+      if (!value.STORAGE_S3_ENDPOINT) ctx.addIssue({ code: 'custom', path: ['STORAGE_S3_ENDPOINT'], message: 'required when STORAGE_DRIVER=s3' });
+      if (!value.STORAGE_S3_BUCKET && !value.STORAGE_BUCKET) ctx.addIssue({ code: 'custom', path: ['STORAGE_S3_BUCKET'], message: 'required when STORAGE_DRIVER=s3' });
+      if (!value.STORAGE_S3_ACCESS_KEY_ID || !value.STORAGE_S3_SECRET_ACCESS_KEY) {
+        ctx.addIssue({ code: 'custom', path: ['STORAGE_S3_ACCESS_KEY_ID'], message: 'required when STORAGE_DRIVER=s3' });
+      }
     }
   });
 
@@ -112,7 +123,9 @@ export function env(): Env {
 export const authMode = () => env().AUTH_MODE;
 export const geminiMockEnabled = () => env().GEMINI_MOCK === '1';
 
-export function storageDriver(): 'gcs' | 'supabase' | 'local' {
+export type StorageDriver = 'gcs' | 'supabase' | 's3' | 'local';
+
+export function storageDriver(): StorageDriver {
   const e = env();
   return e.STORAGE_DRIVER ?? (e.SUPABASE_SERVICE_ROLE_KEY ? 'supabase' : 'local');
 }

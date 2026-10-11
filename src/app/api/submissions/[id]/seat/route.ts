@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { route } from '@/lib/api';
+import { sendAssignmentEmail } from '@/lib/mail/assignment';
 import { assignSeat, claimSeat, releaseSeat } from '@/lib/services/submissions';
 
 const Body = z.discriminatedUnion('action', [
@@ -12,5 +13,6 @@ export const POST = route({ body: Body }, async ({ actor, body, params }) => {
   const id = params['id']!;
   const submission =
     body.action === 'claim' ? await claimSeat(actor, id, body.seat) : body.action === 'release' ? await releaseSeat(actor, id, body.seat) : await assignSeat(actor, id, body.seat, body.userId);
+  if (body.action === 'assign' && body.userId) await sendAssignmentEmail(id, body.userId);
   return { rubricAssigneeId: submission.rubricAssigneeId, reviewerId: submission.reviewerId, lastClaimedAt: submission.lastClaimedAt };
 });

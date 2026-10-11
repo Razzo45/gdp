@@ -42,6 +42,12 @@
   ],
   "exclude": [
     "node_modules",
-    ".next"
+    ".next",
+    "scripts/clone-neon-to-railway.ts",
+    "scripts/prune-railway-history.ts",
+    "scripts/restore-task-dates.ts",
+    "scripts/restore-rubric-families.ts",
+    "scripts/migrate-railway-public.ts",
+    "scripts/hydrate-ai-outputs.ts"
   ]
 }

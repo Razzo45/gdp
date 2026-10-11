@@ -1,0 +1,28 @@
+mutation WireServices($workerId: String!, $catchupId: String!, $environmentId: String!) {
+  worker: serviceInstanceUpdate(
+    serviceId: $workerId
+    environmentId: $environmentId
+    input: {
+      startCommand: "./start.sh worker"
+      builder: DOCKERFILE
+      dockerfilePath: "Dockerfile"
+      region: "europe-west4-drams3a"
+      restartPolicyType: ON_FAILURE
+      restartPolicyMaxRetries: 10
+      healthcheckPath: "/health"
+      healthcheckTimeout: 300
+    }
+  )
+  catchup: serviceInstanceUpdate(
+    serviceId: $catchupId
+    environmentId: $environmentId
+    input: {
+      startCommand: "./start.sh catchup"
+      builder: DOCKERFILE
+      dockerfilePath: "Dockerfile"
+      region: "europe-west4-drams3a"
+      cronSchedule: "*/20 * * * *"
+      restartPolicyType: NEVER
+    }
+  )
+}

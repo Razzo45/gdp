@@ -75,8 +75,24 @@ export const profiles = app.table('profiles', {
   email: text('email').notNull(),
   displayName: text('display_name'),
   isActive: boolean('is_active').notNull().default(true),
+  passwordHash: text('password_hash'),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+export const AUTH_TOKEN_PURPOSES = ['invite', 'recover'] as const;
+export type AuthTokenPurpose = (typeof AUTH_TOKEN_PURPOSES)[number];
+
+export const authTokens = app.table('auth_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => profiles.id, { onDelete: 'cascade' }),
+  purpose: text('purpose', { enum: AUTH_TOKEN_PURPOSES }).notNull(),
+  tokenHash: text('token_hash').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+  usedAt: ts('used_at'),
+  createdAt: ts('created_at').notNull().defaultNow(),
 });
 
 export const userRoles = app.table('user_roles', {

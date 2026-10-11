@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { and, eq } from 'drizzle-orm';
@@ -12,7 +12,8 @@ import { sha256 } from '@/domain/fingerprint';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
 import { mediaPart, type MediaPart } from './gemini';
-import { officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
+import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
+import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
 
 export type { OfficePreviewKind };
 export { officePreviewKind };
@@ -76,7 +77,7 @@ const MAX_ARCHIVE_BYTES = 300 * 1024 * 1024;
 
 const NATIVE_MIME = /^(image\/(png|jpe?g|webp|heic|heif|gif)|video\/|audio\/|application\/pdf|text\/)/;
 const EXT_MIME: Record<string, string> = {
-  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heif', svg: 'image/svg+xml',
   mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
   pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html', json: 'text/plain', srt: 'text/plain',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -101,8 +102,16 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
   const label = `${role}: ${file.name} (id ${file.id})`;
   const base = { id: file.id, name: file.name, sha256: digest, bytes: file.bytes.byteLength };
 
+  if (file.bytes.byteLength === 0) {
+    return { ...base, delivery: 'unsupported', parts: [`${label}\nNOT ATTACHED: the file is empty.`] };
+  }
   if (file.bytes.byteLength > MAX_FILE_BYTES) {
     return { ...base, delivery: 'unsupported', parts: [`${label}\nNOT ATTACHED: file is ${mb(file.bytes.byteLength)} MB, above the ${mb(MAX_FILE_BYTES)} MB grading limit.`] };
+  }
+
+  if (mime === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
+    const text = Buffer.from(file.bytes).toString('utf8');
+    return { ...base, delivery: 'text_digest', parts: [`${label}\nSVG markup (not rasterised):\n${clip(text)}\n--- end ---`] };
   }
 
   if (NATIVE_MIME.test(mime)) {
@@ -141,6 +150,30 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
   const digest = text ? `\n--- text digest ---\n${clip(text)}\n--- end ---` : '';
 
   if (pdf) {
+    const pages = await rasterizePdfPages(pdf).catch(() => []);
+    if (pages.length > 0) {
+      const unit = kind === 'pptx' || kind === 'ppt' ? 'slide' : 'page';
+      const extra = pages.length === MAX_RENDERED_PAGES ? ` First ${MAX_RENDERED_PAGES} ${unit}s only.` : '';
+      const pageParts = await Promise.all(
+        pages.map((page) =>
+          mediaPart({
+            bytes: page.bytes,
+            mime: page.mime,
+            sha256: sha256(page.bytes),
+            name: `${file.name.replace(/\.[a-z0-9]+$/i, '')}-${unit}-${page.index}.jpg`,
+            label: `${label} — ${unit} ${page.index} of ${pages.length}`,
+          }),
+        ),
+      );
+      return {
+        ...base,
+        delivery: 'pdf_from_office',
+        parts: [
+          `${label}${facts}\n${pages.length} ${unit}(s) rendered as images below. Inspect each image for layout, colour, typography and photographs. FILE FACTS remain authoritative for counts, fonts and aspect. Animations, transitions and embedded video are not in the stills.${extra}${digest}`,
+          ...pageParts,
+        ],
+      };
+    }
     return {
       ...base,
       delivery: 'pdf_from_office',
@@ -151,11 +184,28 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
     };
   }
 
+  const embedded = ooxml ? await officeEmbeddedImages(file.bytes, kind).catch(() => []) : [];
+  const imageParts = await Promise.all(
+    embedded.map((img, i) =>
+      mediaPart({
+        bytes: img.bytes,
+        mime: img.mime,
+        sha256: sha256(img.bytes),
+        name: img.name,
+        label: `${label} — embedded ${img.name} (${i + 1}/${embedded.length})`,
+      }),
+    ),
+  );
+  const renderNote = embedded.length
+    ? `NO FULL-PAGE RENDER: LibreOffice did not produce a PDF. ${embedded.length} embedded image(s) from the package are attached. FILE FACTS are authoritative for counts, fonts, aspect and media presence. Judge photograph/asset claims from the attached images. Only answer No with "no render available" for slide-level layout, spacing or typography you cannot see.`
+    : `NO RENDER AVAILABLE: only the text content below was extracted. Visual statements that need a page layout, colour or typography appearance cannot be verified and must be answered No with evidence "no render available". FILE FACTS still support format counts and embedded-media presence.`;
+
   return {
     ...base,
     delivery: 'text_digest',
     parts: [
-      `${label}${facts}\nNO RENDER AVAILABLE: only the text content below was extracted. Visual statements (layout, colour, imagery, typography appearance) cannot be verified for this file and must be answered No with evidence "no render available".${digest || '\n--- text digest ---\n(the package could not be read)\n--- end ---'}`,
+      `${label}${facts}\n${renderNote}${digest || '\n--- text digest ---\n(the package could not be read)\n--- end ---'}`,
+      ...imageParts,
     ],
   };
 }
@@ -201,10 +251,22 @@ let conversionsActive = 0;
 const conversionQueue: (() => void)[] = [];
 const MAX_CONVERSIONS = 2;
 
+function windowsSofficeCandidates(): string[] {
+  if (process.platform !== 'win32') return [];
+  const roots = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], 'C:\\Program Files', 'C:\\Program Files (x86)'];
+  return [...new Set(roots.filter(Boolean))].map((root) => join(root!, 'LibreOffice', 'program', 'soffice.exe'));
+}
+
+function fileUrl(path: string): string {
+  const unix = path.replace(/\\/g, '/');
+  return unix.startsWith('/') ? `file://${unix}` : `file:///${unix}`;
+}
+
 function libreOfficeBinary(): Promise<string | null> {
   libreOffice ??= (async () => {
     const configured = env().LIBREOFFICE_BIN;
-    for (const bin of configured ? [configured] : ['soffice', 'libreoffice']) {
+    const bins = configured ? [configured] : ['soffice', 'soffice.exe', 'libreoffice', ...windowsSofficeCandidates()];
+    for (const bin of bins) {
       const ok = await new Promise<boolean>((resolve) => {
         const child = spawn(bin, ['--version'], { stdio: 'ignore' });
         child.once('error', () => resolve(false));
@@ -230,7 +292,7 @@ async function convertWithLibreOffice(bytes: Uint8Array, kind: OfficePreviewKind
   try {
     const input = join(dir, `source.${kind}`);
     await writeFile(input, bytes);
-    const profile = `file://${dir.replace(/\\/g, '/')}/profile`;
+    const profile = `${fileUrl(join(dir, 'profile'))}`;
     const ok = await new Promise<boolean>((resolve) => {
       const child = spawn(/* turbopackIgnore: true */ bin, ['--headless', '--norestore', '--nologo', `-env:UserInstallation=${profile}`, '--convert-to', 'pdf', '--outdir', dir, input], { stdio: 'ignore' });
       const timer = setTimeout(() => {
@@ -247,7 +309,11 @@ async function convertWithLibreOffice(bytes: Uint8Array, kind: OfficePreviewKind
       });
     });
     if (!ok) return null;
-    const pdf = await readFile(join(dir, 'source.pdf')).catch(() => null);
+    const named = await readFile(join(dir, 'source.pdf')).catch(() => null);
+    if (named && named.byteLength > 0) return new Uint8Array(named);
+    const found = (await readdir(dir)).find((name) => name.toLowerCase().endsWith('.pdf'));
+    if (!found) return null;
+    const pdf = await readFile(join(dir, found)).catch(() => null);
     return pdf && pdf.byteLength > 0 ? new Uint8Array(pdf) : null;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);

@@ -48,7 +48,7 @@ async function main() {
     ids.set(u.email, id);
   }
   console.log(`Users: ${USERS.map((u) => `${u.email} [${u.roles.join('+')}]`).join(', ')}`);
-  console.log(`Password for all: ${configuration.AUTH_LOCAL_PASSWORD}`);
+  console.log(`Password for all: ${configuration.AUTH_LOCAL_PASSWORD ?? 'gdp-dev'}`);
 
   // 2. watched project
   await database

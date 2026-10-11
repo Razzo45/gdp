@@ -176,12 +176,30 @@ export async function activeJob(database: DbOrTx, submissionId: string, kind: Jo
   );
 }
 
-/** Housekeeping: jobs past their deadline are failed so they stop being claimed. */
+/** Housekeeping: dead running jobs and past-deadline rows become failed so they stop blocking the task. */
 export async function expireOverdue(): Promise<number> {
-  const updated = await db()
+  const now = new Date().toISOString();
+  const overdue = await db()
     .update(jobs)
-    .set({ status: 'failed', error: 'The job passed its deadline.', finishedAt: new Date().toISOString(), leaseToken: null, leaseUntil: null })
-    .where(and(inArray(jobs.status, ['queued', 'running']), lt(jobs.deadlineAt, new Date().toISOString())))
+    .set({ status: 'failed', error: 'The job passed its deadline.', finishedAt: now, leaseToken: null, leaseUntil: null })
+    .where(and(inArray(jobs.status, ['queued', 'running']), lt(jobs.deadlineAt, now)))
     .returning({ id: jobs.id });
-  return updated.length;
+  const exhausted = await db()
+    .update(jobs)
+    .set({
+      status: 'failed',
+      error: 'The worker died after using every attempt.',
+      finishedAt: now,
+      leaseToken: null,
+      leaseUntil: null,
+    })
+    .where(
+      and(
+        eq(jobs.status, 'running'),
+        or(isNull(jobs.leaseUntil), lt(jobs.leaseUntil, now)),
+        sql`${jobs.attempts} >= ${jobs.maxAttempts}`,
+      ),
+    )
+    .returning({ id: jobs.id });
+  return overdue.length + exhausted.length;
 }

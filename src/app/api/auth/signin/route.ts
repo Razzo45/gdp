@@ -3,10 +3,12 @@ import { timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { db } from '@/db/client';
-import { profiles } from '@/db/schema';
+import { profiles, userRoles } from '@/db/schema';
 import { json } from '@/lib/api';
+import { bootstrapAdminEmails, env } from '@/lib/env';
 import { localCookieOptions, LOCAL_SESSION_COOKIE, signLocalSession } from '@/lib/auth/local';
-import { env } from '@/lib/env';
+import { verifyLivePassword } from '@/lib/auth/livePassword';
+import { hashPassword, verifyPassword } from '@/lib/auth/passwords';
 import { supabaseAuthClient } from '@/lib/supabase/server';
 
 /**
@@ -15,8 +17,10 @@ import { supabaseAuthClient } from '@/lib/supabase/server';
  * token locally on each request — no further Auth round-trips until the
  * token nears expiry.
  *
- * AUTH_MODE=local: the email must be a seeded app.profiles row and the
- * password the shared AUTH_LOCAL_PASSWORD; we mint our own cookie.
+ * AUTH_MODE=local: per-user password_hash on app.profiles. If a profile has
+ * no hash yet, the live Supabase password is checked once and stored as
+ * scrypt. BOOTSTRAP_ADMIN_EMAILS can still set a first password. Shared
+ * AUTH_LOCAL_PASSWORD is laptop-only. We mint our own cookie.
  */
 
 const Body = z.object({ email: z.string().email(), password: z.string().min(1).max(200) });
@@ -39,13 +43,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const configuration = env();
   if (configuration.AUTH_MODE === 'local') {
-    const expected = Buffer.from(configuration.AUTH_LOCAL_PASSWORD);
-    const given = Buffer.from(password);
-    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return refuse();
-    const user = (await db().select().from(profiles).where(eq(profiles.email, email.toLowerCase())).limit(1))[0];
-    if (!user || !user.isActive) return refuse();
+    const user = await ensureLocalUser(email.toLowerCase(), password, configuration.AUTH_LOCAL_PASSWORD ?? '');
+    if (!user) return refuse();
     const token = await signLocalSession({ id: user.id, email: user.email }, configuration.AUTH_LOCAL_SECRET);
-    (await cookies()).set(LOCAL_SESSION_COOKIE, token, localCookieOptions(new URL(request.url).protocol === 'https:'));
+    const proto = request.headers.get('x-forwarded-proto') ?? new URL(request.url).protocol.replace(':', '');
+    (await cookies()).set(LOCAL_SESSION_COOKIE, token, localCookieOptions(proto === 'https'));
     attempts.delete(key);
     return json({ ok: true });
   }
@@ -63,4 +65,45 @@ export async function POST(request: Request): Promise<Response> {
     const text = error instanceof Error ? error.message : 'Sign-in is not configured.';
     return json({ error: text.includes('not configured') ? text : 'Sign-in is not configured.' }, 503);
   }
+}
+
+async function ensureLocalUser(email: string, password: string, shared: string) {
+  const database = db();
+  let user = (await database.select().from(profiles).where(eq(profiles.email, email)).limit(1))[0];
+  if (user?.passwordHash) {
+    if (!(await verifyPassword(password, user.passwordHash)) || !user.isActive) return null;
+    return user;
+  }
+  if (user?.isActive && (await verifyLivePassword(email, password))) {
+    const [updated] = await database
+      .update(profiles)
+      .set({ passwordHash: await hashPassword(password) })
+      .where(eq(profiles.id, user.id))
+      .returning();
+    return updated ?? user;
+  }
+  if (shared) {
+    const expected = Buffer.from(shared);
+    const given = Buffer.from(password);
+    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+    if (!user || !user.isActive) return null;
+    return user;
+  }
+  if (password.length < 10 || !bootstrapAdminEmails().has(email)) return null;
+  if (!user) {
+    const id = crypto.randomUUID();
+    await database.transaction(async (tx) => {
+      await tx.insert(profiles).values({ id, email, passwordHash: await hashPassword(password) });
+      await tx.insert(userRoles).values({ userId: id, role: 'admin' });
+    });
+    user = (await database.select().from(profiles).where(eq(profiles.email, email)).limit(1))[0];
+    return user ?? null;
+  }
+  if (!user.isActive) return null;
+  const [updated] = await database
+    .update(profiles)
+    .set({ passwordHash: await hashPassword(password) })
+    .where(eq(profiles.id, user.id))
+    .returning();
+  return updated ?? null;
 }

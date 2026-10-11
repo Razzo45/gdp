@@ -5,6 +5,7 @@ import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { StageBadge } from '@/components/StageBadge';
 import { TimeAgo } from '@/components/TimeAgo';
+import { TaskLabel } from '@/components/TaskLabel';
 import { formatDate } from '@/components/format';
 import { isStaleHold, STALE_HOLD_HOURS } from '@/domain/workState';
 import { currentActor } from '@/lib/auth/identity';
@@ -71,7 +72,7 @@ export default async function ClaimsPage() {
                   <td className="py-1.5 pr-3 capitalize">{s.seat}</td>
                   <td className="py-1.5 pr-3">
                     <Link href={`/submissions/${s.submissionId}`} className="hover:underline">
-                      {s.title || s.submissionId}
+                      <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
                     </Link>
                   </td>
                   <td className="py-1.5 pr-3">

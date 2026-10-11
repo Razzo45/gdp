@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { aiOutputFiles, calibrations, goldenRatings, rubrics, submissions } from '@/db/schema';
+import { aiOutputFiles, calibrations, goldenRatings, jobs, rubrics, submissions } from '@/db/schema';
 import { statementHash } from '@/domain/fingerprint';
 import type { Db } from '@/db/types';
 import type { Actor } from '@/lib/auth/permissions';
@@ -71,6 +71,10 @@ describe('seats', () => {
   it('lets PMs assign and lists claims', async () => {
     const s = await makeSubmission(db);
     await expectStatus(assignSeat(creator, s.id, 'rubric', creator2.id), 403);
+    await expectStatus(assignSeat(pm, s.id, 'rubric', reviewer.id), 422);
+    await expectStatus(assignSeat(pm, s.id, 'review', reviewer.id), 409);
+    const pooled = await assignSeat(pm, s.id, 'rubric', null);
+    expect(pooled.rubricAssigneeId).toBeNull();
     const assigned = await assignSeat(pm, s.id, 'rubric', creator2.id);
     expect(assigned.rubricAssigneeId).toBe(creator2.id);
     const overview = await claimsOverview(pm);
@@ -79,6 +83,16 @@ describe('seats', () => {
     const mine = await listSubmissions(creator2, { mine: true });
     expect(mine.map((x) => x.id)).toContain(s.id);
     expect(mine.find((x) => x.id === s.id)!.rubricAssigneeName).toBe('c2');
+  });
+
+  it('assigns review only to the review team while the task is in review', async () => {
+    const s = await makeSubmission(db, { stage: 'review', reviewStatus: 'pending', rubricAssigneeId: creator.id });
+    await expectStatus(assignSeat(pm, s.id, 'rubric', creator2.id), 409);
+    await expectStatus(assignSeat(pm, s.id, 'review', creator.id), 422);
+    const assigned = await assignSeat(pm, s.id, 'review', reviewer.id);
+    expect(assigned.reviewerId).toBe(reviewer.id);
+    const pooled = await assignSeat(pm, s.id, 'review', null);
+    expect(pooled.reviewerId).toBeNull();
   });
 });
 
@@ -153,11 +167,50 @@ describe('rubric autosave with revision CAS', () => {
     expect(state.verdicts[statement.id]).toBe(true);
     expect(state.evidence[statement.id]).toBe('Checked by hand on slide 1.');
     expect(state.audit[statement.id]).toEqual({
-      ai: { verdict: false, evidence: 'The title slide does not name the client.' },
+      ai: { verdict: false, evidence: 'The title slide does not name the client.', model: null },
       human: { verdict: true, evidence: 'Checked by hand on slide 1.' },
     });
     expect(state.ratings.filter((r) => r.statementId === statement.id)).toHaveLength(2);
     expect(state.gate.ok).toBe(true);
+  });
+
+  it('ignores imported human stubs so the Yes keeps its AI evidence', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const saved = await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [{ tag: 'Content - Exact', statement: 'The deck names the client.', notes: '', scope: 'output', inputFileIds: [], outputFile: null }],
+      deletes: [],
+    });
+    const statement = saved.statements[0]!;
+    const rubric = (await currentRubric(db, s.id))!;
+    await db.insert(goldenRatings).values([
+      {
+        rubricId: rubric.id,
+        statementId: statement.id,
+        source: 'ai',
+        verdict: true,
+        evidence: 'Slide 1 title reads Acme Corp.',
+        model: 'gemini-3.8-flash',
+        basis: { statementHash: statementHash(statement), statementText: statement.statement },
+      },
+      {
+        rubricId: rubric.id,
+        statementId: statement.id,
+        source: 'human',
+        verdict: true,
+        evidence: 'Imported human override.',
+        reason: 'Imported human override.',
+        basis: { statementText: statement.statement, provenance: 'legacy-snapshot' },
+      },
+    ]);
+    const state = await goldenState(db, rubric.id, await statementsOf(db, rubric.id));
+    expect(state.sources[statement.id]).toBe('ai');
+    expect(state.verdicts[statement.id]).toBe(true);
+    expect(state.evidence[statement.id]).toBe('Slide 1 title reads Acme Corp.');
+    expect(state.audit[statement.id]).toEqual({
+      ai: { verdict: true, evidence: 'Slide 1 title reads Acme Corp.', model: 'gemini-3.8-flash' },
+    });
   });
 });
 
@@ -205,6 +258,8 @@ describe('review flow', () => {
     let after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('rubric');
     expect(after.reviewStatus).toBe('changes_requested');
+    expect(after.rubricAssigneeId).toBe(creator.id);
+    await expectStatus(assignSeat(pm, s.id, 'review', reviewer.id), 409);
 
     // Back to review with a 25% score → approved → stability.
     await sendToReview(creator, s.id);
@@ -216,7 +271,7 @@ describe('review flow', () => {
 });
 
 describe('retention', () => {
-  it('keeps only the current rubric and one backup', async () => {
+  it('keeps the current rubric and two previous versions', async () => {
     const s = await makeSubmission(db);
     const stub = (n: number) => [
       {
@@ -235,10 +290,11 @@ describe('retention', () => {
     await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(1), generation: {} });
     await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(2), generation: {} });
     await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(3), generation: {} });
+    await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(4), generation: {} });
     const versions = await db.select().from(rubrics).where(eq(rubrics.submissionId, s.id));
     expect(versions).toHaveLength(KEEP);
     expect(versions.filter((v) => v.isCurrent)).toHaveLength(1);
-    expect(Math.max(...versions.map((v) => v.version))).toBe(3);
+    expect(Math.max(...versions.map((v) => v.version))).toBe(4);
   });
 
   it('overwrites a calibration draft instead of appending', async () => {
@@ -298,5 +354,28 @@ describe('job queue', () => {
     await fail(retry.id, c2!.leaseToken, 'boom', true);
     expect(await claimNext(['golden_autorate'])).toBeNull(); // attempts exhausted → failed
     expect(await expireOverdue()).toBe(0);
+  });
+
+  it('fails a crashed running job that has used every attempt so it stops blocking the task', async () => {
+    const s = await makeSubmission(db);
+    const job = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: s.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+      maxAttempts: 1,
+    });
+    const claimed = await claimNext(['golden_autorate']);
+    expect(claimed?.job.id).toBe(job.id);
+    await db.execute(sql`update app.jobs set lease_until = now() - interval '1 minute' where id = ${job.id}`);
+    expect(await claimNext(['golden_autorate'])).toBeNull();
+    expect(await expireOverdue()).toBe(1);
+    const row = (await db.select().from(jobs).where(eq(jobs.id, job.id)))[0];
+    expect(row?.status).toBe('failed');
+    await expect(
+      enqueue(db, { kind: 'golden_autorate', submissionId: s.id, rubricId: null, requestId: crypto.randomUUID(), payload: {}, createdBy: creator.id }),
+    ).resolves.toMatchObject({ kind: 'golden_autorate' });
   });
 });

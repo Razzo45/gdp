@@ -1,10 +1,9 @@
 import { jwtVerify, SignJWT } from 'jose';
 
 /**
- * AUTH_MODE=local — a development identity provider with no external
- * service. Users are rows in app.profiles created by the seed script (or an
- * admin); the password is the shared AUTH_LOCAL_PASSWORD; the session is a
- * short HS256 JWT in an httpOnly cookie. Edge-safe (used by the proxy).
+ * AUTH_MODE=local — identity lives in app.profiles. Production (Railway)
+ * uses per-user password hashes; AUTH_LOCAL_PASSWORD is optional and only
+ * for the laptop user picker. The session is an HS256 cookie. Edge-safe.
  */
 
 export const LOCAL_SESSION_COOKIE = 'gdp_session';

@@ -4,8 +4,8 @@ import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { calibrations, goldenRatings, jobs, reviewFeedback, rubrics, stabilityAcceptances, stabilityFlipNotes, stabilityPasses } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 
-/** Current plus one backup. Older rows are deleted. */
-export const KEEP = 2;
+/** Latest plus two previous runs. Older rows are deleted. */
+export const KEEP = 3;
 
 export async function pruneRubricVersions(database: DbOrTx, submissionId: string): Promise<number> {
   const rows = await database.select({ id: rubrics.id }).from(rubrics).where(eq(rubrics.submissionId, submissionId)).orderBy(desc(rubrics.version));

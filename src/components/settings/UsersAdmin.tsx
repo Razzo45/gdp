@@ -30,8 +30,12 @@ export function UsersAdmin({ initial, selfId }: { initial: UserRow[]; selfId: st
     setBusy(true);
     setMessage(null);
     try {
-      await api('/api/users', { body: { email, roles, displayName: name || undefined } });
-      setMessage({ text: `Invite sent to ${email}.` });
+      const result = await api<{ user: UserRow & { inviteUrl?: string } }>('/api/users', { body: { email, roles, displayName: name || undefined } });
+      setMessage({
+        text: result.user.inviteUrl
+          ? `Invite created for ${email}. Share this link if mail is not configured: ${result.user.inviteUrl}`
+          : `Invite sent to ${email}.`,
+      });
       setEmail('');
       setName('');
       await reload();

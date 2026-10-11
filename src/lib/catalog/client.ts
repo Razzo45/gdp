@@ -171,8 +171,38 @@ export async function downloadCatalogFile(url: string, maxBytes: number): Promis
   if (!response.ok) return { ok: false, status: 502, error: `The Catalog file download answered ${response.status}.` };
   const length = Number(response.headers.get('content-length') ?? '0');
   if (length > maxBytes) return { ok: false, status: 413, error: `That file is larger than the ${Math.round(maxBytes / 1_048_576)} MB grading limit.` };
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  if (buffer.byteLength > maxBytes) return { ok: false, status: 413, error: `That file is larger than the ${Math.round(maxBytes / 1_048_576)} MB grading limit.` };
+  const buffer = await readBoundedBody(response, maxBytes);
+  if (!buffer.ok) return buffer;
   const mime = (response.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? '';
-  return { ok: true, bytes: buffer, mime };
+  return { ok: true, bytes: buffer.bytes, mime };
+}
+
+/** One allocation, abort as soon as the stream exceeds the grading cap. */
+async function readBoundedBody(response: Response, maxBytes: number): Promise<{ ok: true; bytes: Uint8Array } | CatalogError> {
+  if (!response.body) {
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) return { ok: false, status: 413, error: `That file is larger than the ${Math.round(maxBytes / 1_048_576)} MB grading limit.` };
+    return { ok: true, bytes: buffer };
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return { ok: false, status: 413, error: `That file is larger than the ${Math.round(maxBytes / 1_048_576)} MB grading limit.` };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, bytes };
 }

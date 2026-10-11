@@ -13,20 +13,24 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build
 ENV AUTH_MODE=local
-ENV AUTH_LOCAL_SECRET=docker-build-secret-ok
 ENV STORAGE_DRIVER=local
 ENV RUN_WORKER=0
 RUN npm run build && npm prune --omit=dev && npm install tsx --omit=dev --no-save
 
 FROM node:22-bookworm-slim AS runner
+# LibreOffice is part of this image (not a laptop install). Impress renders
+# PPTX → PDF; the app then stills each page for Golden / Stability.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    fonts-dejavu-core \
     fonts-liberation \
+    fonts-noto-core \
     libreoffice-calc \
     libreoffice-impress \
     libreoffice-writer \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && /usr/bin/soffice --version
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -47,4 +51,4 @@ COPY deploy/start.sh ./start.sh
 RUN chmod +x ./start.sh
 
 EXPOSE 8080
-CMD ["./start.sh", "web"]
+CMD ["./start.sh"]

@@ -3,9 +3,10 @@
  * the considered deliverable(s) and, when the seat is file-required, those
  * submitted inputs. Nothing is guessed from leftover attachments.
  *
- * A named file that does not resolve uniquely is an error, never a silent
- * fallback to the whole pool. `outputFile: null` with several deliverables
- * is the set-level case (the statement applies to every current output).
+ * Default (`outputFile` null / auto) is the current set — every Golden on
+ * Golden autorate, every AI output on Stability. A statement that uniquely
+ * names a file, or an explicit pin, narrows to that file. `*` is the same
+ * set-level observation, kept as a curator override.
  */
 
 export type StatementScope = 'output' | 'inputs';
@@ -139,25 +140,20 @@ export function latestOutput<T>(outputs: readonly T[]): T | undefined {
 
 /**
  * Which output(s) to grade against right now.
- * A name in the statement still wins. "*" is every current file.
- * Otherwise the current/latest file is used — a replaced Golden or a newly
- * uploaded AI output is considered automatically; stale pins do not stick.
+ * A unique name in the statement still wins. An explicit pin wins next.
+ * Otherwise the whole current set is graded (any one fail → No).
  */
 export function consideredOutputs<T extends ScopeFile>(seat: SeatScope & { statement?: string }, outputs: readonly T[]): T[] {
   if (outputs.length === 0) return [];
   if (isAllOutputs(seat.outputFile)) return [...outputs];
-  if (isAutoOutput(seat.outputFile)) {
-    const named = seat.statement ? uniqueMatches(seat.statement, outputs) : [];
-    if (named.length === 1) return named;
-    const latest = latestOutput(outputs);
-    return latest ? [latest] : [];
+  const named = seat.statement ? uniqueMatches(seat.statement, outputs) : [];
+  if (named.length === 1) return named;
+  if (named.length > 1) return named;
+  if (!isAutoOutput(seat.outputFile) && seat.outputFile) {
+    const pinned = matchScopeFile(outputs, seat.outputFile);
+    if (pinned.length === 1) return pinned;
   }
-  if (seat.statement) {
-    const named = uniqueMatches(seat.statement, outputs);
-    if (named.length === 1) return named;
-  }
-  const latest = latestOutput(outputs);
-  return latest ? [latest] : [];
+  return [...outputs];
 }
 
 export function matchScopeFile<T extends ScopeFile>(files: readonly T[], token: string): T[] {
@@ -177,7 +173,7 @@ export function resolveGradeFiles<T extends ScopeFile>(
   if (selectedOutputs.length === 0) {
     return { ok: false, error: 'No deliverable files were available to grade against.' };
   }
-  const allOutputs = isAllOutputs(seat.outputFile) && outputs.length > 1;
+  const allOutputs = selectedOutputs.length > 1 && selectedOutputs.length === outputs.length;
 
   if (seat.scope === 'output') {
     if (seat.inputFileIds.length > 0) {
@@ -209,9 +205,11 @@ export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: r
 }
 
 export function describeSeatScope(seat: SeatScope & { statement?: string }, outputs: readonly ScopeFile[], inputs: readonly ScopeFile[]): string {
-  const lane = isAllOutputs(seat.outputFile)
-    ? 'Golden autorate uses every Golden file. Stability uses every AI output.'
-    : 'Golden autorate uses the Golden file. Stability uses the AI output.';
+  const selected = consideredOutputs(seat, outputs);
+  const lane =
+    selected.length > 1
+      ? 'Golden autorate uses every Golden file. Stability uses every AI output.'
+      : 'Golden autorate uses the Golden file. Stability uses the AI output.';
   if (seat.scope !== 'inputs' || seat.inputFileIds.length === 0) return lane;
   const refs = seat.inputFileIds
     .map((id) => matchScopeFile(inputs, id)[0]?.name ?? id)

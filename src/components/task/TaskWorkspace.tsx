@@ -9,6 +9,7 @@ import { formatDate } from '../format';
 import { TimeAgo } from '../TimeAgo';
 import { StageBadge } from '../StageBadge';
 import { ScoreStrip } from '../ScoreStrip';
+import { TaskLabel } from '../TaskLabel';
 import { Toast } from '../Toast';
 import { BriefPanel } from './BriefPanel';
 import { EventsPanel } from './EventsPanel';
@@ -40,11 +41,29 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   const [ready, setReady] = useState(false);
   const [view, setView] = useState(initial);
   const [toast, setToast] = useState<{ message: string; tone: 'ok' | 'bad' } | null>(null);
+  const [briefOpen, setBriefOpen] = useState(true);
   const viewRef = useRef(view);
   viewRef.current = view;
 
   useEffect(() => {
     setReady(true);
+    try {
+      const stored = sessionStorage.getItem('gdp.taskBrief');
+      if (stored === 'collapsed') setBriefOpen(false);
+      else if (stored === 'open') setBriefOpen(true);
+      else if (initial.stability && initial.stability.passes.length > 0) setBriefOpen(false);
+    } catch {
+      if (initial.stability && initial.stability.passes.length > 0) setBriefOpen(false);
+    }
+  }, [initial.stability]);
+
+  const toggleBrief = useCallback((open: boolean) => {
+    setBriefOpen(open);
+    try {
+      sessionStorage.setItem('gdp.taskBrief', open ? 'open' : 'collapsed');
+    } catch {
+      /* private mode */
+    }
   }, []);
 
   const loadView = useCallback(async () => {
@@ -102,7 +121,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
               {s.handoffStatus && <span className="badge badge-muted">{s.handoffStatus.replaceAll('_', ' ')}</span>}
               {s.reviewStatus === 'changes_requested' && s.stage === 'rubric' && <span className="badge badge-warn">changes requested</span>}
             </div>
-            <h1 className="section-title mt-1">{s.title || s.catalogSubmissionId}</h1>
+            <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} heading />
             <p className="mt-0.5 text-xs text-muted">
               {view.brief.projectName || s.projectId}
               {view.brief.statusName ? ` · ${view.brief.statusName}` : ''}
@@ -140,13 +159,25 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
-        <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto lg:pr-1">
-          <BriefPanel {...panel} />
-          {view.can.seeJobsLog ? <JobsPanel {...panel} /> : view.can.seeRunProgress ? <JobsPanel {...panel} mode="live" /> : null}
-          {view.can.seeHistory && <EventsPanel {...panel} />}
-        </div>
-        <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:overflow-hidden">
+        {briefOpen ? (
+          <aside className="flex min-h-0 flex-col gap-3 lg:w-[22rem] lg:shrink-0 lg:overflow-y-auto lg:pr-1 xl:w-[26rem]">
+            <BriefPanel {...panel} onHide={() => toggleBrief(false)} />
+            {view.can.seeJobsLog ? <JobsPanel {...panel} /> : view.can.seeRunProgress ? <JobsPanel {...panel} mode="live" /> : null}
+            {view.can.seeHistory && <EventsPanel {...panel} />}
+          </aside>
+        ) : (
+          <button
+            className="flex shrink-0 self-start items-center justify-center rounded-3xl border border-line bg-surface px-2 text-sm font-semibold text-muted hover:bg-wash hover:text-ink lg:self-stretch"
+            type="button"
+            aria-expanded={false}
+            title="Show task brief"
+            onClick={() => toggleBrief(true)}
+          >
+            <span className="py-2 tracking-wide lg:[writing-mode:vertical-rl] lg:rotate-180 lg:py-3">Task brief</span>
+          </button>
+        )}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-y-auto">
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
           {view.can.seeReviewPanel &&
             (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && <ReviewPanel {...panel} />}

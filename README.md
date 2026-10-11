@@ -19,7 +19,7 @@ Catalog webhook ──▶ task lands ──▶ creator claims rubric seat
 
 Next.js 16 (App Router, Node runtime) · React 19 · TypeScript · Tailwind 4 ·
 Drizzle + postgres-js · Supabase (Auth, Postgres, private Storage) ·
-`@google/genai` · LibreOffice (optional, for Office → PDF) · vitest + pglite.
+`@google/genai` · LibreOffice **in the Cloud Run / Replit image** (Office → PDF → one image per slide) · vitest + pglite.
 
 ## Local setup
 
@@ -67,8 +67,9 @@ creators. "AI output" files to upload are written to `fixtures/ai-outputs/`;
 they differ from the Golden on purpose (missing slides, wrong figure, other
 font, hidden draft slide, typo). `curl -X POST localhost:4010/emit/<id>` sends
 a signed webhook; `localhost:4010/state` shows what was saved and moved by a
-push. Without LibreOffice on PATH, Office files are graded from the OOXML
-manifest + text digest.
+push. On Cloud Run the image already ships LibreOffice; the worker renders each
+PPTX slide to a still. This laptop does not need soffice. `/api/health` returns
+`renderer: true` when the image is wired.
 
 ## GCP
 

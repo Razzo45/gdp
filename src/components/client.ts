@@ -29,7 +29,10 @@ export async function api<T = Record<string, unknown>>(path: string, init: { met
     data = {};
   }
   if (!response.ok) {
-    if (response.status === 401) window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+    const onLogin = typeof window !== 'undefined' && window.location.pathname.startsWith('/login');
+    if (response.status === 401 && !path.startsWith('/api/auth/') && !onLogin) {
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+    }
     const { error, ...detail } = data;
     throw new ApiError(response.status, typeof error === 'string' ? error : `Request failed (${response.status}).`, detail);
   }

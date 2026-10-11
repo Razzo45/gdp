@@ -33,15 +33,16 @@ export async function proxy(request: NextRequest) {
 
   let response = NextResponse.next({ request: { headers: forwarded } });
 
-  if (process.env['AUTH_MODE'] === 'local') {
-    const cookie = request.cookies.get(LOCAL_SESSION_COOKIE)?.value;
-    const session = cookie ? await verifyLocalSession(cookie, process.env['AUTH_LOCAL_SECRET'] ?? 'local-dev-secret-change-me') : null;
+  const localCookie = request.cookies.get(LOCAL_SESSION_COOKIE)?.value;
+  const localMode = (process.env['AUTH_MODE'] ?? '').trim() === 'local';
+  if (localMode || localCookie) {
+    const session = localCookie ? await verifyLocalSession(localCookie, process.env['AUTH_LOCAL_SECRET'] ?? '') : null;
     if (session) {
       forwarded.set(VERIFIED_USER_HEADER, session.sub);
       if (session.email) forwarded.set(VERIFIED_EMAIL_HEADER, session.email);
       return NextResponse.next({ request: { headers: forwarded } });
     }
-    return refuse(request, pathname, response);
+    if (localMode) return refuse(request, pathname, response);
   }
 
   const { url: supabaseUrl, key: supabaseKey } = supabaseAuthConfig();
@@ -65,9 +66,19 @@ export async function proxy(request: NextRequest) {
 
   if (token) {
     const exp = tokenExpiry(token);
-    if (exp !== null && exp * 1000 - Date.now() < 90_000) {
-      const refreshed = await supabase.auth.refreshSession();
-      token = refreshed.data.session?.access_token ?? null;
+    const msLeft = exp !== null ? exp * 1000 - Date.now() : null;
+    if (msLeft !== null && msLeft < 90_000) {
+      try {
+        const refreshed = await Promise.race([
+          supabase.auth.refreshSession(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('refresh-timeout')), 8_000);
+          }),
+        ]);
+        if (refreshed.data.session?.access_token) token = refreshed.data.session.access_token;
+      } catch {
+        if (msLeft <= 0) token = null;
+      }
     }
   }
 
@@ -101,5 +112,5 @@ function refuse(request: NextRequest, pathname: string, passThrough: NextRespons
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|.*\\.(?:png|svg|jpg|webp|ico)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|api/local-storage|.*\\.(?:png|svg|jpg|webp|ico)$).*)'],
 };

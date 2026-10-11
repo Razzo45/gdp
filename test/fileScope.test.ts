@@ -96,14 +96,30 @@ describe('resolveGradeFiles', () => {
     }
   });
 
-  it('follows a replaced or newly uploaded file instead of a stale pin', () => {
-    const stale = resolveGradeFiles({ scope: 'output', outputFile: 'missing.pptx', inputFileIds: [] }, [deck, notes], []);
-    expect(stale).toMatchObject({ ok: true, allOutputs: false });
-    if (stale.ok) expect(stale.outputs.map((f) => f.id)).toEqual(['out-2']);
+  it('honours an explicit pin and treats a stale pin as the current set', () => {
+    const pinned = resolveGradeFiles({ scope: 'output', outputFile: deck.name, inputFileIds: [] }, [deck, notes], []);
+    expect(pinned).toMatchObject({ ok: true, allOutputs: false });
+    if (pinned.ok) expect(pinned.outputs.map((f) => f.id)).toEqual(['out-1']);
 
-    const newerWins = resolveGradeFiles({ scope: 'output', outputFile: deck.name, inputFileIds: [] }, [deck, notes], []);
-    expect(newerWins).toMatchObject({ ok: true });
-    if (newerWins.ok) expect(newerWins.outputs.map((f) => f.id)).toEqual(['out-2']);
+    const stale = resolveGradeFiles({ scope: 'output', outputFile: 'missing.pptx', inputFileIds: [] }, [deck, notes], []);
+    expect(stale).toMatchObject({ ok: true, allOutputs: true });
+    if (stale.ok) expect(stale.outputs.map((f) => f.id)).toEqual(['out-1', 'out-2']);
+  });
+
+  it('grades the whole current set when the seat is unset', () => {
+    const cards = [
+      { id: 'c1', name: 'card-1.png' },
+      { id: 'c2', name: 'card-2.png' },
+      { id: 'c3', name: 'card-3.png' },
+      { id: 'c4', name: 'card-4.png' },
+    ];
+    const unset = resolveGradeFiles({ scope: 'output', outputFile: null, inputFileIds: [] }, cards, []);
+    expect(unset).toMatchObject({ ok: true, allOutputs: true });
+    if (unset.ok) expect(unset.outputs.map((f) => f.id)).toEqual(['c1', 'c2', 'c3', 'c4']);
+
+    const named = resolveGradeFiles({ scope: 'output', outputFile: null, inputFileIds: [], statement: 'card-2.png is 1200px wide.' }, cards, []);
+    expect(named).toMatchObject({ ok: true, allOutputs: false });
+    if (named.ok) expect(named.outputs.map((f) => f.id)).toEqual(['c2']);
   });
 
   it('treats * as every current deliverable', () => {

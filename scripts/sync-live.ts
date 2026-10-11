@@ -24,6 +24,11 @@ import { installFactoryVersion } from '@/lib/services/rubric';
  *
  *   npm run db:sync-live
  *   npm run db:sync-live -- --apply
+ *   npm run db:sync-live -- --apply --new-only --board-only --no-catalog
+ *
+ * --new-only    insert catalog ids we do not have; never overwrite Railway rows
+ * --board-only  new rows only if they are on a watched work/handoff status
+ *               (tasks already on Railway are always refreshed)
  */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,6 +84,11 @@ function statusOf(rawSubmission: unknown, rawProject: unknown): { statusId: stri
   return { statusId: read?.statusId ?? null, statusName: read?.statusName ?? null, title: read?.title ?? '' };
 }
 
+function latestStamp(...values: Array<string | null | undefined>): string | null {
+  const times = values.map((value) => (value ? Date.parse(value) : NaN)).filter((n) => Number.isFinite(n));
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
 function mergeLiveStatus(preferred: unknown, live: unknown): unknown {
   if (!isRecord(preferred) || !isRecord(live)) return preferred;
   const liveWorkflow = isRecord(live['workflowState']) ? live['workflowState'] : null;
@@ -91,6 +101,8 @@ function mergeLiveStatus(preferred: unknown, live: unknown): unknown {
 async function main() {
   const apply = process.argv.includes('--apply');
   const skipCatalog = process.argv.includes('--no-catalog');
+  const newOnly = process.argv.includes('--new-only');
+  const boardOnly = process.argv.includes('--board-only');
   const target = process.env['DATABASE_URL']?.trim() ?? '';
   if (!target) throw new Error('DATABASE_URL is not set.');
   if (isSupabaseHost(target)) throw new Error('Refusing: DATABASE_URL is a Supabase host.');
@@ -108,7 +120,7 @@ async function main() {
     live.from('wirestock_reviews_v1').select('*'),
     live.from('wirestock_submission_states').select('*'),
     live.from('wirestock_submission_handoffs').select('*'),
-    live.from('wirestock_rubric_runs').select('id,submission_id,rows,seeds,created_at,native_generation_superseded'),
+    live.from('wirestock_rubric_runs').select('id,submission_id,rows,seeds,created_at'),
     live.from('profiles').select('*'),
     live.from('roles').select('*'),
     live.from('user_roles').select('*'),
@@ -208,11 +220,12 @@ async function main() {
   const counts: Record<string, number> = {};
   const boardCounts: Record<string, number> = {};
   let written = 0;
+  let incoming = 0;
   let rubrics = 0;
   let titled = 0;
   let peopleWritten = 0;
 
-  if (apply) {
+  if (apply && !newOnly) {
     for (const [id, person] of plannedPeople) {
       const byEmail = (await database.select({ id: profiles.id }).from(profiles).where(eq(profiles.email, person.email)).limit(1))[0];
       if (byEmail && byEmail.id !== id) {
@@ -238,11 +251,13 @@ async function main() {
   const byCatalog = new Map(existing.map((row) => [row.catalogSubmissionId, row]));
 
   if (apply) {
-    const liveProjectIds = [...watchBy.keys()];
-    const existingWatches = await database.select({ projectId: watchedProjects.projectId }).from(watchedProjects);
-    for (const row of existingWatches) {
-      if (!liveProjectIds.includes(row.projectId)) {
-        await database.delete(watchedProjects).where(eq(watchedProjects.projectId, row.projectId));
+    if (!newOnly) {
+      const liveProjectIds = [...watchBy.keys()];
+      const existingWatches = await database.select({ projectId: watchedProjects.projectId }).from(watchedProjects);
+      for (const row of existingWatches) {
+        if (!liveProjectIds.includes(row.projectId)) {
+          await database.delete(watchedProjects).where(eq(watchedProjects.projectId, row.projectId));
+        }
       }
     }
     for (const watch of watchBy.values()) {
@@ -309,7 +324,23 @@ async function main() {
     );
     if (onBoard) boardCounts[label] = (boardCounts[label] ?? 0) + 1;
 
+    const have = byCatalog.get(item.catalogId);
+    if (newOnly && have) continue;
+    if (!have && boardOnly && !onBoard) continue;
+    incoming += 1;
     if (!apply) continue;
+
+    for (const userId of [seats.rubric, seats.review]) {
+      if (!userId || knownUsers.has(userId)) continue;
+      const person = plannedPeople.get(userId);
+      if (!person) continue;
+      await database.insert(profiles).values({ id: userId, email: person.email, displayName: person.displayName || null }).onConflictDoNothing();
+      if (person.roles.length) {
+        await database.insert(userRoles).values(person.roles.map((role) => ({ userId, role: role as Role }))).onConflictDoNothing();
+      }
+      knownUsers.add(userId);
+      peopleWritten += 1;
+    }
 
     const source = { submission: item.submission, project: item.project } as Record<string, unknown>;
     const values = {
@@ -319,23 +350,45 @@ async function main() {
       title,
       source,
       sourceFingerprint: sourceFingerprint(item.submission),
-      lastSeenAt: str(item.row, 'last_seen_at') || new Date().toISOString(),
+      lastSeenAt: latestStamp(str(item.row, 'last_seen_at'), str(item.row, 'edited_at'), have?.lastSeenAt) || new Date().toISOString(),
       stage: pipeline.stage as Stage,
       reviewStatus: pipeline.reviewStatus as ReviewStatus | null,
       handoffStatus: pipeline.handoffStatus as HandoffStatus | null,
       rubricAssigneeId: known(seats.rubric),
       reviewerId: known(seats.review),
     };
-    const have = byCatalog.get(item.catalogId);
+    const claimedAt = values.rubricAssigneeId || values.reviewerId ? values.lastSeenAt : null;
     const row = have
-      ? (await database.update(submissions).set(values).where(eq(submissions.id, have.id)).returning())[0]
+      ? (
+          await database
+            .update(submissions)
+            .set({
+              ...values,
+              lastClaimedAt: claimedAt ?? have.lastClaimedAt,
+              rubricClaimedAt: values.rubricAssigneeId
+                ? values.rubricAssigneeId === have.rubricAssigneeId
+                  ? (have.rubricClaimedAt ?? values.lastSeenAt)
+                  : values.lastSeenAt
+                : null,
+              reviewClaimedAt: values.reviewerId
+                ? values.reviewerId === have.reviewerId
+                  ? (have.reviewClaimedAt ?? values.lastSeenAt)
+                  : values.lastSeenAt
+                : null,
+              updatedAt: values.lastSeenAt,
+            })
+            .where(eq(submissions.id, have.id))
+            .returning()
+        )[0]
       : (
           await database
             .insert(submissions)
             .values({
               ...values,
               landedAt: str(item.row, 'first_seen_at') || values.lastSeenAt,
-              lastClaimedAt: values.rubricAssigneeId || values.reviewerId ? values.lastSeenAt : null,
+              lastClaimedAt: claimedAt,
+              rubricClaimedAt: values.rubricAssigneeId ? values.lastSeenAt : null,
+              reviewClaimedAt: values.reviewerId ? values.lastSeenAt : null,
             })
             .returning()
         )[0];
@@ -355,7 +408,7 @@ async function main() {
     }
   }
 
-  console.log(`${apply ? 'Wrote' : 'Would sync'} tasks=${apply ? written : refreshed.length} people=${apply ? peopleWritten : plannedPeople.size} titled=${titled} newRubrics=${rubrics}`);
+  console.log(`${apply ? 'Wrote' : 'Would sync'} tasks=${apply ? written : incoming} people=${apply ? peopleWritten : plannedPeople.size} titled=${titled} newRubrics=${rubrics}${newOnly || boardOnly ? ` (new-only=${newOnly} board-only=${boardOnly})` : ''}`);
   console.log('All', counts);
   console.log('Board (watched ∩ list)', boardCounts);
   if (!apply) console.log('Re-run with --apply to write.');

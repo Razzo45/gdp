@@ -133,12 +133,14 @@ defect inventory; passes already stored in the group are reused on retry.
 | pptx / docx / xlsx | `pdf_from_office`: LibreOffice renders once per content hash (≤ 2 concurrent, 180 s, isolated profile) → PDF cached in the private bucket (`derivatives`), **plus** a deterministic *FILE FACTS* manifest from the OOXML (slide count, aspect, hidden slides, notes, media, fonts, charts, transitions) |
 | pptx / docx / xlsx without a renderer | `text_digest`: manifest + full text in reading order, with an explicit *NO RENDER AVAILABLE* instruction so the model does not guess at visuals |
 | zip | expanded (≤ 25 entries, 300 MB) and each entry prepared recursively |
-| anything else / > 200 MB | `NOT ATTACHED` notice so a missing file is never silently "fine" |
+| anything else / > 2 GB | `NOT ATTACHED` notice so a missing file is never silently "fine" |
 
 ## Jobs
 
 One table. `claimNext` uses `FOR UPDATE SKIP LOCKED`, takes a 90 s lease,
 and also reclaims running jobs whose lease expired (`attempts < max_attempts`).
+A crashed job that has used every attempt is failed on the next worker poll
+so it does not sit `running` until the 2-hour deadline.
 Handlers call `tick()` (heartbeat + progress + checkpoint); a lost lease throws
 `LeaseLost` and the other worker continues from the checkpoint. The worker is
 started by `instrumentation.ts` inside the web process (`RUN_WORKER=1`) or
@@ -162,7 +164,9 @@ JSON-mode without schema and are validated with zod.
   sentences, only when all are available), and `prompt`, then walks the
   workflow from the current status to the configured handoff status via BFS
   over `next|approve|submit|resubmit|assign` triggers. A push lease on the
-  submission row prevents double pushes.
+  submission row prevents double pushes and expires after 10 minutes. If the
+  Catalog already shows the handoff status, a retry writes the local receipt
+  instead of dead-ending.
 
 ## Security notes
 
@@ -171,7 +175,8 @@ JSON-mode without schema and are validated with zod.
 - Verified-identity headers are deleted from inbound requests before being set.
 - All file reads by the browser go through redirect routes that issue fresh,
   short-lived signed URLs after a visibility check.
-- Uploads are capped (12 AI outputs, 200 MB each), MIME is derived from the
+- Uploads are capped (12 AI outputs, 2 GB each) and go to object storage via
+  a signed PUT (not through the Next body). MIME is derived from the
   extension server-side, bytes are hashed.
 - Webhook body is read as raw text and verified before parsing.
 - Human overrides of Golden verdicts require a reason and are stored
