@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { startWorker } from '@/lib/jobs/worker';
 
 /** `npm run worker` — standalone job worker (set RUN_WORKER=0 on the web process). */
-const handle = startWorker({ concurrency: Number(process.env['WORKER_CONCURRENCY'] ?? 2) });
+const handle = startWorker({ concurrency: Number(process.env['WORKER_CONCURRENCY'] ?? 8) });
 console.log('[worker] started');
 
 const port = Number(process.env['PORT'] ?? 0);

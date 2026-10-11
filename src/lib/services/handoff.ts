@@ -7,9 +7,10 @@ import type { DbOrTx } from '@/db/types';
 import { handoffGates, handoffTransitionGate, type HandoffGates, type HandoffTarget } from '@/domain/gates';
 import { holdsRubricSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { fetchSubmission, saveSubmissionValues, transitionSubmission } from '@/lib/catalog/client';
-import { catalogRubricItems, catalogTaskPerformance } from '@/lib/catalog/export';
+import { catalogRubricItems, catalogTaskPerformance, catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
 import { ProjectPayload, readCatalogSubmission } from '@/lib/catalog/read';
 import { scheduleReap } from '@/lib/ai/reaper';
+import { env } from '@/lib/env';
 import { isLivePushLease } from '@/domain/pushLease';
 import { conflict, forbidden, invalid, ServiceError } from './errors';
 import { submittedCalibration } from './review';
@@ -24,7 +25,8 @@ import { getSubmission, recordEvent, watchedProjectFor } from './submissions';
  *   ready_for_review → bounced | stability_pass → final_review_pass → client_visible
  * `client_visible` is set by the push itself, never requested.
  *
- * The push writes `rubrics`, `prompt` and `taskPerformance` into the
+ * The push writes `rubrics`, `prompt`, `taskPerformance` and `viewTask` (the
+ * public share URL Catalog shows as the View task button) into the
  * submission's form values and then walks the project workflow forward from
  * the watched project's work status to its handoff status, one legal move at
  * a time. The Catalog remains the judge of each move.
@@ -181,7 +183,10 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     const performance = catalogTaskPerformance({ goldenPercent: view.goldenPercent, calibrationPercent: view.calibrationPercent, stabilityScores: view.stabilityScores }, fresh.project, read.values['taskPerformance']);
     if (!performance) throw conflict('The task performance summary is incomplete; the push was not made.');
 
-    const values: Record<string, unknown> = { ...read.values, rubrics: items.items, taskPerformance: performance };
+    const values = withCatalogViewTask(
+      { ...read.values, rubrics: items.items, taskPerformance: performance },
+      catalogViewTask(env().PUBLIC_APP_URL ?? '', submission.id, env().AUTH_LOCAL_SECRET),
+    );
     if (rubric.seeds.length && typeof read.values['prompt'] !== 'string') values['prompt'] = rubric.seeds.join('\n');
 
     const saved = await saveSubmissionValues(submission.catalogSubmissionId, read.projectId, values);

@@ -19,7 +19,7 @@ import { supabaseAuthConfig } from '@/lib/auth/supabasePublic';
  * server from a short-lived cache (see lib/auth/identity.ts).
  */
 
-const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/api/auth/', '/api/hooks/', '/api/health'];
+const PUBLIC_PATHS = ['/login', '/auth/callback', '/auth/signout', '/api/auth/', '/api/hooks/', '/api/health', '/preview', '/s/', '/api/s/'];
 
 const isPublic = (pathname: string) => PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p));
 

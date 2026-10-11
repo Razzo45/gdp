@@ -4,10 +4,12 @@
  *  - rubric rows become `{ id: s001, statement, question, tag, answer }`
  *    filtered to the properties the project declares;
  *  - `taskPerformance` carries three ASCII sentences;
+ *  - `viewTask` is the public HTTPS share URL Catalog renders as a button;
  *  - outbound human text is converted to ASCII where the upstream requires it,
  *    while ids, enums and file references are never rewritten.
  */
 import { deliveryId, FAMILY_LABELS, seatsInDisplayOrder, type Family } from '@/domain/rubric';
+import { viewTaskHref, viewTaskToken } from '@/domain/viewTask';
 import { pct } from '@/components/format';
 import { STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
 import { declaredRubricItemFields, taskPerformanceDeclaration } from './read';
@@ -115,6 +117,16 @@ export function catalogTaskPerformance(input: PerformanceSummaryInput, project: 
     if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
   }
   return merged;
+}
+
+/** The string Catalog stores in `viewTask` — they render it as the View task button. */
+export function catalogViewTask(baseUrl: string, submissionId: string, secret: string): string | null {
+  return viewTaskHref(baseUrl, submissionId, viewTaskToken(secret, submissionId));
+}
+
+export function withCatalogViewTask(values: Record<string, unknown>, href: string | null): Record<string, unknown> {
+  if (!href) return values;
+  return { ...values, viewTask: href };
 }
 
 /** Display name for a Catalog upload; the extension is a protected token. */
