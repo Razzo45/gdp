@@ -12,7 +12,6 @@ import { seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels } from '@
 export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(true);
-  const [flipNote, setFlipNote] = useState<Record<string, string>>({});
   const stability = view.stability;
   const statements = seatsInDisplayOrder(view.rubric?.statements ?? []);
   const seats = seatIndexById(statements);
@@ -40,8 +39,8 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const rows = showAll ? statements : statements.filter((s) => flips.has(s.id) || passes.some((p) => p.errors[s.id]));
 
   return (
-    <section className="card space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <section className="card flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <h2 className="font-semibold">Repeatability & Stability</h2>
         <span className="text-sm text-muted">
           {official
@@ -55,7 +54,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
       </div>
 
       {passes.length > 0 && (
-        <div className="grid grid-cols-3 gap-2 text-center text-sm">
+        <div className="grid shrink-0 grid-cols-3 gap-2 text-center text-sm">
           {[1, 2, 3].map((i) => {
             const p = passes.find((x) => x.passIndex === i);
             const errors = p ? Object.keys(p.errors).length : 0;
@@ -71,7 +70,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
       )}
 
       {gate && (
-        <ul className="text-sm">
+        <ul className="shrink-0 text-sm">
           <li>
             Spread: <strong>{gate.spread === null ? '—' : `${(Math.round(gate.spread * 10) / 10).toFixed(1)} pts`}</strong> {gate.complete && (gate.repeatable ? <span className="text-ok">within limit</span> : <span className="text-bad">over {STABILITY_MAX_SPREAD_POINTS}</span>)}
           </li>
@@ -82,7 +81,6 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
           )}
           <li>
             {gate.flips.length === 0 ? 'No flips detected. Zero flips is acceptable for the stability gate.' : `Statements with changing answers (${gate.flips.length})`}
-            {(stability?.unacknowledgedFlips?.length ?? 0) > 0 && <span className="text-warn"> · {stability!.unacknowledgedFlips.length} still need a reason</span>}
           </li>
           {gate.flips.length > 0 && (
             <li>
@@ -98,12 +96,12 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
       )}
 
       {canRun && (
-        <div className="flex flex-col items-start gap-2">
+        <div className="flex shrink-0 flex-col items-start gap-2">
           <div className="flex flex-wrap gap-2">
             {canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt ? (
               <button
                 className="btn btn-primary"
-                disabled={busy || (stability.unacknowledgedFlips?.length ?? 0) > 0}
+                disabled={busy}
                 type="button"
                 onClick={() => act(`/api/submissions/${view.submission.id}/stability/accept`, { groupId: stability.groupId }, 'Accepted by the Rubric Team for final submission.')}
               >
@@ -136,22 +134,20 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
             )}
           </div>
           {view.aiOutputs.length === 0 && <p className="text-sm text-muted">Attach the AI output first.</p>}
-          {canAccept && (stability?.unacknowledgedFlips?.length ?? 0) > 0 && (
-            <p className="text-sm text-warn">Note each flip before you accept ({stability!.unacknowledgedFlips.length} left).</p>
-          )}
         </div>
       )}
 
       {passes.length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 text-sm text-muted">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-center gap-2 text-sm text-muted">
             <span>{showAll ? 'All statements' : `Flips and errors (${rows.length})`}</span>
             <button className="underline" onClick={() => setShowAll((v) => !v)}>
               {showAll ? 'show flips only' : 'show all'}
             </button>
           </div>
+          <div className="min-h-0 flex-1 overflow-auto">
           <table className="mt-2 w-full text-sm">
-            <thead className="text-left text-muted">
+            <thead className="sticky top-0 z-10 bg-surface text-left text-muted">
               <tr>
                 <th className="py-2 pr-3">Seat</th>
                 <th className="py-2 pr-3">Statement</th>
@@ -175,22 +171,6 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
                     {passes.map((p) => p.errors[s.id]).filter((e): e is string => Boolean(e)).slice(0, 1).map((e) => (
                       <div key={e} className="text-bad">
                         {seatLabel(seats.get(s.id))}: {withSeatLabels(e, seats)}
-                      </div>
-                    ))}
-                    {flips.has(s.id) && canRun && stability?.groupId && !stability.flipNotes.some((n) => n.statementId === s.id) && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        <input className="input py-0.5 text-xs" placeholder="Why this flip is acceptable, or what to rewrite" value={flipNote[s.id] ?? ''} onChange={(e) => setFlipNote((m) => ({ ...m, [s.id]: e.target.value }))} />
-                        <button className="btn btn-sm" disabled={busy || (flipNote[s.id] ?? '').trim().length < 5} type="button" onClick={() => act(`/api/submissions/${view.submission.id}/stability/flip`, { groupId: stability.groupId, statementId: s.id, action: 'acknowledged', note: flipNote[s.id] }, 'Flip acknowledged.')}>
-                          Acknowledge
-                        </button>
-                        <button className="btn btn-sm" disabled={busy || (flipNote[s.id] ?? '').trim().length < 5} type="button" onClick={() => act(`/api/submissions/${view.submission.id}/stability/flip`, { groupId: stability.groupId, statementId: s.id, action: 'rewrite_requested', note: flipNote[s.id] }, 'Rewrite requested.')}>
-                          Request rewrite
-                        </button>
-                      </div>
-                    )}
-                    {stability?.flipNotes.filter((n) => n.statementId === s.id).map((n) => (
-                      <div key={n.action} className="mt-1 text-sm text-muted">
-                        {n.action === 'acknowledged' ? 'Acknowledged' : 'Rewrite requested'}: {n.note}
                       </div>
                     ))}
                   </td>
@@ -218,6 +198,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </section>

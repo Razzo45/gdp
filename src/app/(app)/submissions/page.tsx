@@ -8,9 +8,11 @@ import { PageHeader } from '@/components/PageHeader';
 import { currentActor } from '@/lib/auth/identity';
 import { claimableSeat, isController } from '@/lib/auth/permissions';
 import { listSubmissions } from '@/lib/services/submissions';
+import { TaskLabel } from '@/components/TaskLabel';
+import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStateChips } from '@/components/WorkStateChips';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
-import { BOARD_STATES, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
+import { BOARD_STATES, platformStateChangedAt, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +27,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const rows = await listSubmissions(actor, { workState, q, mine });
   const all = workState || q ? await listSubmissions(actor, { mine }) : rows;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, all.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
+  const listed = workState || q ? rows : rows.filter((row) => row.workState !== 'other');
 
   return (
     <Page>
@@ -69,58 +72,52 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
       {pm && <ImportTask />}
 
       <div className="card overflow-x-auto p-0">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead className="sticky top-0 bg-wash text-left text-xs uppercase tracking-wide text-muted">
+        <table className="w-full min-w-[800px] text-sm">
+          <thead className="sticky top-0 bg-wash text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
             <tr>
-              <th className="px-4 py-3">Submission</th>
+              <th className="px-4 py-3">Task</th>
               <th className="px-4 py-3">Work status</th>
               <th className="px-4 py-3">Assigned to</th>
-              <th className="px-4 py-3">Catalog stage</th>
+              <th className="px-4 py-3">State changed</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {rows.length === 0 && (
+            {listed.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-10 text-center text-muted">
                   {q ? 'No matching submissions' : workState ? `No submissions: ${WORK_STATE_LABEL[workState]}` : 'Nothing here yet'}
                 </td>
               </tr>
             )}
-            {rows.map((s) => {
+            {listed.map((s) => {
               const seat = s.blinded ? claimableSeat(actor, s) : null;
+              const assignee =
+                s.workState === 'in_review'
+                  ? (s.reviewerName ?? 'Review Team')
+                  : (s.rubricAssigneeName ?? (s.workState === 'preparing' || s.workState === 'unassigned' || s.workState === 'review_returned' ? 'Rubric Team' : null));
               return (
               <tr key={s.id} className="relative hover:bg-wash">
-                <td className="px-4 py-3">
+                <td className="px-4 py-3.5 align-middle">
                   {s.blinded ? (
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{s.stage === 'review' ? 'Unclaimed review task' : 'Unclaimed rubric task'}</span>
+                      <span className="text-sm font-semibold">{s.stage === 'review' ? 'Unclaimed review task' : 'Unclaimed rubric task'}</span>
                       {seat && <ClaimTask submissionId={s.id} seat={seat} />}
                     </div>
                   ) : (
-                    <>
-                      <Link href={`/submissions/${s.id}`} className="font-medium after:absolute after:inset-0 hover:underline">
-                        {s.title || s.catalogSubmissionId}
-                      </Link>
-                      <div className="font-mono text-[11px] text-muted">
-                        {s.catalogSubmissionId.slice(0, 8)} · {s.projectId}
-                        {s.upstreamChangedAt && s.upstreamChangedAt > s.landedAt ? ' · upstream changed' : ''}
-                      </div>
-                    </>
+                    <Link href={`/submissions/${s.id}`} className="after:absolute after:inset-0 hover:underline">
+                      <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} />
+                    </Link>
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  <WorkStatusPill state={s.workState} />
+                <td className="px-4 py-3.5 align-middle">
+                  <WorkStatusPill state={s.workState} size="board" />
                 </td>
-                <td className="px-4 py-3">
-                  {s.blinded ? (
-                    <span className="text-quiet">—</span>
-                  ) : s.workState === 'in_review' ? (
-                    s.reviewerName ?? 'Reviewer Team'
-                  ) : (
-                    s.rubricAssigneeName ?? (s.workState === 'preparing' ? 'Rubric Team' : <span className="text-quiet">—</span>)
-                  )}
+                <td className="px-4 py-3.5 align-middle">
+                  {s.blinded || !assignee ? <span className="text-quiet">—</span> : <span className="text-sm font-semibold leading-[22px]">{assignee}</span>}
                 </td>
-                <td className="px-4 py-3 text-sm text-muted">{s.blinded ? '—' : s.catalogStatusName ?? '—'}</td>
+                <td className="px-4 py-3.5 align-middle text-xs leading-[18px] text-muted">
+                  {s.blinded ? '—' : <TimeAgo iso={platformStateChangedAt(s)} />}
+                </td>
               </tr>
               );
             })}

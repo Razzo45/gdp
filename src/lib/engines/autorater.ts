@@ -88,8 +88,8 @@ Rules:
   evidenced; do not deny content that is plainly present in an attachment or digest.
 - If a statement names a specific file, evaluate that file (match by filename even
   if the path differs slightly).
-- INSPECT attached images, video, audio and PDF. Prefer what you see/hear over a
-  text summary when they conflict.
+- INSPECT attached images, video, audio, PDF and rendered slide/page stills. Prefer what you see/hear over a
+  text summary when they conflict. A slide still labelled "slide N" is that page of the deck.
 - For video/audio: only claim events, dialogue or specs evidenced in the clip.
 - Logical consistency is mandatory: the Yes/No MUST agree with the evidence sentence.
 - "rather than X" / "instead of X" / "free of X": if X is absent and the positive
@@ -124,8 +124,9 @@ Rules:
 - MULTIPLE DELIVERABLES: if a statement applies to all deliverables and any one
   of them fails the claim, answer No.
 - DEFECT_INVENTORY: any listed defect that falsifies a statement → No.
-- A file marked NOT ATTACHED or NO RENDER AVAILABLE cannot support a Yes on a
-  statement that depends on what is missing; answer No and say why.
+- A file marked NOT ATTACHED cannot support a Yes on a statement that depends on that file; answer No and say why.
+- FILE FACTS are authoritative for slide/page counts, aspect, fonts and embedded-media presence — those may be Yes from FILE FACTS alone.
+- Embedded images attached after NO FULL-PAGE RENDER may support Yes on photograph/asset claims. Only use evidence "no render available" for slide-level layout, spacing or typography you cannot see.
 - UNCERTAINTY: if you cannot verify the hard half of a claim from the
   attachments, answer No — never Yes on a guess.
 
@@ -265,8 +266,10 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
       for (const verdict of response.value.verdicts) {
         const statement = matchStatement(batch, verdict.id);
         if (!statement || !wanted.has(statement.id)) continue;
+        const evidence = verdict.evidence.trim();
+        if (!evidence) continue;
         result.answers[statement.id] = verdict.answer === 'Yes';
-        result.evidence[statement.id] = verdict.evidence.trim();
+        result.evidence[statement.id] = evidence;
         wanted.delete(statement.id);
       }
     } catch (error) {
@@ -285,8 +288,10 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
         record(result, response);
         const verdict = response.value.verdicts.find((v) => matchStatement([statement], v.id)) ?? response.value.verdicts[0];
         if (!verdict) throw new GeminiError('invalid_output', 'Gemini returned no verdict for the statement.');
+        const evidence = verdict.evidence.trim();
+        if (!evidence) throw new GeminiError('invalid_output', 'Gemini returned a verdict with no evidence.');
         result.answers[id] = verdict.answer === 'Yes';
-        result.evidence[id] = verdict.evidence.trim();
+        result.evidence[id] = evidence;
       } catch (error) {
         result.errors[id] = error instanceof GeminiError ? error.message : 'Grading failed.';
       }

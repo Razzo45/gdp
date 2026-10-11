@@ -5,7 +5,9 @@ import { ClaimTask } from '@/components/ClaimTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { StageBadge } from '@/components/StageBadge';
+import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
+import { WorkStatusPill } from '@/components/WorkStatusPill';
 import { currentActor } from '@/lib/auth/identity';
 import { claimableSeat, isController } from '@/lib/auth/permissions';
 import { dashboardOverview } from '@/lib/services/dashboard';
@@ -109,12 +111,14 @@ async function PmDashboard({ actorId }: { actorId: string }) {
               {board.stuck.map((row) => (
                 <tr key={row.id} className="hover:bg-wash">
                   <td className="px-5 py-3">
-                    <Link href={`/submissions/${row.id}`} className="font-medium hover:underline">
-                      {row.title}
+                    <Link href={`/submissions/${row.id}`} className="hover:underline">
+                      <TaskLabel catalogId={row.catalogSubmissionId} title={row.title} size="compact" />
                     </Link>
                   </td>
-                  <td className="px-5 py-3">{row.workLabel}</td>
-                  <td className="px-5 py-3">{row.holderName ?? <span className="text-quiet">Unassigned</span>}</td>
+                  <td className="px-5 py-3">
+                    <WorkStatusPill state={row.workState} size="board" />
+                  </td>
+                  <td className="px-5 py-3 text-sm font-semibold">{row.holderName ?? <span className="text-quiet font-normal">Unassigned</span>}</td>
                   <td className="px-5 py-3 tabular-nums text-warn">{row.held}</td>
                 </tr>
               ))}
@@ -209,8 +213,8 @@ function SeatList({
       {rows.map((s) => (
         <li key={s.id} className="relative flex items-center gap-3 py-3">
           <StageBadge stage={s.stage} />
-          <Link href={`/submissions/${s.id}`} className="min-w-0 flex-1 truncate font-medium after:absolute after:inset-0 hover:underline">
-            {s.title || s.catalogSubmissionId}
+          <Link href={`/submissions/${s.id}`} className="min-w-0 flex-1 after:absolute after:inset-0 hover:underline">
+            <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
           </Link>
           <span className="shrink-0 text-xs text-muted">
             {s.rubricAssigneeId === actorId ? 'rubric seat' : 'review seat'} · claimed{' '}

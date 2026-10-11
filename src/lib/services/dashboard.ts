@@ -24,6 +24,7 @@ import { listSubmissions, type SubmissionListRow } from './submissions';
 
 export interface StuckTask {
   id: string;
+  catalogSubmissionId: string;
   title: string;
   workState: WorkState;
   workLabel: string;
@@ -110,7 +111,8 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
     const hours = holdAgeHours(enteredAt, now) ?? 0;
     stuck.push({
       id: row.id,
-      title: row.title || row.catalogSubmissionId,
+      catalogSubmissionId: row.catalogSubmissionId,
+      title: row.title,
       workState: row.workState,
       workLabel: WORK_STATE_LABEL[row.workState],
       holderId: holder.id,

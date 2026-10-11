@@ -79,6 +79,13 @@ export function familyOfStatement(statement: string, tag?: string): Family {
   return familyOfTag(correctTag(statement, tag));
 }
 
+/** Family the seat was stored under. Do not re-guess for quota / section checks. */
+export function seatedFamily(row: { family?: Family | null; tag?: string; statement?: string }): Family {
+  if (row.family && (FAMILIES as readonly string[]).includes(row.family)) return row.family;
+  if (row.tag && isRubricTag(row.tag)) return familyOfTag(row.tag);
+  return familyOfStatement(row.statement ?? '', row.tag);
+}
+
 function isFormatClaim(q: string): boolean {
   if (/\b(pptx|docx|xlsx|pdf|csv)\s+format\b/.test(q)) return true;
   if (/\b(in|as)\s+(a\s+|an\s+)?(pptx|docx|xlsx|pdf|csv)\b/.test(q)) return true;

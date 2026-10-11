@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdAgeHours, isStaleHold, STALE_HOLD_HOURS } from '@/domain/workState';
+import { holdAgeHours, isStaleHold, platformStateChangedAt, STALE_HOLD_HOURS } from '@/domain/workState';
 
 describe('hold aging', () => {
   const now = Date.parse('2026-10-10T12:00:00.000Z');
@@ -16,5 +16,12 @@ describe('hold aging', () => {
     expect(isStaleHold(new Date(now - 47 * 3_600_000).toISOString(), now)).toBe(false);
     expect(isStaleHold(new Date(now - 48 * 3_600_000).toISOString(), now)).toBe(true);
     expect(isStaleHold(new Date(now - 72 * 3_600_000).toISOString(), now)).toBe(true);
+  });
+});
+
+describe('platform state changed', () => {
+  it('uses the last upstream move, or landed if the status has not moved', () => {
+    expect(platformStateChangedAt({ landedAt: '2026-10-01T00:00:00.000Z', upstreamChangedAt: null })).toBe('2026-10-01T00:00:00.000Z');
+    expect(platformStateChangedAt({ landedAt: '2026-10-01T00:00:00.000Z', upstreamChangedAt: '2026-10-08T12:00:00.000Z' })).toBe('2026-10-08T12:00:00.000Z');
   });
 });

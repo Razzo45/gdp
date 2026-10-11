@@ -65,8 +65,9 @@ const Schema = z
     BOOTSTRAP_ADMIN_EMAILS: z.string().default(''),
     PUBLIC_APP_URL: z.string().url().optional(),
     STORAGE_BUCKET: z.string().default('gdp-private'),
-    /** `gcs` on Cloud Run, `supabase` if a service key exists, else `local`. */
-    STORAGE_DRIVER: z.enum(['gcs', 'supabase', 'local']).optional(),
+    /** `s3` on AWS, `gcs` on Cloud Run, `supabase` if a service key exists, else `local`. */
+    STORAGE_DRIVER: z.enum(['s3', 'gcs', 'supabase', 'local']).optional(),
+    AWS_REGION: z.string().min(1).optional(),
     STORAGE_LOCAL_DIR: z.string().default('tmp/storage'),
     /** Set to "0" on web instances when a dedicated worker process runs the queue. */
     RUN_WORKER: z.string().default('1'),
@@ -90,6 +91,9 @@ const Schema = z
     if (value.STORAGE_DRIVER === 'gcs' && !value.STORAGE_BUCKET) {
       ctx.addIssue({ code: 'custom', path: ['STORAGE_BUCKET'], message: 'required when STORAGE_DRIVER=gcs' });
     }
+    if (value.STORAGE_DRIVER === 's3' && !value.AWS_REGION) {
+      ctx.addIssue({ code: 'custom', path: ['AWS_REGION'], message: 'required when STORAGE_DRIVER=s3' });
+    }
   });
 
 export type Env = z.infer<typeof Schema>;
@@ -112,7 +116,7 @@ export function env(): Env {
 export const authMode = () => env().AUTH_MODE;
 export const geminiMockEnabled = () => env().GEMINI_MOCK === '1';
 
-export function storageDriver(): 'gcs' | 'supabase' | 'local' {
+export function storageDriver(): 's3' | 'gcs' | 'supabase' | 'local' {
   const e = env();
   return e.STORAGE_DRIVER ?? (e.SUPABASE_SERVICE_ROLE_KEY ? 'supabase' : 'local');
 }

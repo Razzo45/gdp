@@ -7,8 +7,8 @@ import type { HandoffStatus, ReviewStatus, Stage } from '@/db/schema';
 export const WORK_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'handoff', 'submitted', 'other'] as const;
 export type WorkState = (typeof WORK_STATES)[number];
 
-/** Filter bar on the live board — no separate “Ready to submit” chip. */
-export const BOARD_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'submitted', 'other'] as const;
+/** Filter bar on the live board — Other stays off this panel. */
+export const BOARD_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'submitted'] as const;
 
 export const WORK_STATE_LABEL: Record<WorkState, string> = {
   unassigned: 'Unassigned',
@@ -44,6 +44,11 @@ export function holdAgeHours(iso: string | null | undefined, now = Date.now()): 
   return Math.max(0, (now - at) / 3_600_000);
 }
 
+/** Last time Catalog/platform status moved, as we saw it. Landed if it has not moved since. */
+export function platformStateChangedAt(row: { upstreamChangedAt: string | null; landedAt: string }): string {
+  return row.upstreamChangedAt ?? row.landedAt;
+}
+
 export function isStaleHold(iso: string | null | undefined, now = Date.now()): boolean {
   const hours = holdAgeHours(iso, now);
   return hours !== null && hours >= STALE_HOLD_HOURS;
@@ -62,5 +67,6 @@ export function workStateOf(row: {
   if (row.stage === 'stability') return 'stability';
   if (row.stage === 'review') return 'in_review';
   if (row.stage === 'rubric' && row.reviewStatus === 'changes_requested') return 'review_returned';
+  if (row.stage === 'rubric' && row.rubricAssigneeId === null) return 'unassigned';
   return 'preparing';
 }

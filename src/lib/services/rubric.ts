@@ -6,6 +6,7 @@ import { db } from '@/db/client';
 import { goldenRatings, rubricStatements, rubrics, submissions, type GoldenRating, type Rubric, type RubricStatement, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { statementHash } from '@/domain/fingerprint';
+import { isLiveHumanNote } from '@/domain/golden';
 import { goldenGate, type GoldenGate, type Verdict } from '@/domain/gates';
 import { parseImport } from '@/domain/import';
 import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
@@ -174,7 +175,7 @@ export async function installFactoryVersion(database: DbOrTx, submissionId: stri
 /* ─────────────────────────────────────────────── golden ── */
 
 export interface GoldenAuditEntry {
-  ai?: { verdict: boolean | null; evidence: string };
+  ai?: { verdict: boolean | null; evidence: string; model: string | null };
   human?: { verdict: boolean | null; evidence: string };
 }
 
@@ -192,8 +193,8 @@ export interface GoldenState {
 
 /**
  * The AI rating counts only while the statement reads exactly as it did
- * when graded (`basis.statementHash`); edits make it stale. Human overrides
- * always carry a reason and outrank AI.
+ * when graded (`basis.statementHash`); edits make it stale. A human row
+ * outranks AI only when it has a real observation — import stubs do not.
  */
 export async function goldenState(database: DbOrTx, rubricId: string, statements: RubricStatement[]): Promise<GoldenState> {
   const ratings = await database.select().from(goldenRatings).where(eq(goldenRatings.rubricId, rubricId)).orderBy(desc(goldenRatings.createdAt));
@@ -209,11 +210,12 @@ export async function goldenState(database: DbOrTx, rubricId: string, statements
     const human = own.find((r) => r.source === 'human');
     const ai = own.find((r) => r.source === 'ai');
     const humanNote = (human?.evidence || human?.reason || '').trim();
+    const liveHuman = Boolean(human && isLiveHumanNote(humanNote));
     audit[statement.id] = {
-      ...(ai && !ai.error ? { ai: { verdict: ai.verdict, evidence: ai.evidence } } : {}),
-      ...(human ? { human: { verdict: human.verdict, evidence: humanNote } } : {}),
+      ...(ai && !ai.error ? { ai: { verdict: ai.verdict, evidence: ai.evidence, model: ai.model ?? null } } : {}),
+      ...(liveHuman ? { human: { verdict: human!.verdict, evidence: humanNote } } : {}),
     };
-    if (human && (!ai || human.createdAt >= ai.createdAt)) {
+    if (liveHuman && human && (!ai || human.createdAt >= ai.createdAt)) {
       verdicts[statement.id] = human.verdict;
       evidence[statement.id] = humanNote;
       sources[statement.id] = 'human';

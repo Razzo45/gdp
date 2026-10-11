@@ -7,7 +7,7 @@ const config: NextConfig = {
   // Do not write a generated AGENTS.md into the repo on `next dev`.
   agentRules: false,
   // Server-only native/binary packages must not be bundled by Turbopack/webpack.
-  serverExternalPackages: ['postgres', 'jszip', 'mammoth', '@google/genai', '@google-cloud/storage'],
+    serverExternalPackages: ['postgres', 'jszip', 'mammoth', '@google/genai', '@google-cloud/storage', 'pdfjs-dist', '@napi-rs/canvas', '@aws-sdk/client-ses', '@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner'],
   experimental: {
     serverActions: { bodySizeLimit: '2mb' },
     // Keep the client from treating every force-dynamic page as instantly

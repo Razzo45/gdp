@@ -5,7 +5,7 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
@@ -91,6 +91,13 @@ describe('rubric tags and quotas', () => {
       const q = familyQuotas(n);
       expect(q.format + q.content + q.visual).toBe(n);
     }
+  });
+
+  it('keeps the stored family for quota checks even when wording looks like Format', () => {
+    const statement = 'The presentation contains exactly 18 slides.';
+    expect(familyOfStatement(statement, 'Visual - Layout')).toBe('format');
+    expect(seatedFamily({ family: 'visual', tag: 'Visual - Layout', statement })).toBe('visual');
+    expect(seatedFamily({ tag: 'Visual - Layout', statement })).toBe('visual');
   });
 });
 
@@ -305,7 +312,10 @@ describe('legacy snapshot import', () => {
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'h2', catalogStatusName: 'H2. Golden Output Ready for Review', reviewStatus: 'pending' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'off' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ handoffStatus: 'bounced' }).stage).toBe('handoff');
-    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('preparing');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('unassigned');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: null })).toBe('preparing');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: 'changes_requested' })).toBe('review_returned');
+    expect(workStateOf({ stage: 'review', rubricAssigneeId: 'x', reviewStatus: 'pending' })).toBe('in_review');
     expect(workStateOf({ stage: 'parked', rubricAssigneeId: null, reviewStatus: null })).toBe('other');
     expect(workStateOf({ stage: 'handoff', rubricAssigneeId: 'x', reviewStatus: 'approved', handoffStatus: 'bounced' })).toBe('platform_returned');
     expect(workStateOf({ stage: 'done', rubricAssigneeId: 'x', reviewStatus: 'approved' })).toBe('submitted');

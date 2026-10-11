@@ -131,7 +131,11 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
     await pruneReviewFeedback(tx, submissionId);
     await tx
       .update(submissions)
-      .set(decision === 'approved' ? { stage: 'stability', reviewStatus: 'approved' } : { stage: 'rubric', reviewStatus: 'changes_requested' })
+      .set(
+        decision === 'approved'
+          ? { stage: 'stability', reviewStatus: 'approved' }
+          : { stage: 'rubric', reviewStatus: 'changes_requested', rubricAssigneeId: submission.rubricAssigneeId },
+      )
       .where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, decision === 'approved' ? 'review_approved' : 'review_changes_requested', { calibrationId: calibration?.id ?? null, scorePercent: calibration?.scorePercent ?? null });
   });

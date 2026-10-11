@@ -6,8 +6,9 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { geminiFiles, geminiFileUses } from '@/db/schema';
 import { env, geminiMockEnabled } from '@/lib/env';
-import { AdaptiveAdmission, type AdmissionSnapshot } from './admission';
+import { AdaptiveAdmission, type AdmissionOptions, type AdmissionSnapshot } from './admission';
 import { modelContext } from './context';
+import { throttleSharedAdmission, withSharedAdmission } from './sharedAdmission';
 import { standInValue } from './standIn';
 
 /**
@@ -90,6 +91,10 @@ function ai(): GoogleGenAI {
   const key = geminiApiKey();
   client ??= new GoogleGenAI({ apiKey: key, httpOptions: { timeout: env().GEMINI_TIMEOUT_MS } });
   return client;
+}
+
+async function admitted<T>(options: AdmissionOptions, operation: () => Promise<T>): Promise<T> {
+  return controller().use(() => withSharedAdmission(options, operation), options);
 }
 
 function controller(): AdaptiveAdmission {
@@ -262,7 +267,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
     }
     let started = Date.now();
     try {
-      const response = await gate.use(async () => {
+      const response = await admitted(admit, async () => {
         started = Date.now();
         const result = await raceDeadline(
           ai().models.generateContent({
@@ -285,7 +290,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
         );
         gate.onSuccess(model, Date.now() - started);
         return result;
-      }, admit);
+      });
       const text = response.text ?? '';
       const finish = response.candidates?.[0]?.finishReason;
       if (finish && /SAFETY|PROHIBITED|BLOCKLIST|RECITATION/i.test(String(finish))) {
@@ -342,6 +347,7 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
         // The controller halves concurrency and opens a cooldown that every
         // other caller also respects; our own wait is at least that long.
         backoff = Math.max(fallback, gate.onThrottle(model, retryAfterMs(error), fallback));
+        await throttleSharedAdmission(model, backoff);
       } else if (failure.kind === 'transport' || failure.kind === 'timeout') {
         gate.onFailure(model, failure.kind === 'timeout' ? 'timeout' : 'server');
       }
@@ -490,7 +496,7 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
   const admit = { lane: 'files', requestClass: ctx.requestClass, ownerId: ctx.ownerId, signal: ctx.signal };
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const uri = await gate.use(async () => {
+      const uri = await admitted(admit, async () => {
         const started = Date.now();
         const blob = new Blob([Buffer.from(input.bytes)], { type: input.mime });
         let file = await ai().files.upload({ file: blob, config: { mimeType: input.mime, displayName: input.name.slice(0, 120) } });
@@ -504,7 +510,7 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
         }
         gate.onSuccess('files', Date.now() - started);
         return file.uri;
-      }, admit);
+      });
       await database
         .insert(geminiFiles)
         .values({ sha256: input.sha256, uri, mime: input.mime, size: input.bytes.byteLength, expiresAt: new Date(Date.now() + FILE_TTL_MS).toISOString() })
@@ -516,6 +522,7 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
       const fallback = Math.min(30_000, 2_000 * 2 ** attempt);
       if (failure.kind === 'rate_limit') {
         const wait = gate.onThrottle('files', retryAfterMs(error), fallback);
+        await throttleSharedAdmission('files', wait);
         if (attempt < 3) {
           await sleep(Math.max(wait, fallback), ctx.signal);
           continue;

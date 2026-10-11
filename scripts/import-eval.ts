@@ -18,6 +18,7 @@ import {
   watchedProjects,
 } from '@/db/schema';
 import { sha256, sourceFingerprint, statementHash } from '@/domain/fingerprint';
+import { isLiveHumanNote } from '@/domain/golden';
 import { factoryStatementsFromLegacy, latestLegacyRun, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts } from '@/domain/legacyImport';
 import { installFactoryVersion } from '@/lib/services/rubric';
 import { pruneCalibrations, pruneGoldenRatings, pruneReviewFeedback, pruneStabilityGroups } from '@/lib/services/retention';
@@ -307,7 +308,8 @@ async function main() {
       const evidence = remapEvidence(record(row['evidence']), seats);
       const humans = statements.filter((statement) => {
         const legacy = [...seats.entries()].find(([, id]) => id === statement.id)?.[0];
-        return legacy && String(sources[legacy] ?? '') === 'human' && statement.id in verdicts;
+        const note = (evidence[statement.id] ?? '').trim();
+        return legacy && String(sources[legacy] ?? '') === 'human' && statement.id in verdicts && isLiveHumanNote(note);
       });
       if (!humans.length) continue;
       await database.insert(goldenRatings).values(
@@ -316,8 +318,8 @@ async function main() {
           statementId: statement.id,
           source: 'human' as const,
           verdict: verdicts[statement.id]!,
-          evidence: evidence[statement.id] ?? 'Imported human override.',
-          reason: evidence[statement.id] ?? 'Imported human override.',
+          evidence: evidence[statement.id]!,
+          reason: evidence[statement.id]!,
           basis: { statementText: statement.statement, rubricRevision: rubric.revision, provenance: 'legacy-snapshot' },
         })),
       );
