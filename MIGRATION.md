@@ -36,32 +36,49 @@ local + 8-attribute LLM lint, Jaccard 0.72), and the ported prompts.
 
 ## Moving data
 
-The new schema lives in `app.*`, so it can be created next to the legacy
-`public.*` tables in the same Supabase project and cut over without downtime
-for Auth (users keep their logins).
+Auth stays on the live Supabase project so users keep their logins (same
+UUIDs). Task rows, seats and the current rubric go into whichever Postgres
+`DATABASE_URL` points at — Cloud SQL on GCP, or a scratch Neon. The importer
+never writes to live Supabase.
 
-1. `npm run db:migrate`.
-2. Users: `insert into app.profiles (id, email, display_name) select id, email, display_name from public.profiles;`
-   Roles: map legacy permission keys to the four roles and insert into
-   `app.user_roles (user_id, role)`.
-3. Watched projects: one row per Catalog project id in
-   `app.watched_projects` with `work_status_id` / `handoff_status_id` from the
-   legacy project feature settings (`wirestock_project_features`).
-4. Submissions: for each in-flight legacy `wirestock_submissions` row, call
-   `POST /api/submissions { catalogSubmissionId }` as a PM (re-imports the
-   source from the Catalog; `landed_at` can then be backfilled from the legacy
-   `created_at`). Set seats with `POST /api/submissions/:id/seat { action: 'assign', seat, userId }`.
-5. Rubrics: translate the current `rubric_runs` revision into one
-   `PUT /api/submissions/:id/rubric` call (`revision: 0`, `upserts` with
-   `tag`, `statement`, `scope`, `inputFileIds`, `outputFile`). Statements that
-   are questions are converted by the editor on paste; for bulk import use
-   `toAffirmativeStatement` from `src/domain/lint.ts`.
-6. Golden verdicts, calibrations and stability passes are **not** migrated:
-   they are bound to statement hashes and file sha256s that do not exist in
-   the legacy data. Re-run Golden (one job per task) and, for tasks already in
-   review, have the reviewer resubmit — the band check is the same.
-7. Finished tasks (`client_visible`) stay in the legacy tables for audit; they
-   do not need to exist in the new app.
+```bash
+npm run db:snapshot-supabase                 # read-only public.* → tmp/supabase-snapshot/
+npm run db:migrate                           # app.* on DATABASE_URL
+npm run db:import-snapshot                   # dry-run
+npm run db:import-snapshot -- --apply        # write
+```
+
+`--apply` refuses a Supabase host. Existing `app.submissions` catalog ids are
+left alone unless you pass `--replace`. `--sync-catalog` refreshes each task
+from the Catalog after the snapshot payload is inserted.
+
+What the importer writes:
+
+1. `app.profiles` — live `public.profiles` ids/emails, plus stub rows for
+   assignees that have no profile row.
+2. `app.user_roles` — `full_access`/`users.manage` → `admin`,
+   `submissions.control` → `pm`, `rubric_team` → `rubric_creator`,
+   `review_team` → `reviewer`.
+3. `app.watched_projects` — unique Catalog project ids from submissions,
+   plus `wirestock_project_features` work/handoff status ids when present.
+4. `app.submissions` — catalog payload already stored on
+   `wirestock_submissions`, seats from `wirestock_submission_assignments`,
+   stage from `wirestock_submission_states`.
+5. Current rubric — latest non-superseded `wirestock_rubric_runs.rows`
+   (tags re-corrected, questions made affirmative).
+
+Golden verdicts, human overrides, calibrations, stability passes and review
+decisions **are** migrated by `npm run db:import-eval -- --apply`. Legacy seat
+ids (`b0_12`, `s001`, …) and `question` rows are remapped onto the new
+statement ids. Re-run Golden only when you want a fresh autorate on new files.
+
+```bash
+npm run db:import-eval -- --apply
+npm run db:repair-pipeline -- --apply   # optional --no-observe
+```
+
+Finished tasks stay in the snapshot for audit. They are imported as rows so
+history and scores stay visible.
 
 ## Environment mapping
 

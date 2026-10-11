@@ -7,8 +7,8 @@ import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS } 
 import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
-import { ALL_OUTPUTS, describeSeatScope, inferFileScope, isDefaultScope } from '@/domain/fileScope';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, familyOfTag, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
+import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, correctTag, familyOfStatement, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
@@ -30,7 +30,7 @@ type Draft = {
 
 type Proposal = { statementId: string; kind: 'polish' | 'harden' | 'lint' | 'swap'; text: string; original?: string; rationale?: string; claimKey?: string };
 
-const toDraft = (s: RubricStatement): Draft => ({ id: s.id, tag: s.tag, statement: s.statement, notes: s.notes, scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile, claimKey: s.claimKey });
+const toDraft = (s: RubricStatement): Draft => ({ id: s.id, tag: correctTag(s.statement, s.tag), statement: s.statement, notes: s.notes, scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile, claimKey: s.claimKey });
 const FAMILY_ORDER: Family[] = ['format', 'content', 'visual'];
 const FAMILY_HEADING: Record<Family, string> = { format: 'Format & File', content: 'Content', visual: 'Visual' };
 
@@ -207,7 +207,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
   const counts = useMemo(() => {
     const c: Record<Family, number> = { format: 0, content: 0, visual: 0 };
-    for (const d of drafts) c[familyOfTag(d.tag)] += 1;
+    for (const d of drafts) c[familyOfStatement(d.statement, d.tag)] += 1;
     return c;
   }, [drafts]);
   const quotas = rubric?.quotas ?? { format: 5, content: 15, visual: 30 };
@@ -215,8 +215,8 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   const genJob = view.jobs.find((j) => j.kind === 'rubric_generate' && (j.status === 'queued' || j.status === 'running'));
   const rateJob = view.jobs.find((j) => j.kind === 'golden_autorate' && (j.status === 'queued' || j.status === 'running'));
   const autorateLocked = Boolean(rateJob);
-  const groups = FAMILY_ORDER.map((family) => ({ family, rows: drafts.filter((d) => familyOfTag(d.tag) === family) }));
-  const orderedDrafts = useMemo(() => seatsInDisplayOrder(drafts.map((d) => ({ ...d, family: familyOfTag(d.tag) }))), [drafts]);
+  const groups = FAMILY_ORDER.map((family) => ({ family, rows: drafts.filter((d) => familyOfStatement(d.statement, d.tag) === family) }));
+  const orderedDrafts = useMemo(() => seatsInDisplayOrder(drafts.map((d) => ({ ...d, family: familyOfStatement(d.statement, d.tag) }))), [drafts]);
   const weightById = useMemo(() => {
     const weights = normalisedWeights(orderedDrafts.length);
     return new Map(orderedDrafts.map((d, i) => [d.id, weights[i]!]));
@@ -324,7 +324,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
       {(genJob || rateJob) && <JobProgressCard job={genJob ?? rateJob!} />}
 
-      {FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && drafts.length > 0 && (
+      {editable && FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && drafts.length > 0 && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
           <strong>Some rubric sections need more checks</strong>
           <ul className="mt-1 text-xs">
@@ -467,7 +467,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                   bank={bank}
                   seated={drafts.map((d) => {
                     const live = rubric?.statements.find((s) => s.id === d.id);
-                    return { id: d.id, claimKey: live?.claimKey || d.id, statement: d.statement, tag: d.tag, family: familyOfTag(d.tag), notes: d.notes };
+                    return { id: d.id, claimKey: live?.claimKey || d.id, statement: d.statement, tag: d.tag, family: familyOfStatement(d.statement, d.tag), notes: d.notes };
                   })}
                   focus={bankFocus}
                   editable={editable && !autorateLocked}
@@ -539,15 +539,12 @@ function JobProgressCard({ job }: { job: { kind: string; status: string; progres
   );
 }
 
-function fileOptions(view: PanelProps['view']) {
-  const seen = new Set<string>();
-  const outputs: { id: string; name: string }[] = [];
-  for (const file of [...view.brief.goldenFiles, ...view.aiOutputs]) {
-    if (!file.name || seen.has(file.name)) continue;
-    seen.add(file.name);
-    outputs.push({ id: file.id, name: file.name });
-  }
-  return { outputs, inputs: view.brief.inputFiles.map((file) => ({ id: file.id, name: file.name })) };
+function catalogFiles(view: PanelProps['view']) {
+  return {
+    goldens: view.brief.goldenFiles.map((file) => ({ id: file.id, name: file.name })),
+    inputs: view.brief.inputFiles.map((file) => ({ id: file.id, name: file.name })),
+    aiOutputs: view.aiOutputs.map((file) => ({ id: file.id, name: file.name })),
+  };
 }
 
 function StatementGroups(props: {
@@ -639,9 +636,9 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
             value={d.statement}
             onChange={(e) => {
               const statement = e.target.value;
-              const files = fileOptions(view);
-              const patch: Partial<Draft> = { statement };
-              if (isDefaultScope(d)) Object.assign(patch, inferFileScope(statement, files.inputs, files.outputs));
+              const files = catalogFiles(view);
+              const patch: Partial<Draft> = { statement, tag: correctTag(statement, d.tag) };
+              if (!d.outputFile) Object.assign(patch, inferFileScope(statement, files.inputs, files.goldens));
               onUpdate(d.id, patch);
             }}
           />
@@ -651,7 +648,7 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
             {softIds.has(d.id) && <span className="badge badge-warn ml-2 align-middle">Soft</span>}
           </p>
         )}
-        <SeatScopeLine d={d} view={view} editable={editable} onUpdate={onUpdate} />
+        {open && editable && <SeatScopeLine d={d} view={view} onUpdate={onUpdate} />}
         {d.notes && <p className="text-xs text-muted">Only if {d.notes}</p>}
         {lint.overall === 'fail' && (
           <div className="rounded-2xl border border-warn bg-warn-soft px-3 py-2 text-xs text-warn">
@@ -814,64 +811,34 @@ function GoldenGrade({
   );
 }
 
-function SeatScopeLine({ d, view, editable, onUpdate }: { d: Draft; view: PanelProps['view']; editable: boolean; onUpdate: (id: string, patch: Partial<Draft>) => void }) {
-  const files = fileOptions(view);
-  const [open, setOpen] = useState(!isDefaultScope(d));
-  if (!editable) {
-    return <p className="text-[11px] text-muted">{describeSeatScope(d, files.outputs, files.inputs)}</p>;
-  }
-  if (!open) {
-    return (
-      <button type="button" className="text-[11px] text-muted underline" onClick={() => setOpen(true)}>
-        {describeSeatScope(d, files.outputs, files.inputs)} · Edit file scope
-      </button>
-    );
-  }
+function SeatScopeLine({ d, view, onUpdate }: { d: Draft; view: PanelProps['view']; onUpdate: (id: string, patch: Partial<Draft>) => void }) {
+  const files = catalogFiles(view);
+  if (files.inputs.length === 0) return null;
+  const live = applyLiveScope(d, files);
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-      <button type="button" className="underline" onClick={() => setOpen(false)}>
-        Close file scope
-      </button>
-      <label className="flex items-center gap-1">
-        Against
-        <select
-          className="input py-0.5 text-xs"
-          value={d.outputFile ?? ''}
-          onChange={(e) => onUpdate(d.id, { outputFile: e.target.value || null })}
-        >
-          <option value="">Auto (current file)</option>
-          <option value={ALL_OUTPUTS}>All current deliverables</option>
-          {files.outputs.map((file) => (
-            <option key={file.id} value={file.name}>
-              {file.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex items-center gap-1">
-        <input
-          type="checkbox"
-          checked={d.scope === 'inputs'}
-          onChange={(e) => onUpdate(d.id, { scope: e.target.checked ? 'inputs' : 'output', inputFileIds: e.target.checked ? d.inputFileIds : [] })}
-        />
-        Needs submitted input
-      </label>
-      {d.scope === 'inputs' &&
-        files.inputs.map((file) => (
-          <label key={file.id} className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={d.inputFileIds.includes(file.id)}
-              onChange={(e) => {
-                const inputFileIds = e.target.checked ? [...d.inputFileIds, file.id] : d.inputFileIds.filter((id) => id !== file.id);
-                onUpdate(d.id, { inputFileIds });
-              }}
-            />
-            {file.name}
-          </label>
-        ))}
-      {d.scope === 'inputs' && files.inputs.length === 0 && <span>No Catalog inputs on this task.</span>}
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+      {files.inputs.map((file) => (
+        <label key={file.id} className="flex items-center gap-1">
+          <input
+            type="checkbox"
+            checked={live.scope === 'inputs' && live.inputFileIds.includes(file.id)}
+            onChange={(e) => {
+              const inputFileIds = e.target.checked ? [...live.inputFileIds.filter((id) => id !== file.id), file.id] : live.inputFileIds.filter((id) => id !== file.id);
+              onUpdate(d.id, {
+                scope: inputFileIds.length ? 'inputs' : 'output',
+                inputFileIds,
+                outputFile: inputFileIds.length ? (d.outputFile === AUTO_OUTPUT ? null : d.outputFile) : AUTO_OUTPUT,
+              });
+            }}
+          />
+          {file.name}
+        </label>
+      ))}
     </div>
   );
+}
+
+function applyLiveScope(d: Draft, files: ReturnType<typeof catalogFiles>) {
+  return applyInferredScope({ statement: d.statement, scope: d.scope, inputFileIds: d.inputFileIds, outputFile: d.outputFile }, files.inputs, files.goldens);
 }
 

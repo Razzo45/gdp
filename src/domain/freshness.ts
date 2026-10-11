@@ -38,7 +38,7 @@ export function statusKey(pulse: StatusPulse): string {
   ].join('|');
 }
 
-export function statusFromView(view: { submission: StatusPulse; jobs: StatusPulse['jobs'] }): StatusPulse {
+export function statusFromView(view: { submission: Omit<StatusPulse, 'jobs'>; jobs: StatusPulse['jobs'] }): StatusPulse {
   return {
     stage: view.submission.stage,
     reviewStatus: view.submission.reviewStatus,

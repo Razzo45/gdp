@@ -5,7 +5,10 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { familyOfTag, familyQuotas, RUBRIC_TAGS, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { submittedCatalogStatusIds } from '@/domain/catalogListState';
+import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts } from '@/domain/legacyImport';
+import { workStateOf } from '@/domain/workState';
 import { normalisedWeights, scoreSeats } from '@/domain/weights';
 
 describe('formatDate', () => {
@@ -63,6 +66,24 @@ describe('rubric tags and quotas', () => {
   it('maps every tag to a family', () => {
     for (const tag of RUBRIC_TAGS) expect(['format', 'content', 'visual']).toContain(familyOfTag(tag));
     expect(familyOfTag('garbage')).toBe('content');
+  });
+
+  it('puts file type and slide count in Format, named typeface in Visual', () => {
+    const format = [
+      'The deliverable is an editable PowerPoint presentation in PPTX format.',
+      'The presentation contains exactly 18 slides.',
+      'The PPTX has the required fonts embedded.',
+    ];
+    for (const statement of format) {
+      expect(guessTag(statement)).toBe('Format/File');
+      expect(correctTag(statement, 'Content - Semantics')).toBe('Format/File');
+      expect(familyOfStatement(statement, 'Content - Quantitative')).toBe('format');
+    }
+    expect(guessTag('The presentation uses the Manrope font family for its slide text.')).toBe('Visual - Branding');
+    expect(correctTag('The presentation uses the Manrope font family for its slide text.', 'Content - Semantics')).toBe('Visual - Branding');
+    expect(familyOfStatement('The presentation uses the Manrope font family for its slide text.', 'Content - Exact')).toBe('visual');
+    expect(familyOfStatement('The title slide names the client review.', 'Content - Exact')).toBe('content');
+    expect(correctTag('The deck cites 18 community partners.', 'Content - Exact')).toBe('Content - Exact');
   });
   it('splits 50 as 5/15/30 and sums to the target', () => {
     expect(familyQuotas(50)).toEqual({ format: 5, content: 15, visual: 30 });
@@ -150,6 +171,27 @@ describe('assemble', () => {
     expect(result.seated).toHaveLength(10);
   });
 
+  it('reseats file-type and slide-count as format, typeface as visual, despite content tags', () => {
+    const bank: BankRow[] = [
+      { seedId: 's1', claimKey: 'pptx', statement: 'The deliverable is an editable PowerPoint presentation in PPTX format.', tag: 'Content - Semantics', family: 'content', notes: '' },
+      { seedId: 's1', claimKey: 'slides', statement: 'The presentation contains exactly 18 slides.', tag: 'Content - Quantitative', family: 'content', notes: '' },
+      { seedId: 's1', claimKey: 'font', statement: 'The presentation uses the Manrope font family for its slide text.', tag: 'Content - Semantics', family: 'content', notes: '' },
+      { seedId: 's1', claimKey: 'title', statement: 'The title slide names the client review.', tag: 'Content - Exact', family: 'content', notes: '' },
+    ];
+    const result = assemble(bank, { format: 2, content: 1, visual: 1 });
+    expect(result.seated.filter((r) => r.family === 'format').map((r) => r.claimKey).sort()).toEqual(['pptx', 'slides']);
+    expect(result.seated.filter((r) => r.family === 'visual').map((r) => r.claimKey)).toEqual(['font']);
+    expect(result.seated.filter((r) => r.family === 'content').map((r) => r.claimKey)).toEqual(['title']);
+  });
+
+  it('fills the quota total from leftover tagged rows when a family is short', () => {
+    const bank: BankRow[] = [];
+    for (let i = 0; i < 8; i++) bank.push(row('s1', i, 'content', 'Content - Exact'));
+    const result = assemble(bank, { format: 2, content: 3, visual: 3 });
+    expect(result.seated).toHaveLength(8);
+    expect(result.seated.every((r) => r.tag === 'Content - Exact' || r.tag === 'Format/File' || r.tag.startsWith('Visual'))).toBe(true);
+  });
+
   it('seats the strongest row from a seed when the family has one seat', () => {
     const weak = { ...row('s1', 1, 'visual', 'Visual - Layout'), strength: 20 };
     const strong = { ...row('s1', 2, 'visual', 'Visual - Layout'), strength: 92 };
@@ -187,5 +229,85 @@ describe('fingerprint', () => {
     expect(statementHash(base)).toBe(statementHash({ ...base, inputFileIds: ['a', 'b'], statement: ' The logo is visible. ' }));
     expect(statementHash(base)).not.toBe(statementHash({ ...base, outputFile: 'deck.pptx' }));
     expect(statementHash(base)).not.toBe(statementHash({ ...base, scope: 'inputs' }));
+  });
+});
+
+describe('legacy snapshot import', () => {
+  it('maps live permission keys onto the four app roles', () => {
+    expect(mapLegacyRoles(['full_access', 'rubric_team', 'review_team', 'submissions.control'])).toEqual([
+      'admin',
+      'rubric_creator',
+      'reviewer',
+      'pm',
+    ]);
+    expect(mapLegacyRoles(['project_manager', 'rubric_reviewer', 'sme', 'experts'])).toEqual([
+      'pm',
+      'reviewer',
+      'rubric_creator',
+    ]);
+    expect(assignmentSeat('rubric_team')).toBe('rubric');
+    expect(assignmentSeat('review_team')).toBe('review');
+    expect(mapLegacyStage('approved')).toBe('stability');
+    expect(mapLegacyStage('in_review')).toBe('review');
+    expect(mapLegacyStage('draft')).toBe('rubric');
+  });
+
+  it('keeps the latest non-superseded run and re-tags its rows', () => {
+    const latest = latestLegacyRun([
+      { created_at: '2026-10-01T00:00:00Z', native_generation_superseded: false, rows: [] },
+      { created_at: '2026-10-02T00:00:00Z', native_generation_superseded: true, rows: [{ statement: 'old' }] },
+      { created_at: '2026-10-03T00:00:00Z', rows: [{ id: 's001', tag: 'Content - Semantics', statement: 'The presentation contains exactly 18 slides.', notes: 'claim:slide-count | seed:s012' }] },
+    ]);
+    const parsed = parseLegacyRubricRows(latest?.rows);
+    expect(parsed[0]?.tag).toBe('Format/File');
+    expect(parsed[0]?.family).toBe('format');
+    expect(parsed[0]?.claimKey).toBe('slide-count');
+    expect(factoryStatementsFromLegacy(latest?.rows)).toHaveLength(1);
+    expect(parseLegacyRubricRows([{ id: 'b0_1', question: 'Are the captions timed to the spoken audio?' }])).toHaveLength(1);
+  });
+
+  it('remaps legacy seat ids onto imported statements by wording', () => {
+    const seats = mapLegacySeatIds(
+      [{ id: 'b0_4', statement: 'The delivered WAV file is encoded in 32-bit PCM audio format.' }],
+      [{ id: 'new-1', statement: 'The delivered WAV file is encoded in 32-bit PCM audio format.', claimKey: 'bit-depth-32bit-pcm' }],
+    );
+    expect(seats.get('b0_4')).toBe('new-1');
+    const fromQuestion = factoryStatementsFromLegacy([{ id: 'b1_36', question: 'Does the bottom arrow point directly to the main body of the cake sponge base?' }]);
+    expect(mapLegacySeatIds(
+      [{ id: 'b1_36', question: 'Does the bottom arrow point directly to the main body of the cake sponge base?' }],
+      fromQuestion.map((row) => ({ id: 'new-2', statement: row.statement, claimKey: row.claimKey })),
+    ).get('b1_36')).toBe('new-2');
+    expect(asLegacyVerdict('Yes')).toBe(true);
+    expect(asLegacyVerdict({ answer: 'No' })).toBe(false);
+    expect(remapVerdicts({ b0_4: true, missing: false }, seats)).toEqual({ 'new-1': true });
+  });
+
+  it('infers live board lanes from the Catalog workflow graph, not status names', () => {
+    const work = 'work-status';
+    const handoff = 'handoff-status';
+    const catalogStatuses = [{ statusId: work }, { statusId: handoff }, { statusId: 'g' }, { statusId: 'p' }];
+    const catalogTransitions = [
+      { from: handoff, to: 'g', trigger: 'submit' },
+      { from: 'g', to: 'p', trigger: 'approve' },
+    ];
+    const base = { workStatusId: work, handoffStatusId: handoff, catalogStatuses, catalogTransitions };
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: work, assigned: true }).stage).toBe('rubric');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: work, reviewStatus: 'pending' }).stage).toBe('review');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: work, reviewStatus: 'changes_requested' })).toMatchObject({
+      stage: 'rubric',
+      reviewStatus: 'changes_requested',
+    });
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: work, reviewStatus: 'approved' }).stage).toBe('stability');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: work, assigned: false }).stage).toBe('rubric');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: 'g' }).stage).toBe('done');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: 'p' }).stage).toBe('done');
+    expect([...submittedCatalogStatusIds({ workStatusId: work, handoffStatusId: handoff, statuses: catalogStatuses, transitions: catalogTransitions })]).toEqual(['handoff-status', 'g', 'p']);
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: 'h2', catalogStatusName: 'H2. Golden Output Ready for Review', reviewStatus: 'pending' }).stage).toBe('parked');
+    expect(inferLegacyPipeline({ ...base, catalogStatusId: 'off' }).stage).toBe('parked');
+    expect(inferLegacyPipeline({ handoffStatus: 'bounced' }).stage).toBe('handoff');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('preparing');
+    expect(workStateOf({ stage: 'parked', rubricAssigneeId: null, reviewStatus: null })).toBe('other');
+    expect(workStateOf({ stage: 'handoff', rubricAssigneeId: 'x', reviewStatus: 'approved', handoffStatus: 'bounced' })).toBe('platform_returned');
+    expect(workStateOf({ stage: 'done', rubricAssigneeId: 'x', reviewStatus: 'approved' })).toBe('submitted');
   });
 });

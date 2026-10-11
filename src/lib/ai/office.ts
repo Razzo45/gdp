@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { nsAttr, nsInners, nsTexts } from './xmlTags';
 
 /**
  * Deterministic facts and text pulled straight from OOXML packages.
@@ -137,7 +138,7 @@ export async function officeManifest(bytes: Uint8Array, kind: OfficeKind): Promi
   }
 
   const workbook = (await zip.file('xl/workbook.xml')?.async('string')) ?? '';
-  const sheetNames = [...workbook.matchAll(/<sheet[^>]*name="([^"]+)"/g)].map((m) => decode(m[1] ?? ''));
+  const sheetNames = nsInners(workbook, 'sheet').map((s) => decode(nsAttr(s.attrs, 'name') ?? '')).filter(Boolean);
   lines.push('Kind: Excel workbook (.xlsx)');
   lines.push(`Sheets (${sheetNames.length}): ${sheetNames.join(', ')}`);
   lines.push(`Charts: ${Object.keys(zip.files).filter((n) => /^xl\/charts\/chart\d+\.xml$/.test(n)).length}; embedded images: ${images}`);
@@ -165,15 +166,15 @@ export async function officeTextDigest(bytes: Uint8Array, kind: OfficeKind): Pro
     const xml = (await zip.file('word/document.xml')?.async('string')) ?? '';
     lines.push(...xml.split(/<\/w:p>/).map((p) => texts(p, /<w:t[^>]*>([^<]*)<\/w:t>/g).join('')).filter((p) => p.trim()));
   } else {
-    const shared = texts((await zip.file('xl/sharedStrings.xml')?.async('string')) ?? '', /<t[^>]*>([^<]*)<\/t>/g);
+    const shared = nsTexts((await zip.file('xl/sharedStrings.xml')?.async('string')) ?? '', 't');
     const workbook = (await zip.file('xl/workbook.xml')?.async('string')) ?? '';
-    const names = [...workbook.matchAll(/<sheet[^>]*name="([^"]+)"/g)].map((m) => decode(m[1] ?? ''));
+    const names = nsInners(workbook, 'sheet').map((s) => decode(nsAttr(s.attrs, 'name') ?? '')).filter(Boolean);
     const sheets = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort((a, b) => slideNumber(a) - slideNumber(b));
     for (const [index, name] of sheets.entries()) {
       const xml = await zip.file(name)!.async('string');
       lines.push(`\n[Sheet: ${names[index] ?? name}]`);
-      for (const row of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
-        const cells = [...(row[1] ?? '').matchAll(/<c([^>]*)>(?:<f>[^<]*<\/f>)?<v>([^<]*)<\/v>/g)].map((c) => (/t="s"/.test(c[1] ?? '') ? (shared[Number(c[2])] ?? '') : (c[2] ?? '')));
+      for (const row of nsInners(xml, 'row')) {
+        const cells = nsInners(row.inner, 'c').map((c) => xlsxCell(c.attrs, c.inner, shared));
         if (cells.some((c) => c.trim())) lines.push(cells.join('\t'));
       }
     }
@@ -181,4 +182,12 @@ export async function officeTextDigest(bytes: Uint8Array, kind: OfficeKind): Pro
 
   const text = lines.join('\n').trim();
   return text.length > MAX_DIGEST_CHARS ? `${text.slice(0, MAX_DIGEST_CHARS)}\n…(digest truncated)` : text;
+}
+
+function xlsxCell(attrs: string, inner: string, shared: string[]): string {
+  const type = nsAttr(attrs, 't') ?? '';
+  const value = nsTexts(inner, 'v').join('') || nsTexts(inner, 't').join('');
+  if (type === 's') return shared[Number(value)] ?? '';
+  if (type === 'b') return value === '1' ? 'TRUE' : 'FALSE';
+  return value;
 }

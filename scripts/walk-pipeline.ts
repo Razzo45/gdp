@@ -1,5 +1,5 @@
-import './env.ts';
-import { mockGradeYes } from '../src/lib/ai/standIn.ts';
+import './env';
+import { mockGradeYes } from '../src/lib/ai/standIn';
 
 const BASE = 'http://localhost:3000';
 const SUB = 'b9c6e150-e185-423b-b953-39ec081ae540';

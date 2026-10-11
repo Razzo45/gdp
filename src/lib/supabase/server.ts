@@ -28,15 +28,16 @@ export async function supabaseAuthClient() {
   });
 }
 
-export const hasServiceKey = () => env().SUPABASE_SERVICE_ROLE_KEY !== undefined;
+export const hasServiceKey = () => Boolean(env().SUPABASE_SERVICE_ROLE_KEY ?? process.env['SUPABASE_READ_SERVICE_ROLE_KEY']?.trim());
 
 /** Service-role client for Auth admin (invites) and Storage. Server only. */
 export function supabaseAdmin() {
-  const { NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = env();
-  if (!NEXT_PUBLIC_SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new ServiceError(503, 'This action needs NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, which are not configured on this server.');
+  const { url } = publicEnv();
+  const key = env().SUPABASE_SERVICE_ROLE_KEY ?? process.env['SUPABASE_READ_SERVICE_ROLE_KEY']?.trim();
+  if (!key) {
+    throw new ServiceError(503, 'This action needs a Supabase service-role key, which is not configured on this server.');
   }
-  return createClient(NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

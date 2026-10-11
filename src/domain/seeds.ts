@@ -1,5 +1,5 @@
 import { INTERROGATIVE_OPENER, toAffirmativeStatement } from './lint';
-import { MAX_SEED_CHARS, MAX_SEEDS, isRubricTag, type RubricTag } from './rubric';
+import { MAX_SEED_CHARS, MAX_SEEDS, guessTag, isRubricTag, type RubricTag } from './rubric';
 
 /**
  * Pipeline: collect every distinct expert check → expand each into a candidate
@@ -27,18 +27,6 @@ function looksLikeHeading(line: string): boolean {
   if (/\d|#|px\b|hex\b|\.png|\.jpe?g|\.webp|\.pptx|\.pdf/i.test(text)) return false;
   const words = text.split(/\s+/);
   return words.length <= 5 && !/\b(include|included|provided|using|use|show|shows|display|spell|avoid|utilize|incorporate|aligned|created|delivered|written|resemble|label)\b/i.test(text);
-}
-
-export function guessTag(statement: string): RubricTag {
-  const q = statement.toLowerCase();
-  if (/\b(\d+\s*px|1080|ratio|1:1|16:9|\.png|\.jpe?g|rgb|file|files|full bleed|carousel image)\b/.test(q)) return 'Format/File';
-  if (/\b(hex|#|logo|brand|josefin|palette|color|colour|font style|typography)\b/.test(q)) return 'Visual - Branding';
-  if (/\b(hierarchy|header|subheader|title|subtitle|placement|layout|space|breathe|bleed)\b/.test(q)) return 'Visual - Layout';
-  if (/\b(consistent|similar across|same brand|connected)\b/.test(q)) return 'Visual - Consistency';
-  if (/\b(pixelat|legib|read on a mobile|font size)\b/.test(q)) return 'Visual - Language & Readability';
-  if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) return 'Content - Exact';
-  if (/\b(\d+|three|two|one)\b/.test(q) && /\b(files?|posts?|mockups?|images?)\b/.test(q)) return 'Content - Quantitative';
-  return 'Content - Semantics';
 }
 
 /**

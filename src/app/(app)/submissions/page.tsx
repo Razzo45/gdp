@@ -5,14 +5,12 @@ import { ClaimTask } from '@/components/ClaimTask';
 import { ImportTask } from '@/components/ImportTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
-import { StageBadge } from '@/components/StageBadge';
-import { TimeAgo } from '@/components/TimeAgo';
-import { formatDate } from '@/components/format';
 import { currentActor } from '@/lib/auth/identity';
 import { claimableSeat, isController } from '@/lib/auth/permissions';
 import { listSubmissions } from '@/lib/services/submissions';
 import { WorkStateChips } from '@/components/WorkStateChips';
-import { WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
+import { WorkStatusPill } from '@/components/WorkStatusPill';
+import { BOARD_STATES, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +24,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const pm = isController(actor);
   const rows = await listSubmissions(actor, { workState, q, mine });
   const all = workState || q ? await listSubmissions(actor, { mine }) : rows;
-  const counts = Object.fromEntries(WORK_STATES.map((s) => [s, all.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
+  const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, all.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
 
   return (
     <Page>
@@ -77,15 +75,13 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               <th className="px-4 py-3">Submission</th>
               <th className="px-4 py-3">Work status</th>
               <th className="px-4 py-3">Assigned to</th>
-              <th className="px-4 py-3">Review seat</th>
-              <th className="px-4 py-3">Landed</th>
-              <th className="px-4 py-3">Last claimed</th>
+              <th className="px-4 py-3">Catalog stage</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted">
+                <td colSpan={4} className="px-4 py-10 text-center text-muted">
                   {q ? 'No matching submissions' : workState ? `No submissions: ${WORK_STATE_LABEL[workState]}` : 'Nothing here yet'}
                 </td>
               </tr>
@@ -113,17 +109,18 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                   )}
                 </td>
                 <td className="px-4 py-3">
-                  <StageBadge stage={s.stage} />
-                  <div className="mt-0.5 text-[11px] text-muted">{WORK_STATE_LABEL[s.workState]}</div>
+                  <WorkStatusPill state={s.workState} />
                 </td>
-                <td className="px-4 py-3">{s.blinded ? <span className="text-quiet">—</span> : s.rubricAssigneeName ?? <span className="text-quiet">Unassigned</span>}</td>
-                <td className="px-4 py-3">{s.blinded ? <span className="text-quiet">—</span> : s.reviewerName ?? <span className="text-quiet">{s.stage === 'review' ? 'open' : '—'}</span>}</td>
-                <td className="px-4 py-3 text-xs text-muted" title={s.blinded ? undefined : formatDate(s.landedAt)}>
-                  {s.blinded ? '—' : formatDate(s.landedAt)}
+                <td className="px-4 py-3">
+                  {s.blinded ? (
+                    <span className="text-quiet">—</span>
+                  ) : s.workState === 'in_review' ? (
+                    s.reviewerName ?? 'Reviewer Team'
+                  ) : (
+                    s.rubricAssigneeName ?? (s.workState === 'preparing' ? 'Rubric Team' : <span className="text-quiet">—</span>)
+                  )}
                 </td>
-                <td className="px-4 py-3 text-xs text-muted" title={s.blinded ? undefined : formatDate(s.lastClaimedAt)}>
-                  {s.blinded ? '—' : <TimeAgo iso={s.lastClaimedAt} />}
-                </td>
+                <td className="px-4 py-3 text-sm text-muted">{s.blinded ? '—' : s.catalogStatusName ?? '—'}</td>
               </tr>
               );
             })}

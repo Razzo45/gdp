@@ -23,6 +23,8 @@ export interface SeatScope {
 
 /** Curator chose the set-level observation (every current deliverable). */
 export const ALL_OUTPUTS = '*';
+/** Output-only, current file — do not infer submitted inputs again. */
+export const AUTO_OUTPUT = 'auto';
 
 export function isDefaultScope(seat: SeatScope): boolean {
   return seat.scope === 'output' && !seat.outputFile && seat.inputFileIds.length === 0;
@@ -30,6 +32,10 @@ export function isDefaultScope(seat: SeatScope): boolean {
 
 export function isAllOutputs(token: string | null): boolean {
   return token === ALL_OUTPUTS;
+}
+
+export function isAutoOutput(token: string | null): boolean {
+  return token === AUTO_OUTPUT || token === null || token === '';
 }
 
 function normalized(value: string): string {
@@ -54,7 +60,7 @@ export function statementNamesFile(statement: string, file: ScopeFile): boolean 
   return base.length >= 6 && text.includes(base);
 }
 
-function uniqueMatches(statement: string, files: readonly ScopeFile[]): ScopeFile[] {
+function uniqueMatches<T extends ScopeFile>(statement: string, files: readonly T[]): T[] {
   const hits = files.filter((file) => statementNamesFile(statement, file));
   const ids = new Set(hits.map((file) => file.id));
   if (ids.size !== hits.length) return [];
@@ -63,26 +69,67 @@ function uniqueMatches(statement: string, files: readonly ScopeFile[]): ScopeFil
   return hits;
 }
 
-export function inferFileScope(statement: string, inputs: readonly ScopeFile[], outputs: readonly ScopeFile[]): SeatScope {
-  const namedInputs = uniqueMatches(statement, inputs);
-  const namedOutputs = uniqueMatches(statement, outputs);
-  const outputFile = namedOutputs.length === 1 ? namedOutputs[0]!.name : outputs.length === 1 ? outputs[0]!.name : null;
-  if (namedInputs.length > 0) {
-    return { scope: 'inputs', outputFile, inputFileIds: namedInputs.map((file) => file.id) };
+function extensionOf(name: string): string {
+  const at = name.lastIndexOf('.');
+  return at === -1 ? '' : name.slice(at + 1).toLowerCase();
+}
+
+function needsSubmittedInput(statement: string): boolean {
+  if (/\b(workbook|spreadsheet|worksheet|excel|csv|brief|brand[- ]guide|style[- ]guide|source (file|doc)|input file|attached (brief|workbook|file|guide)|submitted input)\b/i.test(statement)) {
+    return true;
   }
-  return { scope: 'output', outputFile, inputFileIds: [] };
+  if (/\b(policy|threshold|checklist|escalation|refund)\b/i.test(statement)) return true;
+  const compares = /\b(match(?:es|ing)?|follow(?:s|ing)?|accord(?:ing)? to|per the|from the|against the)\b/i.test(statement);
+  const data = /\b(figures?|numbers?|revenue|totals?|hex|colou?rs?|palette|font)\b/i.test(statement);
+  return compares && data;
+}
+
+function matchInputsByKind(statement: string, inputs: readonly ScopeFile[]): ScopeFile[] {
+  const wantSheet = /\b(workbook|spreadsheet|worksheet|excel|csv|figures?|revenue|numbers?|totals?|data)\b/i.test(statement);
+  const wantDoc = /\b(brief|guide|policy|checklist|handbook|spec|threshold|escalation|refund|font|colou?r|palette|hex)\b/i.test(statement);
+  return inputs.filter((file) => {
+    const ext = extensionOf(file.name);
+    if (wantSheet && /^(xlsx|xls|csv|ods)$/.test(ext)) return true;
+    if (wantDoc && /^(docx|doc|pdf|rtf|txt)$/.test(ext)) return true;
+    return false;
+  });
+}
+
+function inferInputIds(statement: string, inputs: readonly ScopeFile[]): string[] {
+  const named = uniqueMatches(statement, inputs);
+  if (named.length > 0) return named.map((file) => file.id);
+  if (!needsSubmittedInput(statement) || inputs.length === 0) return [];
+  const byKind = matchInputsByKind(statement, inputs);
+  if (byKind.length > 0) return byKind.map((file) => file.id);
+  if (inputs.length === 1 || inputs.length <= 3) return inputs.map((file) => file.id);
+  return [];
+}
+
+export function inferFileScope(statement: string, inputs: readonly ScopeFile[], outputs: readonly ScopeFile[]): SeatScope {
+  const namedOutputs = uniqueMatches(statement, outputs);
+  const outputFile = namedOutputs.length === 1 && outputs.length > 1 ? namedOutputs[0]!.name : null;
+  const inputFileIds = inferInputIds(statement, inputs);
+  return { scope: inputFileIds.length > 0 ? 'inputs' : 'output', outputFile, inputFileIds };
 }
 
 /**
- * Curator choices win. Default seats (output / no file / no inputs) pick up
- * a unique name match or the sole deliverable so factory rows still grade tight.
+ * Golden vs AI is chosen by the job, not the seat. Default and sole-file pins
+ * pick up named / implied submitted inputs. Explicit overrides stay put.
  */
 export function applyInferredScope<T extends SeatScope & { statement: string }>(seat: T, inputs: readonly ScopeFile[], outputs: readonly ScopeFile[]): T {
-  if (!isDefaultScope(seat)) {
-    if (!seat.outputFile && outputs.length === 1) return { ...seat, outputFile: outputs[0]!.name };
-    return seat;
+  const inferred = inferFileScope(seat.statement, inputs, outputs);
+  const soleName = outputs.length === 1 ? outputs[0]!.name : null;
+  const automatic =
+    isDefaultScope(seat) ||
+    (seat.scope === 'output' && seat.inputFileIds.length === 0 && (isAutoOutput(seat.outputFile) || seat.outputFile === soleName));
+
+  if (seat.outputFile === AUTO_OUTPUT) return seat;
+  if (isAllOutputs(seat.outputFile)) {
+    if (seat.inputFileIds.length > 0) return seat;
+    return { ...seat, scope: inferred.scope, inputFileIds: inferred.inputFileIds };
   }
-  return { ...seat, ...inferFileScope(seat.statement, inputs, outputs) };
+  if (!automatic) return seat;
+  return { ...seat, ...inferred };
 }
 
 /** Newest deliverable — last in the list (AI uploads are createdAt asc; Catalog goldens are current-last). */
@@ -99,6 +146,12 @@ export function latestOutput<T>(outputs: readonly T[]): T | undefined {
 export function consideredOutputs<T extends ScopeFile>(seat: SeatScope & { statement?: string }, outputs: readonly T[]): T[] {
   if (outputs.length === 0) return [];
   if (isAllOutputs(seat.outputFile)) return [...outputs];
+  if (isAutoOutput(seat.outputFile)) {
+    const named = seat.statement ? uniqueMatches(seat.statement, outputs) : [];
+    if (named.length === 1) return named;
+    const latest = latestOutput(outputs);
+    return latest ? [latest] : [];
+  }
   if (seat.statement) {
     const named = uniqueMatches(seat.statement, outputs);
     if (named.length === 1) return named;
@@ -156,17 +209,13 @@ export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: r
 }
 
 export function describeSeatScope(seat: SeatScope & { statement?: string }, outputs: readonly ScopeFile[], inputs: readonly ScopeFile[]): string {
-  const live = consideredOutputs(seat, outputs);
-  const considered = isAllOutputs(seat.outputFile)
-    ? 'all current deliverables'
-    : live.length === 1
-      ? live[0]!.name
-      : live.length > 1
-        ? 'all current deliverables'
-        : 'the current deliverable';
-  if (seat.scope === 'output') return `Against ${considered}`;
+  const lane = isAllOutputs(seat.outputFile)
+    ? 'Golden autorate uses every Golden file. Stability uses every AI output.'
+    : 'Golden autorate uses the Golden file. Stability uses the AI output.';
+  if (seat.scope !== 'inputs' || seat.inputFileIds.length === 0) return lane;
   const refs = seat.inputFileIds
     .map((id) => matchScopeFile(inputs, id)[0]?.name ?? id)
+    .filter(Boolean)
     .join(', ');
-  return `Against ${considered} · vs ${refs || 'submitted inputs'}`;
+  return `${lane} Also reads ${refs || 'submitted inputs'}.`;
 }

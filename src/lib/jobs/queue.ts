@@ -3,6 +3,7 @@ import { db } from '@/db/client';
 import { jobs, type Job, type JobKind } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { conflictingJob } from '@/domain/jobs';
+import { pruneFinishedJobs } from '@/lib/services/retention';
 export { conflictingJob };
 
 /**
@@ -130,7 +131,9 @@ export async function complete(jobId: string, leaseToken: string, result: Record
     .update(jobs)
     .set({ status: 'succeeded', result, finishedAt: new Date().toISOString(), leaseToken: null, leaseUntil: null, progress: { done: 1, total: 1, note: 'done' } })
     .where(and(eq(jobs.id, jobId), eq(jobs.leaseToken, leaseToken), eq(jobs.status, 'running')))
-    .returning({ id: jobs.id });
+    .returning({ id: jobs.id, submissionId: jobs.submissionId, kind: jobs.kind });
+  const done = updated[0];
+  if (done) await pruneFinishedJobs(db(), done.submissionId, done.kind);
   return updated.length === 1;
 }
 
@@ -147,6 +150,7 @@ export async function fail(jobId: string, leaseToken: string, error: string, ret
         : { status: 'failed', error, finishedAt: new Date().toISOString(), leaseToken: null, leaseUntil: null },
     )
     .where(and(eq(jobs.id, jobId), eq(jobs.leaseToken, leaseToken)));
+  if (!canRetry) await pruneFinishedJobs(db(), job.submissionId, job.kind);
 }
 
 export async function cancel(database: DbOrTx, jobId: string, actorId: string | null): Promise<Job | null> {

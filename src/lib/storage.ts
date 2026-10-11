@@ -9,7 +9,8 @@ import { supabaseAdmin } from '@/lib/supabase/server';
 /**
  * Private object storage. Paths are server-chosen; clients never see them.
  *
- *   supabase  private bucket via the service role (production)
+ *   gcs       private GCS bucket via Application Default Credentials
+ *   supabase  private bucket via the service role
  *   local     files under STORAGE_LOCAL_DIR, served by /api/local-storage
  *             with an HMAC-signed, time-limited URL (development)
  */
@@ -75,6 +76,10 @@ export async function putObject(objectPath: string, bytes: Uint8Array, mime: str
     await writeFile(`${file}.mime`, mime, 'utf8');
     return;
   }
+  if (storageDriver() === 'gcs') {
+    await (await gcsFile(objectPath)).save(Buffer.from(bytes), { contentType: mime, resumable: false });
+    return;
+  }
   await ensureBucket();
   const { error } = await supabaseAdmin()
     .storage.from(env().STORAGE_BUCKET)
@@ -86,6 +91,10 @@ export async function getObject(objectPath: string): Promise<Uint8Array | null> 
   if (storageDriver() === 'local') {
     const data = await readFile(localFile(objectPath)).catch(() => null);
     return data ? new Uint8Array(data) : null;
+  }
+  if (storageDriver() === 'gcs') {
+    const [bytes] = await (await gcsFile(objectPath)).download().catch(() => [null]);
+    return bytes ? new Uint8Array(bytes) : null;
   }
   const { data, error } = await supabaseAdmin().storage.from(env().STORAGE_BUCKET).download(objectPath);
   if (error || !data) return null;
@@ -99,6 +108,10 @@ export async function removeObject(objectPath: string): Promise<void> {
     await rm(`${file}.mime`, { force: true });
     return;
   }
+  if (storageDriver() === 'gcs') {
+    await (await gcsFile(objectPath)).delete({ ignoreNotFound: true });
+    return;
+  }
   await supabaseAdmin().storage.from(env().STORAGE_BUCKET).remove([objectPath]);
 }
 
@@ -109,6 +122,15 @@ export async function signedUrl(objectPath: string, seconds = 300): Promise<stri
     const query = new URLSearchParams({ path: objectPath, expires: String(expires), sig: localSignature(objectPath, expires) });
     return `/api/local-storage?${query}`;
   }
+  if (storageDriver() === 'gcs') {
+    const [url] = await (await gcsFile(objectPath)).getSignedUrl({ action: 'read', expires: Date.now() + seconds * 1000 });
+    return url ?? null;
+  }
   const { data } = await supabaseAdmin().storage.from(env().STORAGE_BUCKET).createSignedUrl(objectPath, seconds);
   return data?.signedUrl ?? null;
+}
+
+async function gcsFile(objectPath: string) {
+  const { Storage } = await import('@google-cloud/storage');
+  return new Storage().bucket(env().STORAGE_BUCKET).file(objectPath);
 }

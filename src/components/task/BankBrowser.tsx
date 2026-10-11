@@ -22,6 +22,7 @@ type FamilyFilter = 'all' | Family;
 const PAGE = 40;
 
 type Item = {
+  rowKey: string;
   key: string;
   statement: string;
   tag: string;
@@ -81,9 +82,12 @@ export function BankBrowser({
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list: Item[] = [];
-    for (const c of bank) {
-      if (seatedKeys.has(c.claimKey)) continue;
+    const unusedKeys = new Set<string>();
+    for (const [index, c] of bank.entries()) {
+      if (seatedKeys.has(c.claimKey) || unusedKeys.has(c.claimKey)) continue;
+      unusedKeys.add(c.claimKey);
       list.push({
+        rowKey: `bank:${c.claimKey}:${c.seedId}:${index}`,
         key: c.claimKey,
         statement: c.statement,
         tag: c.tag,
@@ -98,6 +102,7 @@ export function BankBrowser({
     }
     for (const s of seated) {
       list.push({
+        rowKey: `seated:${s.id}`,
         key: s.claimKey || s.id,
         statement: s.statement,
         tag: s.tag,
@@ -172,7 +177,7 @@ export function BankBrowser({
         {items.slice(0, limit).map((it) => {
           const canPlace = editable && !!it.candidate && !it.inRubric;
           return (
-            <div key={it.key} className="space-y-1 p-2 text-xs">
+            <div key={it.rowKey} className="space-y-1 p-2 text-xs">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex flex-wrap items-center gap-1">

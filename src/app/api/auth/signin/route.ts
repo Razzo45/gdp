@@ -50,9 +50,17 @@ export async function POST(request: Request): Promise<Response> {
     return json({ ok: true });
   }
 
-  const supabase = await supabaseAuthClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return refuse();
-  attempts.delete(key);
-  return json({ ok: true });
+  try {
+    const supabase = await supabaseAuthClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      if (/confirm/i.test(error.message)) return json({ error: 'Confirm this email before signing in.' }, 401);
+      return refuse();
+    }
+    attempts.delete(key);
+    return json({ ok: true });
+  } catch (error) {
+    const text = error instanceof Error ? error.message : 'Sign-in is not configured.';
+    return json({ error: text.includes('not configured') ? text : 'Sign-in is not configured.' }, 503);
+  }
 }

@@ -9,7 +9,7 @@ import { sourceFingerprint } from '@/domain/fingerprint';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
-import { readCatalogSubmission } from '@/lib/catalog/read';
+import { readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import type { CatalogSubmission } from '@/lib/catalog/types';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
 
@@ -95,6 +95,7 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
   rubricAssigneeName: string | null;
   reviewerName: string | null;
   workState: WorkState;
+  catalogStatusName: string | null;
   /** True when this row is only a claim slot — no title, catalog id, or project. */
   blinded: boolean;
 }
@@ -112,13 +113,15 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   if (filter.mine) conditions.push(or(eq(submissions.rubricAssigneeId, actor.id), eq(submissions.reviewerId, actor.id)));
   const q = filter.q?.trim();
   if (q) conditions.push(or(ilike(submissions.title, `%${q}%`), ilike(submissions.catalogSubmissionId, `%${q}%`)));
-  if (filter.workState === 'unassigned') conditions.push(and(eq(submissions.stage, 'rubric'), isNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
-  if (filter.workState === 'preparing') conditions.push(and(eq(submissions.stage, 'rubric'), isNotNull(submissions.rubricAssigneeId), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+  if (filter.workState === 'unassigned') conditions.push(sql`false`);
+  if (filter.workState === 'preparing') conditions.push(and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
   if (filter.workState === 'in_review') conditions.push(eq(submissions.stage, 'review'));
   if (filter.workState === 'review_returned') conditions.push(and(eq(submissions.stage, 'rubric'), eq(submissions.reviewStatus, 'changes_requested')));
   if (filter.workState === 'stability') conditions.push(eq(submissions.stage, 'stability'));
-  if (filter.workState === 'handoff') conditions.push(eq(submissions.stage, 'handoff'));
+  if (filter.workState === 'platform_returned') conditions.push(and(eq(submissions.stage, 'handoff'), eq(submissions.handoffStatus, 'bounced')));
+  if (filter.workState === 'handoff') conditions.push(and(eq(submissions.stage, 'handoff'), sql`${submissions.handoffStatus} is distinct from 'bounced'`));
   if (filter.workState === 'submitted') conditions.push(eq(submissions.stage, 'done'));
+  if (filter.workState === 'other') conditions.push(eq(submissions.stage, 'parked'));
   if (!isController(actor)) {
     const visible = [];
     if (canCreateRubrics(actor)) {
@@ -133,27 +136,42 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     conditions.push(or(...visible));
   }
 
-  const rows = await database
-    .select({
-      submission: submissionListColumns,
-      rubricAssigneeName: sql<string | null>`coalesce(${assignee.displayName}, ${assignee.email})`,
-      reviewerName: sql<string | null>`coalesce(${reviewer.displayName}, ${reviewer.email})`,
-    })
-    .from(submissions)
-    .leftJoin(assignee, eq(assignee.id, submissions.rubricAssigneeId))
-    .leftJoin(reviewer, eq(reviewer.id, submissions.reviewerId))
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(submissions.landedAt))
-    .limit(500);
-  return rows.map((r) => {
+  const [rows, watches] = await Promise.all([
+    database
+      .select({
+        submission: submissionListColumns,
+        rubricAssigneeName: sql<string | null>`coalesce(${assignee.displayName}, ${assignee.email})`,
+        reviewerName: sql<string | null>`coalesce(${reviewer.displayName}, ${reviewer.email})`,
+      })
+      .from(submissions)
+      .leftJoin(assignee, eq(assignee.id, submissions.rubricAssigneeId))
+      .leftJoin(reviewer, eq(reviewer.id, submissions.reviewerId))
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(submissions.landedAt))
+      .limit(500),
+    database.select().from(watchedProjects),
+  ]);
+  const onBoard = (row: { projectId: string; statusId: string | null }) => {
+    const watch = watches.find((item) => item.projectId === row.projectId);
+    if (!watch || !row.statusId) return false;
+    return row.statusId === watch.workStatusId || row.statusId === watch.handoffStatusId || (watch.statusIds ?? []).includes(row.statusId);
+  };
+  const statusName = (row: { projectId: string; statusId: string | null }) => {
+    const watch = watches.find((item) => item.projectId === row.projectId);
+    const names = readProjectStatuses(watch?.project ?? null);
+    return names?.statuses.find((item) => item.id === row.statusId)?.name ?? null;
+  };
+  return rows.filter((r) => !isController(actor) || Boolean(filter.q) || onBoard(r.submission)).map((r) => {
     const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
     const blinded = !isController(actor) && !held;
+    const workState = workStateOf(r.submission);
     return {
       ...r.submission,
       ...(blinded ? { title: '', catalogSubmissionId: '', projectId: '' } : {}),
       rubricAssigneeName: blinded ? null : (r.rubricAssigneeName ?? null),
       reviewerName: blinded ? null : (r.reviewerName ?? null),
-      workState: workStateOf(r.submission),
+      workState,
+      catalogStatusName: blinded ? null : statusName(r.submission),
       blinded,
     };
   });

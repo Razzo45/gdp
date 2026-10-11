@@ -42,7 +42,7 @@ function mockBank(text: string): unknown {
     { tag: 'Format/File', claim: 'file-type', statement: `The deliverable is a single PPTX file for the ${theme} ${seed} check.` },
     { tag: 'Content - Semantics', claim: 'states-finding', statement: `The deck states the ${theme} finding required by the ${seed} check.` },
     { tag: 'Visual - Layout', claim: 'title-band', statement: `Each ${theme} slide keeps a clear title band for the ${seed} check.` },
-    { tag: 'Content - Quantitative', claim: 'count', statement: `The ${theme} pack contains the required slide count for the ${seed} check.` },
+    { tag: 'Format/File', claim: 'count', statement: `The ${theme} pack contains the required slide count for the ${seed} check.` },
     { tag: 'Visual - Branding', claim: 'footer', statement: `The ${theme} footer matches the required confidential line for the ${seed} check.` },
     { tag: 'Content - Exact', claim: 'named-title', statement: `The title slide names the ${theme} review for the ${seed} check.` },
     { tag: 'Visual - Consistency', claim: 'type-lock', statement: `Body type is locked across ${theme} slides for the ${seed} check.` },

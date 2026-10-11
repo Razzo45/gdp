@@ -14,6 +14,7 @@ export interface CatalogFile {
   mime: string;
   downloadUrl: string | null;
   previewUrl: string | null;
+  thumbnailUrl: string | null;
 }
 
 export interface CatalogField {

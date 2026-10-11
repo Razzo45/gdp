@@ -32,7 +32,7 @@ export default async function LoginPage() {
         <BrandMark />
         <p className="page-kicker mt-5">Wirestock</p>
         <h1 className="page-title mt-1">Golden Data Program</h1>
-        <p className="mb-6 mt-1 text-sm text-muted">{local ? 'Local development mode — pick a seeded user.' : 'Sign in with the account you were invited with.'}</p>
+        <p className="mb-6 mt-1 text-sm text-muted">{local ? 'Local development mode — pick a seeded user.' : 'Sign in with your Wirestock GDP account.'}</p>
         {problem ? (
           <p className="mb-4 rounded-3xl border border-warn bg-warn-soft p-3 text-xs text-warn">
             Database not ready: {problem}. Run <code>npm run db:migrate</code> then <code>npm run db:seed</code>.

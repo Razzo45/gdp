@@ -35,11 +35,28 @@ describe('inferFileScope', () => {
     });
   });
 
-  it('stays output-only when no input is named, and uses the sole deliverable', () => {
+  it('stays output-only when no input is implied, and does not pin the sole deliverable', () => {
     expect(inferFileScope('The title slide names the Q3 review.', [guide], [deck])).toEqual({
       scope: 'output',
-      outputFile: 'q3-regional-deck.pptx',
+      outputFile: null,
       inputFileIds: [],
+    });
+  });
+
+  it('attaches the workbook when figures must match it', () => {
+    const sheet = { id: 'in-3', name: 'q3-sales-by-region.xlsx' };
+    expect(inferFileScope('Revenue figures match the workbook.', [sheet, brief], [deck])).toEqual({
+      scope: 'inputs',
+      outputFile: null,
+      inputFileIds: ['in-3'],
+    });
+  });
+
+  it('attaches the brief when a policy threshold is claimed', () => {
+    expect(inferFileScope("The escalation policy states a refund threshold of €200.", [brief], [deck])).toEqual({
+      scope: 'inputs',
+      outputFile: null,
+      inputFileIds: ['in-2'],
     });
   });
 

@@ -7,6 +7,7 @@ import type { DbOrTx } from '@/db/types';
 import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown } from '@/domain/gates';
 import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid, notFound } from './errors';
+import { pruneCalibrations, pruneReviewFeedback } from './retention';
 import { listAiOutputs } from './files';
 import { currentRubric, goldenState, statementsOf } from './rubric';
 import { getSubmission, recordEvent } from './submissions';
@@ -50,8 +51,8 @@ export async function submittedCalibration(database: DbOrTx, rubricId: string): 
 
 /**
  * Saves the reviewer's answers. Drafts may be partial; `submit` requires
- * every statement answered. Each save is a new row (append-only evidence);
- * the newest row is the working copy.
+ * every statement answered. A draft overwrites the current unsaved row;
+ * only current plus one backup are kept.
  */
 export async function saveCalibration(actor: Actor, submissionId: string, input: { answers: Record<string, boolean>; evidence: Record<string, string>; submit: boolean }): Promise<Calibration> {
   return db().transaction(async (tx) => {
@@ -59,7 +60,12 @@ export async function saveCalibration(actor: Actor, submissionId: string, input:
     if (!holdsReviewSeat(actor, submission)) throw forbidden('You do not hold the review seat on this task.');
     if (submission.stage !== 'review') throw conflict('The task is not in review.');
     const rubric = await currentRubric(tx, submissionId);
-    if (!rubric || rubric.id !== submission.reviewRubricId) throw conflict('The rubric changed since review started. Ask the creator to resend.');
+    if (!rubric) throw conflict('Generate or write a rubric first.');
+    if (!submission.reviewRubricId) {
+      await tx.update(submissions).set({ reviewRubricId: rubric.id }).where(eq(submissions.id, submissionId));
+    } else if (rubric.id !== submission.reviewRubricId) {
+      throw conflict('The rubric changed since review started. Ask the creator to resend.');
+    }
     const statements = await statementsOf(tx, rubric.id);
     const ids = new Set(statements.map((s) => s.id));
     const answers: Record<string, boolean> = {};
@@ -74,19 +80,20 @@ export async function saveCalibration(actor: Actor, submissionId: string, input:
       if (thin.length > 0) throw invalid(`${thin.length} statement(s) need an observation of at least ${EVIDENCE_MIN_CHARS} characters.`);
     }
     const outputs = await listAiOutputs(tx, submissionId);
-
-    const [row] = await tx
-      .insert(calibrations)
-      .values({
-        rubricId: rubric.id,
-        reviewerId: actor.id,
-        answers,
-        evidence,
-        scorePercent: score.percent ?? 0,
-        submitted: input.submit,
-        basis: { rubricRevision: rubric.revision, statementIds: statements.map((s) => s.id), aiOutputIds: outputs.map((o) => o.id), aiOutputShas: outputs.map((o) => o.sha256) },
-      })
-      .returning();
+    const latest = await latestCalibration(tx, rubric.id);
+    const values = {
+      rubricId: rubric.id,
+      reviewerId: actor.id,
+      answers,
+      evidence,
+      scorePercent: score.percent ?? 0,
+      submitted: input.submit,
+      basis: { rubricRevision: rubric.revision, statementIds: statements.map((s) => s.id), aiOutputIds: outputs.map((o) => o.id), aiOutputShas: outputs.map((o) => o.sha256) },
+    };
+    const [row] = latest && !latest.submitted
+      ? await tx.update(calibrations).set(values).where(eq(calibrations.id, latest.id)).returning()
+      : await tx.insert(calibrations).values(values).returning();
+    await pruneCalibrations(tx, rubric.id);
     await recordEvent(tx, submissionId, actor.id, input.submit ? 'calibration_submitted' : 'calibration_saved', { scorePercent: score.percent, answered: score.yes + score.no });
     return row!;
   });
@@ -121,6 +128,7 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
     }
 
     await tx.insert(reviewFeedback).values({ submissionId, rubricId: rubric.id, reviewerId: actor.id, decision, feedback: feedback.trim(), calibrationId: calibration?.id ?? null });
+    await pruneReviewFeedback(tx, submissionId);
     await tx
       .update(submissions)
       .set(decision === 'approved' ? { stage: 'stability', reviewStatus: 'approved' } : { stage: 'rubric', reviewStatus: 'changes_requested' })

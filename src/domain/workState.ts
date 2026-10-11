@@ -1,11 +1,14 @@
-import type { ReviewStatus, Stage } from '@/db/schema';
+import type { HandoffStatus, ReviewStatus, Stage } from '@/db/schema';
 
 /**
  * PM list tabs. These are presentation of our internal stage + seats, not
  * Catalog statuses and not an authorization boundary.
  */
-export const WORK_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'handoff', 'submitted'] as const;
+export const WORK_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'handoff', 'submitted', 'other'] as const;
 export type WorkState = (typeof WORK_STATES)[number];
+
+/** Filter bar on the live board — no separate “Ready to submit” chip. */
+export const BOARD_STATES = ['unassigned', 'preparing', 'in_review', 'review_returned', 'stability', 'platform_returned', 'submitted', 'other'] as const;
 
 export const WORK_STATE_LABEL: Record<WorkState, string> = {
   unassigned: 'Unassigned',
@@ -13,8 +16,10 @@ export const WORK_STATE_LABEL: Record<WorkState, string> = {
   in_review: 'In review',
   review_returned: 'Review returned',
   stability: 'Approved',
+  platform_returned: 'Platform returned',
   handoff: 'Ready to submit',
   submitted: 'Submitted',
+  other: 'Other',
 };
 
 export const WORK_STATE_HINT: Record<WorkState, string> = {
@@ -23,8 +28,10 @@ export const WORK_STATE_HINT: Record<WorkState, string> = {
   in_review: 'Calibrate the AI score, then approve or request changes.',
   review_returned: 'Open the reviewer note, fix the rubric, re-run Stability if you want, then send it back.',
   stability: 'Run 3 Stability checks, then submit.',
+  platform_returned: 'The Catalog bounced the handoff. Fix what they flagged and submit again.',
   handoff: 'Confirm the gates, then submit to the Data Program.',
   submitted: 'No action needed unless returned.',
+  other: 'On a watched project, but not in the GDP work or handoff status.',
 };
 
 /** A seat held this long without a handoff is stale for the PM board. */
@@ -42,12 +49,18 @@ export function isStaleHold(iso: string | null | undefined, now = Date.now()): b
   return hours !== null && hours >= STALE_HOLD_HOURS;
 }
 
-export function workStateOf(row: { stage: Stage; rubricAssigneeId: string | null; reviewStatus: ReviewStatus | null }): WorkState {
+export function workStateOf(row: {
+  stage: Stage;
+  rubricAssigneeId: string | null;
+  reviewStatus: ReviewStatus | null;
+  handoffStatus?: HandoffStatus | null;
+}): WorkState {
+  if (row.stage === 'parked') return 'other';
   if (row.stage === 'done') return 'submitted';
+  if (row.stage === 'handoff' && row.handoffStatus === 'bounced') return 'platform_returned';
   if (row.stage === 'handoff') return 'handoff';
   if (row.stage === 'stability') return 'stability';
   if (row.stage === 'review') return 'in_review';
   if (row.stage === 'rubric' && row.reviewStatus === 'changes_requested') return 'review_returned';
-  if (row.stage === 'rubric' && !row.rubricAssigneeId) return 'unassigned';
   return 'preparing';
 }

@@ -1,13 +1,14 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { aiOutputFiles, goldenRatings, submissions } from '@/db/schema';
+import { aiOutputFiles, calibrations, goldenRatings, rubrics, submissions } from '@/db/schema';
 import { statementHash } from '@/domain/fingerprint';
 import type { Db } from '@/db/types';
 import type { Actor } from '@/lib/auth/permissions';
 import { claimNext, complete, enqueue, expireOverdue, fail, heartbeat, JobConflict } from '@/lib/jobs/queue';
 import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
-import { currentRubric, goldenState, overrideGolden, saveStatements, statementsOf } from '@/lib/services/rubric';
+import { KEEP } from '@/lib/services/retention';
+import { currentRubric, goldenState, installFactoryVersion, overrideGolden, saveStatements, statementsOf } from '@/lib/services/rubric';
 import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, releaseSeat } from '@/lib/services/submissions';
 import { makeSubmission, makeUser, testDb } from './helpers/db';
 
@@ -211,6 +212,57 @@ describe('review flow', () => {
     await decideReview(reviewer, s.id, 'approved', '');
     after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('stability');
+  });
+});
+
+describe('retention', () => {
+  it('keeps only the current rubric and one backup', async () => {
+    const s = await makeSubmission(db);
+    const stub = (n: number) => [
+      {
+        family: 'content' as const,
+        tag: 'Content - Exact',
+        statement: `The title names the client ${n}.`,
+        notes: '',
+        claimKey: `title-${n}`,
+        origin: 'factory' as const,
+        lint: { overall: 'pass' as const, verdicts: { falsifiable: 'pass', universal: 'pass', unambiguous: 'pass', self_contained: 'pass', non_stacked: 'pass', timeless: 'pass', expected_yes: 'pass', file_addressed_present: 'pass' } as const, reasons: [], rewriteSuggestion: '', source: 'local' as const },
+        scope: 'output' as const,
+        inputFileIds: [] as string[],
+        outputFile: null,
+      },
+    ];
+    await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(1), generation: {} });
+    await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(2), generation: {} });
+    await installFactoryVersion(db, s.id, creator.id, { seeds: [], statements: stub(3), generation: {} });
+    const versions = await db.select().from(rubrics).where(eq(rubrics.submissionId, s.id));
+    expect(versions).toHaveLength(KEEP);
+    expect(versions.filter((v) => v.isCurrent)).toHaveLength(1);
+    expect(Math.max(...versions.map((v) => v.version))).toBe(3);
+  });
+
+  it('overwrites a calibration draft instead of appending', async () => {
+    const { s, statements } = await (async () => {
+      const row = await makeSubmission(db);
+      await claimSeat(creator, row.id, 'rubric');
+      const saved = await saveStatements(creator, row.id, {
+        revision: 0,
+        upserts: ['The deck names the client.', 'The deck has a title slide.', 'The chart axes are labelled.', 'Every slide has a footer.'].map((statement) => ({ tag: 'Content - Structural' as const, statement, notes: '', scope: 'output' as const, inputFileIds: [], outputFile: null })),
+        deletes: [],
+      });
+      for (const st of saved.statements) await overrideGolden(creator, row.id, st.id, true, 'Verified manually.');
+      await db.insert(aiOutputFiles).values({ submissionId: row.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-draft', storagePath: `draft-${row.id}`, uploadedBy: creator.id });
+      await sendToReview(creator, row.id);
+      await claimSeat(reviewer, row.id, 'review');
+      return { s: row, statements: saved.statements };
+    })();
+    const [a] = statements.map((x) => x.id);
+    await saveCalibration(reviewer, s.id, { answers: { [a!]: true }, evidence: {}, submit: false });
+    await saveCalibration(reviewer, s.id, { answers: { [a!]: false }, evidence: {}, submit: false });
+    const rubric = await currentRubric(db, s.id);
+    const mine = (await db.select().from(calibrations)).filter((r) => r.rubricId === rubric!.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.answers[a!]).toBe(false);
   });
 });
 

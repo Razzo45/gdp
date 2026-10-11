@@ -25,7 +25,7 @@ export const app = pgSchema('app');
 export const ROLES = ['admin', 'pm', 'rubric_creator', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
-export const STAGES = ['rubric', 'review', 'stability', 'handoff', 'done'] as const;
+export const STAGES = ['rubric', 'review', 'stability', 'handoff', 'done', 'parked'] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const REVIEW_STATUSES = ['pending', 'changes_requested', 'approved'] as const;
@@ -91,6 +91,7 @@ export const watchedProjects = app.table('watched_projects', {
   label: text('label').notNull().default(''),
   workStatusId: text('work_status_id').notNull().default(''),
   handoffStatusId: text('handoff_status_id').notNull().default(''),
+  statusIds: jsonb('status_ids').$type<string[]>().notNull().default([]),
   project: jsonb('project').$type<unknown>(),
   projectFetchedAt: ts('project_fetched_at'),
   addedBy: uuid('added_by'),

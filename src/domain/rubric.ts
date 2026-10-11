@@ -49,6 +49,56 @@ export function isRubricTag(tag: string): tag is RubricTag {
   return (RUBRIC_TAGS as readonly string[]).includes(tag);
 }
 
+const WORD_COUNT = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty';
+
+/**
+ * File/delivery claims belong in Format even when the model tagged them
+ * Content. Content is what the work says; Format is the container.
+ */
+export function guessTag(statement: string): RubricTag {
+  const q = statement.toLowerCase();
+  if (isFormatClaim(q)) return 'Format/File';
+  if (isTypefaceClaim(q) || /\b(hex|#|logo|brand|palette|color|colour|font style|font size|typography)\b/.test(q)) return 'Visual - Branding';
+  if (/\b(hierarchy|header|subheader|title|subtitle|placement|layout|space|breathe|bleed)\b/.test(q)) return 'Visual - Layout';
+  if (/\b(consistent|similar across|same brand|connected)\b/.test(q)) return 'Visual - Consistency';
+  if (/\b(pixelat|legib|read on a mobile)\b/.test(q)) return 'Visual - Language & Readability';
+  if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) return 'Content - Exact';
+  if (/\b(\d+|three|two|one)\b/.test(q) && /\b(posts?|mockups?|images?)\b/.test(q)) return 'Content - Quantitative';
+  return 'Content - Semantics';
+}
+
+export function correctTag(statement: string, suggested?: string): RubricTag {
+  const inferred = guessTag(statement);
+  if (inferred === 'Format/File') return inferred;
+  if (isTypefaceClaim(statement.toLowerCase()) && (!suggested || familyOfTag(suggested) === 'content')) return 'Visual - Branding';
+  if (suggested && isRubricTag(suggested)) return suggested;
+  return inferred;
+}
+
+export function familyOfStatement(statement: string, tag?: string): Family {
+  return familyOfTag(correctTag(statement, tag));
+}
+
+function isFormatClaim(q: string): boolean {
+  if (/\b(pptx|docx|xlsx|pdf|csv)\s+format\b/.test(q)) return true;
+  if (/\b(in|as)\s+(a\s+|an\s+)?(pptx|docx|xlsx|pdf|csv)\b/.test(q)) return true;
+  if (/\b(is|as)\s+an?\s+editable\b/.test(q)) return true;
+  if (/\b(powerpoint|word document|excel (?:file|workbook)|spreadsheet)\b/.test(q) && /\b(format|file type|editable|deliverable)\b/.test(q)) return true;
+  if (/\b(file type|file format|file extension|file name|filename|embedded fonts?|fonts? embedded)\b/.test(q)) return true;
+  if (/\b\.(png|jpe?g|webp|pptx|docx|xlsx|pdf|csv)\b/.test(q)) return true;
+  if (/\b(\d+\s*px|1080|1920|1:1|16:9|4:3|widescreen|page size|slide size|aspect ratio|full bleed|carousel image)\b/.test(q)) return true;
+  if (new RegExp(`\\b(\\d+|${WORD_COUNT})[-\\s]+(slides?|pages?|sheets?)\\b`).test(q)) return true;
+  if (/\b(slide|page|sheet)\s+(count|total)\b/.test(q)) return true;
+  if (/\b(files?|images?)\b/.test(q) && /\b(included|delivered|output|export)\b/.test(q)) return true;
+  return false;
+}
+
+/** Named typeface is brand/look. Embedded fonts are a file property (Format). */
+function isTypefaceClaim(q: string): boolean {
+  if (/\b(embedded fonts?|fonts? embedded)\b/.test(q)) return false;
+  return /\bfont famil/.test(q) || /\btypeface\b/.test(q) || /\buses the \S+(?:\s+\S+)? font(?: family)?\b/.test(q);
+}
+
 /** Standard target and the 10% / 30% / 60% family split (5 / 15 / 30 at 50). */
 export const RUBRIC_TARGET = 50;
 export const RUBRIC_MIN = 40;
@@ -98,13 +148,19 @@ export interface SeatRef {
   family?: Family;
   tag?: string;
   position?: number;
+  statement?: string;
+}
+
+function familyOfSeat(row: SeatRef): Family {
+  if (row.statement) return familyOfStatement(row.statement, row.tag);
+  return row.family ?? familyOfTag(row.tag ?? '');
 }
 
 /** Format 1–5, Content 6–20, Visual 21–50 — one number the whole team shares. */
 export function seatsInDisplayOrder<T extends SeatRef>(rows: readonly T[]): T[] {
   return [...rows].sort((a, b) => {
-    const fa = FAMILY_DISPLAY.indexOf(a.family ?? familyOfTag(a.tag ?? ''));
-    const fb = FAMILY_DISPLAY.indexOf(b.family ?? familyOfTag(b.tag ?? ''));
+    const fa = FAMILY_DISPLAY.indexOf(familyOfSeat(a));
+    const fb = FAMILY_DISPLAY.indexOf(familyOfSeat(b));
     if (fa !== fb) return fa - fb;
     return (a.position ?? 0) - (b.position ?? 0);
   });

@@ -11,10 +11,11 @@ import { parseImport } from '@/domain/import';
 import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
 import { lintStatement, nearDuplicate, type LintResult } from '@/domain/lint';
 import { applyInferredScope } from '@/domain/fileScope';
-import { familyOfTag, isRubricTag, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
+import { correctTag, familyOfStatement, familyOfTag, isRubricTag, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import type { FactoryStatement } from '@/lib/engines/rubricFactory';
 import { conflict, forbidden, invalid, notFound } from './errors';
+import { pruneGoldenRatings, pruneRubricVersions } from './retention';
 import { getSubmission, readSource, recordEvent } from './submissions';
 
 function scopeFromCatalog<T extends { statement: string; scope: 'output' | 'inputs'; inputFileIds: string[]; outputFile: string | null }>(row: T, submission: Submission): T {
@@ -104,21 +105,22 @@ export async function saveStatements(actor: Actor, submissionId: string, request
 
     for (const raw of request.upserts) {
       const input = scopeFromCatalog(raw, submission);
-      const lint = lintStatement({ statement: input.statement, tag: input.tag });
-      const family = familyOfTag(input.tag);
+      const tag = correctTag(input.statement, input.tag);
+      const lint = lintStatement({ statement: input.statement, tag });
+      const family = familyOfTag(tag);
       if (input.id && byId.has(input.id)) {
         const previous = byId.get(input.id)!;
         const textChanged = previous.statement !== input.statement || previous.scope !== input.scope || previous.outputFile !== input.outputFile || JSON.stringify(previous.inputFileIds) !== JSON.stringify(input.inputFileIds);
         await tx
           .update(rubricStatements)
-          .set({ tag: input.tag, family, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now, ...(previous.origin === 'factory' && textChanged ? { origin: 'manual' as const } : {}) })
+          .set({ tag, family, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now, ...(previous.origin === 'factory' && textChanged ? { origin: 'manual' as const } : {}) })
           .where(eq(rubricStatements.id, input.id));
         if (lint.overall === 'fail') warnings.push({ statementId: input.id, reasons: lint.reasons });
       } else {
         const position = existing.length + request.upserts.indexOf(raw) + 1;
         const [created] = await tx
           .insert(rubricStatements)
-          .values({ id: input.id, rubricId: rubric.id, position, family, tag: input.tag, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, origin: 'manual', lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now })
+          .values({ id: input.id, rubricId: rubric.id, position, family, tag, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, origin: 'manual', lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now })
           .returning({ id: rubricStatements.id });
         if (lint.overall === 'fail') warnings.push({ statementId: created!.id, reasons: lint.reasons });
       }
@@ -149,8 +151,8 @@ export async function installFactoryVersion(database: DbOrTx, submissionId: stri
       seatsInDisplayOrder(input.statements.map((s, index) => ({ ...s, id: s.claimKey || String(index), position: index }))).map((s, index) => ({
         rubricId: rubric!.id,
         position: index + 1,
-        family: s.family,
-        tag: s.tag,
+        family: familyOfStatement(s.statement, s.tag),
+        tag: correctTag(s.statement, s.tag),
         statement: s.statement,
         notes: s.notes,
         claimKey: s.claimKey,
@@ -164,6 +166,7 @@ export async function installFactoryVersion(database: DbOrTx, submissionId: stri
     );
   }
   await database.update(submissions).set({ revision: sql`${submissions.revision} + 1` }).where(eq(submissions.id, submissionId));
+  await pruneRubricVersions(database, submissionId);
   await recordEvent(database, submissionId, actorId, 'rubric_generated', { version: rubric!.version, statements: input.statements.length });
   return rubric!;
 }
@@ -255,6 +258,7 @@ export async function overrideGolden(actor: Actor, submissionId: string, stateme
       basis: { statementText: statement.statement, rubricRevision: rubric.revision },
       createdBy: actor.id,
     });
+    await pruneGoldenRatings(tx, rubric.id);
     await recordEvent(tx, submissionId, actor.id, 'golden_overridden', { statementId, verdict });
   });
 }
@@ -316,7 +320,7 @@ export async function replacementCandidates(database: DbOrTx, submissionId: stri
   if (!statement) throw notFound('The statement');
   const seatedKeys = new Set(rows.map((s) => s.claimKey).filter(Boolean));
   const candidates = parseBank(rubric.generation)
-    .filter((c) => c.family === statement.family && !seatedKeys.has(c.claimKey))
+    .filter((c) => familyOfStatement(c.statement, c.tag) === familyOfStatement(statement.statement, statement.tag) && !seatedKeys.has(c.claimKey))
     .filter((c) => lintStatement({ statement: c.statement, tag: c.tag }).overall === 'pass')
     .filter((c) => !rows.some((s) => nearDuplicate(s.statement, c.statement)))
     .sort((a, b) => (b.strength ?? 50) - (a.strength ?? 50))
@@ -336,11 +340,12 @@ export async function keepReplacement(actor: Actor, submissionId: string, input:
     const statement = rows.find((s) => s.id === input.statementId);
     if (!statement) throw notFound('The statement');
     const candidate = unusedCandidate(rubric, rows, input.claimKey);
-    const lint = lintStatement({ statement: candidate.statement, tag: candidate.tag });
+    const tag = correctTag(candidate.statement, candidate.tag);
+    const lint = lintStatement({ statement: candidate.statement, tag });
     const scoped = scopeFromCatalog({ statement: candidate.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
     await tx
       .update(rubricStatements)
-      .set({ statement: candidate.statement, tag: candidate.tag, family: candidate.family, notes: candidate.notes, claimKey: candidate.claimKey, origin: 'bank', lint: lint as unknown as Record<string, unknown>, scope: scoped.scope, inputFileIds: scoped.inputFileIds, outputFile: scoped.outputFile, updatedBy: actor.id, updatedAt: new Date().toISOString() })
+      .set({ statement: candidate.statement, tag, family: familyOfTag(tag), notes: candidate.notes, claimKey: candidate.claimKey, origin: 'bank', lint: lint as unknown as Record<string, unknown>, scope: scoped.scope, inputFileIds: scoped.inputFileIds, outputFile: scoped.outputFile, updatedBy: actor.id, updatedAt: new Date().toISOString() })
       .where(eq(rubricStatements.id, statement.id));
     const [bumped] = await tx
       .update(rubrics)
@@ -363,13 +368,13 @@ export async function addFromBank(actor: Actor, submissionId: string, input: { c
     if (locked.revision !== input.revision) throw conflict('Someone saved a newer version of this rubric. Your view has been refreshed.', { revision: locked.revision, statements: await statementsOf(tx, rubric.id) });
     const rows = await statementsOf(tx, rubric.id);
     const candidate = unusedCandidate(rubric, rows, input.claimKey);
-    const lint = lintStatement({ statement: candidate.statement, tag: candidate.tag });
-    const tag = isRubricTag(candidate.tag) ? candidate.tag : 'Content - Semantics';
+    const tag = correctTag(candidate.statement, candidate.tag);
+    const lint = lintStatement({ statement: candidate.statement, tag });
     const scoped = scopeFromCatalog({ statement: candidate.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
     await tx.insert(rubricStatements).values({
       rubricId: rubric.id,
       position: rows.length + 1,
-      family: candidate.family,
+      family: familyOfTag(tag),
       tag,
       statement: candidate.statement,
       notes: candidate.notes,
@@ -417,9 +422,10 @@ export async function importStatements(actor: Actor, submissionId: string, input
     if (fresh.length) {
       await tx.insert(rubricStatements).values(
         fresh.map((r, i) => {
-          const lint = lintStatement({ statement: r.statement, tag: r.tag });
+          const tag = correctTag(r.statement, r.tag);
+          const lint = lintStatement({ statement: r.statement, tag });
           const scoped = scopeFromCatalog({ statement: r.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
-          return { rubricId: rubric.id, position: existing.length + i + 1, family: familyOfTag(r.tag), tag: r.tag, statement: r.statement, notes: '', scope: scoped.scope, inputFileIds: scoped.inputFileIds, outputFile: scoped.outputFile, origin: 'import' as const, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now };
+          return { rubricId: rubric.id, position: existing.length + i + 1, family: familyOfTag(tag), tag, statement: r.statement, notes: '', scope: scoped.scope, inputFileIds: scoped.inputFileIds, outputFile: scoped.outputFile, origin: 'import' as const, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now };
         }),
       );
     }
@@ -433,5 +439,5 @@ export async function importStatements(actor: Actor, submissionId: string, input
 }
 
 export function toGradeStatement(s: RubricStatement, seat?: number) {
-  return { id: s.id, seat, statement: s.statement, tag: isRubricTag(s.tag) ? s.tag : 'Content - Semantics', scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile };
+  return { id: s.id, seat, statement: s.statement, tag: correctTag(s.statement, s.tag), scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile };
 }

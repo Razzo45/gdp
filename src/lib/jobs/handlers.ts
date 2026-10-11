@@ -14,6 +14,7 @@ import type { Seed } from '@/lib/engines/rubricFactory';
 import { GeminiError } from '@/lib/ai/gemini';
 import { listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
 import { currentRubric, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
+import { pruneFinishedJobs, pruneGoldenRatings, pruneStabilityGroups } from '@/lib/services/retention';
 import { submittedCalibration } from '@/lib/services/review';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
 import { ServiceError } from '@/lib/services/errors';
@@ -261,6 +262,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
       }));
     if (rows.length === 0) return;
     await database.insert(goldenRatings).values(rows);
+    await pruneGoldenRatings(database, rubric.id);
     for (const row of rows) written.add(row.statementId);
     await ctx.tick({ done: written.size, total: statements.length, note: 'Grading' }, { graded: [...written] });
   };
@@ -371,6 +373,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
 
   await Promise.all(Array.from({ length: STABILITY_PASSES }, (_, i) => runPass(i + 1)));
   const passes = await database.select().from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId)).orderBy(stabilityPasses.passIndex);
+  await pruneStabilityGroups(database, rubric.id);
   await recordEvent(database, job.submissionId, job.createdBy, 'stability_run', { jobId: job.id, groupId, scores: passes.map((p) => p.scorePercent) });
   await database.update(submissions).set({ updatedAt: new Date().toISOString() }).where(eq(submissions.id, job.submissionId));
   return { groupId, scores: passes.map((p) => p.scorePercent), errors: passes.map((p) => Object.keys(p.errors).length) };

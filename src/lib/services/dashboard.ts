@@ -102,7 +102,7 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
   const stuckByHolder = new Map<string, number>();
 
   for (const row of rows) {
-    if (row.workState === 'submitted') continue;
+    if (row.workState === 'submitted' || row.workState === 'other') continue;
     const enteredAt = statusEnteredAt(row, latestEntryAt(row.workState, eventsByTask.get(row.id) ?? []));
     const holder = holderForState(row);
     if (holder.id) holding.set(holder.id, (holding.get(holder.id) ?? 0) + 1);
@@ -160,7 +160,7 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
     unassigned: rows.filter((row) => row.workState === 'unassigned').length,
     returned: rows.filter((row) => row.workState === 'review_returned').length,
     landed: countIn(rows.map((row) => row.landedAt), now),
-    pushed: countIn(rows.map((row) => row.pushedAt), now),
+    pushed: countIn(rows.map((row) => row.pushedAt ?? (row.workState === 'submitted' ? row.lastSeenAt : null)), now),
     stuck,
     team,
     mine: rows.filter((row) => row.rubricAssigneeId === actor.id || row.reviewerId === actor.id),

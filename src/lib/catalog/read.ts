@@ -139,14 +139,30 @@ function readFiles(body: z.infer<typeof SubmissionPayload>): CatalogFile[] {
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const { name, extension } = fileName(entry.originalFileName, entry.extension);
-    out.push({ id, name, extension, mime: mimeForExtension(extension), downloadUrl: entry.urls?.download ?? null, previewUrl: entry.urls?.preview ?? null });
+    out.push({
+      id,
+      name,
+      extension,
+      mime: mimeForExtension(extension),
+      downloadUrl: entry.urls?.download ?? null,
+      previewUrl: entry.urls?.preview ?? null,
+      thumbnailUrl: entry.urls?.thumbnail ?? null,
+    });
   }
   for (const entry of body.media ?? []) {
     const id = entry.projectSubmissionMediaId ?? '';
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const { name, extension } = fileName(entry.originalFileName, entry.extension);
-    out.push({ id, name, extension, mime: mimeForExtension(extension), downloadUrl: entry.urls?.download ?? null, previewUrl: entry.urls?.preview ?? null });
+    out.push({
+      id,
+      name,
+      extension,
+      mime: mimeForExtension(extension),
+      downloadUrl: entry.urls?.download ?? null,
+      previewUrl: entry.urls?.preview ?? null,
+      thumbnailUrl: entry.urls?.thumbnail ?? null,
+    });
   }
   return out;
 }
@@ -247,10 +263,11 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
     fields.push({ key, label: properties[key]?.title ?? key, text });
   }
 
-  const titleCandidate = ['title', 'taskTitle', 'name', 'prompt', 'instruction', 'description'].find(
+  const titleCandidate = ['title', 'taskTitle', 'name', 'prompt', 'instruction', 'description', 'task'].find(
     (k) => typeof values[k] === 'string' && (values[k] as string).trim(),
   );
-  const title = titleCandidate ? (values[titleCandidate] as string).trim().slice(0, 140) : '';
+  const titled = titleCandidate ? (values[titleCandidate] as string).trim() : fields[0]?.text?.trim() ?? '';
+  const title = titled.split(/\r?\n/).find((line) => line.trim())?.trim().slice(0, 140) ?? '';
 
   const moves = project?.workflow?.transitions ?? [];
   const transitions: CatalogTransition[] = (body.workflowState?.transitions ?? []).flatMap((t) => {

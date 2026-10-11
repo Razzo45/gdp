@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { tokenExpiry, verifyAccessToken } from '@/lib/auth/jwt';
 import { VERIFIED_EMAIL_HEADER, VERIFIED_USER_HEADER } from '@/lib/auth/headerNames';
 import { LOCAL_SESSION_COOKIE, verifyLocalSession } from '@/lib/auth/local';
+import { supabaseAuthConfig } from '@/lib/auth/supabasePublic';
 
 /**
  * Request gate. One job: establish who is calling, cheaply.
@@ -43,9 +44,10 @@ export async function proxy(request: NextRequest) {
     return refuse(request, pathname, response);
   }
 
+  const { url: supabaseUrl, key: supabaseKey } = supabaseAuthConfig();
   const supabase = createServerClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY']!,
+    supabaseUrl,
+    supabaseKey,
     {
       cookies: {
         getAll: () => request.cookies.getAll(),
@@ -71,7 +73,7 @@ export async function proxy(request: NextRequest) {
 
   const claims = token
     ? await verifyAccessToken(token, {
-        supabaseUrl: process.env['NEXT_PUBLIC_SUPABASE_URL']!,
+        supabaseUrl,
         jwtSecret: process.env['SUPABASE_JWT_SECRET'],
       })
     : null;

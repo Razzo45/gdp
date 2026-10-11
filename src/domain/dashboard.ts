@@ -10,8 +10,10 @@ export const STATE_ENTRY_ACTIONS: Record<WorkState, readonly string[]> = {
   in_review: ['sent_to_review', 'review_claimed', 'review_assigned'],
   review_returned: ['review_changes_requested', 'stability_reopened_rubric'],
   stability: ['review_approved'],
+  platform_returned: ['handoff_bounced'],
   handoff: ['stability_accepted'],
   submitted: ['pushed_to_catalog'],
+  other: ['parked'],
 };
 
 export const TEAM_ACTIVITY_ACTIONS = ['sent_to_review', 'review_approved', 'review_changes_requested', 'pushed_to_catalog'] as const;
@@ -63,7 +65,7 @@ export function statusEnteredAt(
   if (row.workState === 'unassigned') return row.landedAt;
   if (row.workState === 'preparing') return row.rubricClaimedAt ?? row.landedAt;
   if (row.workState === 'in_review') return row.reviewClaimedAt ?? row.lastClaimedAt ?? row.landedAt;
-  if (row.workState === 'submitted') return row.pushedAt ?? row.updatedAt;
+  if (row.workState === 'submitted' || row.workState === 'other') return row.pushedAt ?? row.updatedAt;
   return row.lastClaimedAt ?? row.updatedAt ?? row.landedAt;
 }
 
@@ -79,7 +81,7 @@ export function holderForState(row: {
   reviewerId: string | null;
   reviewerName: string | null;
 }): { id: string | null; name: string | null } {
-  if (row.workState === 'submitted' || row.workState === 'unassigned') return { id: null, name: null };
+  if (row.workState === 'submitted' || row.workState === 'unassigned' || row.workState === 'other') return { id: null, name: null };
   if (row.workState === 'in_review') return { id: row.reviewerId, name: row.reviewerName };
   return { id: row.rubricAssigneeId, name: row.rubricAssigneeName };
 }

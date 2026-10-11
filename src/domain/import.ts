@@ -1,5 +1,5 @@
 import { toAffirmativeStatement } from './lint';
-import { RUBRIC_TAGS, type RubricTag } from './rubric';
+import { correctTag, RUBRIC_TAGS, type RubricTag } from './rubric';
 
 /**
  * Parses pasted text into statements. One per line; an optional leading
@@ -27,7 +27,7 @@ export function parseImport(text: string): { rows: { tag: RubricTag; statement: 
       skipped.push(rawLine.trim());
       continue;
     }
-    rows.push({ tag, statement });
+    rows.push({ tag: correctTag(statement, tag), statement });
   }
   return { rows, skipped };
 }

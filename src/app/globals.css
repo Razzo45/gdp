@@ -183,6 +183,45 @@ select {
   @apply border-line bg-wash text-muted;
 }
 
+.work-pill {
+  @apply inline-flex h-[22px] items-center rounded-full border px-2.5 text-[11px] font-medium leading-none;
+}
+
+.work-pill-unassigned,
+.work-pill-preparing,
+.work-pill-other,
+.work-pill-handoff {
+  @apply border-line bg-transparent text-muted;
+}
+
+.work-pill-in_review {
+  @apply border-transparent bg-accent text-white;
+}
+
+.work-pill-review_returned {
+  @apply border-bad bg-transparent text-bad;
+}
+
+.work-pill-submitted {
+  @apply border-ok bg-transparent text-ok;
+}
+
+.work-pill-stability {
+  @apply border-check bg-transparent text-check;
+}
+
+.work-pill-platform_returned {
+  @apply border-warn bg-transparent text-warn;
+}
+
+.lane-chip {
+  @apply inline-flex h-8 items-center gap-1 rounded-full px-3 text-[13px] font-medium text-muted transition-colors hover:text-ink;
+}
+
+.lane-chip-on {
+  @apply bg-accent text-white hover:bg-accent-hover hover:text-white;
+}
+
 .table-head {
   @apply text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted;
 }

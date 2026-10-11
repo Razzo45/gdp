@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+.git
+tmp
+coverage
+.pglite
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+fixtures/ai-outputs
+agent-transcripts

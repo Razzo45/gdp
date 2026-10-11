@@ -41,7 +41,12 @@ const submission = {
   },
   files: [
     { projectSubmissionFileId: '11111111-2222-3333-4444-555555555555', extension: 'xlsx', originalFileName: 'numbers', urls: { download: 'https://s3/numbers?X-Amz-Signature=1' } },
-    { projectSubmissionFileId: '66666666-7777-8888-9999-000000000000', extension: 'pptx', originalFileName: 'golden.pptx', urls: { download: 'https://s3/golden' } },
+    {
+      projectSubmissionFileId: '66666666-7777-8888-9999-000000000000',
+      extension: 'pptx',
+      originalFileName: 'golden.pptx',
+      urls: { download: 'https://s3/golden', thumbnail: 'https://cdn/golden-thumb', preview: 'https://cdn/golden-preview' },
+    },
   ],
   user: { displayName: 'Ana' },
   workflowState: { statusId: 'st-work', transitions: [{ destinationSubmissionStatusId: 'st-review' }] },
@@ -54,6 +59,8 @@ describe('readCatalogSubmission', () => {
     expect(read.projectName).toBe('Deck QA');
     expect(read.statusName).toBe('In progress');
     expect(read.goldenFiles.map((f) => f.name)).toEqual(['golden.pptx']);
+    expect(read.goldenFiles[0]!.thumbnailUrl).toBe('https://cdn/golden-thumb');
+    expect(read.goldenFiles[0]!.previewUrl).toBe('https://cdn/golden-preview');
     expect(read.inputFiles.map((f) => f.name)).toEqual(['numbers.xlsx']);
     expect(read.inputFiles[0]!.mime).toContain('spreadsheetml');
     expect(read.fields.map((f) => f.key)).toEqual(['prompt', 'inputFiles']);

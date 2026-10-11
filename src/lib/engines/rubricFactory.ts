@@ -5,7 +5,7 @@ import { assemble, type BankRow } from '@/domain/assemble';
 import { allPass, lintStatement, nearDuplicate, toAffirmativeStatement, type LintResult, type LintVerdicts, LINT_ATTRIBUTES } from '@/domain/lint';
 import { enhancerRowsPerSeed, extractSeedsFromNotes, shouldExtractNotes } from '@/domain/seeds';
 import { inferFileScope } from '@/domain/fileScope';
-import { familyOfTag, familyQuotas, isRubricTag, MAX_SEEDS, RUBRIC_TAGS, RUBRIC_TARGET, type Family } from '@/domain/rubric';
+import { correctTag, familyOfTag, familyQuotas, isRubricTag, MAX_SEEDS, RUBRIC_TAGS, RUBRIC_TARGET, type Family } from '@/domain/rubric';
 import { env } from '@/lib/env';
 import { GeminiError, generateJson, type MediaPart } from '@/lib/ai/gemini';
 import type { PreparedFile } from '@/lib/ai/media';
@@ -166,7 +166,9 @@ Return JSON only: { "rows": [ { "claim_key": "kebab-case-unique-id", "statement"
   "which distinct mistake would flip this to No?" If two rows share that mistake,
   drop one and cover a new failure mode instead.
 - Tags: Format/File rows test the file itself (type, size, dimensions, page/slide count,
-  fonts embedded, naming, validity). Content rows test what it says/contains. Visual rows
+  fonts embedded, naming, validity). Slide count and file type are NEVER Content.
+  Named font/typeface is Visual (brand), not Format — unless the claim is that fonts
+  are embedded in the file. Content rows test what it says/contains. Visual rows
   test how it looks.`;
 
 const SEEDER_SYSTEM = `You are a senior practitioner in the TASK ROLE. Read the CLIENT PROMPT, the
@@ -398,6 +400,18 @@ const slug = (s: string) =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
 
+function uniqueClaimKey(raw: string, used: Set<string>): string {
+  const base = slug(raw) || 'claim';
+  if (!used.has(base)) return base;
+  let n = 2;
+  let next = `${base.slice(0, 56)}-${n}`;
+  while (used.has(next)) {
+    n += 1;
+    next = `${base.slice(0, 56)}-${n}`;
+  }
+  return next;
+}
+
 export async function deriveSeeds(input: Pick<FactoryInput, 'prompt' | 'taskContext' | 'notes' | 'observed' | 'inputs' | 'model'>): Promise<Seed[]> {
   const result = await generateJson({ model: input.model ?? env().GEMINI_FACTORY_MODEL ?? env().GEMINI_MODEL, system: SEEDER_SYSTEM, parts: contextParts({ ...input, seeds: [] }), schema: Seeds, temperature: 0.4 });
   return result.value.seeds.map((s, i) => ({ id: `seed-${i + 1}`, theme: s.theme.trim(), statement: toAffirmativeStatement(s.statement), tag: isRubricTag(s.tag) ? s.tag : undefined }));
@@ -439,9 +453,10 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
   const bank: BankRow[] = [];
   const usedKeys = new Set<string>();
   for (const seed of seeds) {
-    const tag = seed.tag && isRubricTag(seed.tag) ? seed.tag : 'Content - Semantics';
-    const key = slug(seed.statement) || seed.id;
-    bank.push({ seedId: seed.id, claimKey: key, statement: toAffirmativeStatement(seed.statement), tag, family: familyOfTag(tag), notes: 'expert seed' });
+    const statement = toAffirmativeStatement(seed.statement);
+    const tag = correctTag(statement, seed.tag && isRubricTag(seed.tag) ? seed.tag : undefined);
+    const key = uniqueClaimKey(seed.statement || seed.id, usedKeys);
+    bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: 'expert seed' });
     usedKeys.add(key);
   }
 
@@ -472,9 +487,10 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
         totalTokens += result.usage.totalTokens;
         let kept = 0;
         for (const row of result.value.rows) {
-          const tag = isRubricTag(row.tag) ? row.tag : (seed.tag && isRubricTag(seed.tag) ? seed.tag : 'Content - Semantics');
-          const key = slug(row.claim_key) || slug(row.statement);
-          bank.push({ seedId: seed.id, claimKey: key, statement: toAffirmativeStatement(row.statement), tag, family: familyOfTag(tag), notes: row.notes.trim() });
+          const statement = toAffirmativeStatement(row.statement);
+          const tag = correctTag(statement, isRubricTag(row.tag) ? row.tag : seed.tag);
+          const key = uniqueClaimKey(row.claim_key || row.statement, usedKeys);
+          bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: row.notes.trim() });
           usedKeys.add(key);
           kept += 1;
         }

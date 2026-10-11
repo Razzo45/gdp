@@ -10,6 +10,7 @@ import { supabaseAuthClient } from '@/lib/supabase/server';
 import { VERIFIED_EMAIL_HEADER, VERIFIED_USER_HEADER } from './headerNames';
 import { verifyAccessToken } from './jwt';
 import { LOCAL_SESSION_COOKIE, verifyLocalSession } from './local';
+import { supabaseAuthConfig } from './supabasePublic';
 import type { Actor } from './permissions';
 
 /**
@@ -78,7 +79,7 @@ export const currentActor = cache(async (): Promise<Actor | null> => {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) return null;
-      const claims = await verifyAccessToken(token, { supabaseUrl: configuration.NEXT_PUBLIC_SUPABASE_URL!, jwtSecret: configuration.SUPABASE_JWT_SECRET });
+      const claims = await verifyAccessToken(token, { supabaseUrl: supabaseAuthConfig().url, jwtSecret: configuration.SUPABASE_JWT_SECRET });
       if (!claims) return null;
       userId = claims.sub;
       email = claims.email;

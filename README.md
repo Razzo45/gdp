@@ -70,6 +70,38 @@ a signed webhook; `localhost:4010/state` shows what was saved and moved by a
 push. Without LibreOffice on PATH, Office files are graded from the OOXML
 manifest + text digest.
 
+## GCP
+
+The repo is ready to deploy on Cloud Run + Cloud SQL + GCS. It does **not**
+create a GCP project (billing is required for that). See `deploy/GCP.md`.
+
+```
+AUTH_MODE=supabase               # live Supabase Auth — same user UUIDs as app.profiles
+DATABASE_URL=…                   # Cloud SQL (unix socket or Auth Proxy)
+STORAGE_DRIVER=gcs
+STORAGE_BUCKET=your-private-bucket
+RUN_WORKER=0                     # web service; worker is a second Cloud Run
+```
+
+Data move from live Supabase (`public.*`) into the new `app.*` database:
+
+```bash
+npm run db:snapshot-supabase     # read-only, writes tmp/supabase-snapshot/
+npm run db:import-snapshot       # dry-run against DATABASE_URL
+npm run db:import-snapshot -- --clone   # write users/tasks/rubrics; drop leftover fixture rows
+npm run db:import-eval -- --apply       # Golden, human AI eval, stability, AI files
+```
+
+`--apply` refuses a Supabase `DATABASE_URL`. Then:
+
+```bash
+npm run db:import-eval -- --apply       # Golden, human overrides, human AI eval, stability, reviews, AI files
+npm run db:repair-pipeline -- --apply   # retag stages from the Catalog graph (optional --no-observe)
+```
+
+Eval rows are remapped onto the new statement ids. Four live AI storage objects
+were already gone upstream and cannot be copied.
+
 ## Replit
 
 `.replit` and `replit.nix` are included. Set the variables from `.env.example`
@@ -90,6 +122,10 @@ Health: `GET /api/health` (checks the database).
 | `npm run db:migrate` | apply pending `drizzle/*.sql` |
 | `npm run db:grant-admin -- email` | create/invite a user and grant `admin` |
 | `npm run db:seed` | local-mode users, watched fixture project, fixture tasks |
+| `npm run db:snapshot-supabase` | read-only copy of live `public.*` into `tmp/supabase-snapshot/` |
+| `npm run db:import-snapshot` | dry-run / `--apply` that snapshot into `app.*` on `DATABASE_URL` |
+| `npm run db:import-eval` | Golden, human AI eval, stability, reviews, AI files |
+| `npm run db:repair-pipeline` | retag stages from the Catalog graph |
 | `npm run mock:catalog` | fake Catalog API on :4010 (fixtures, save/transition log, webhook emitter) |
 | `npm run worker` | standalone job worker (when `RUN_WORKER=0` on web) |
 

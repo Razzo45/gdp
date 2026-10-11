@@ -220,5 +220,5 @@ export async function submissionPulse(actor: Actor, id: string): Promise<StatusP
 
 /** Presigned URLs stay on the server; the browser gets names only. */
 function stripUrls(file: CatalogFile): CatalogFile {
-  return { ...file, downloadUrl: null, previewUrl: null };
+  return { ...file, downloadUrl: null, previewUrl: null, thumbnailUrl: null };
 }

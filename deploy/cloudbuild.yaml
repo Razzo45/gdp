@@ -1,0 +1,20 @@
+# Template only — do not run until a billed GCP project exists.
+# gcloud builds submit --config deploy/cloudbuild.yaml --project YOUR_PROJECT
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: gdp
+  _AR_REPO: gdp
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:latest'
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA'
+      - -t
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:latest'
+      - .
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -12,11 +12,17 @@ export interface LocalUser {
   roles: string[];
 }
 
-export function LoginForm({ localUsers, localPassword }: { localUsers: LocalUser[] | null; localPassword: string | null }) {
+export function LoginForm({
+  localUsers,
+  localPassword,
+}: {
+  localUsers: LocalUser[] | null;
+  localPassword: string | null;
+}) {
   const params = useSearchParams();
   const [mode, setMode] = useState<Mode>(params.get('reset') === '1' ? 'reset' : 'signin');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState(localPassword ?? '');
+  const [password, setPassword] = useState(localUsers ? (localPassword ?? '') : '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(params.get('error') === 'link' ? 'That link is invalid or has expired.' : null);
   const [ok, setOk] = useState(false);
@@ -78,30 +84,40 @@ export function LoginForm({ localUsers, localPassword }: { localUsers: LocalUser
       {mode !== 'reset' && (
         <label className="flex flex-col gap-1 text-sm">
           Email
-          <input className="input" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input className="input" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
       )}
       {mode !== 'forgot' && (
         <label className="flex flex-col gap-1 text-sm">
           {mode === 'reset' ? 'New password (10+ characters)' : 'Password'}
-          <input className="input" type="password" autoComplete={mode === 'reset' ? 'new-password' : 'current-password'} required minLength={mode === 'reset' ? 10 : 1} value={password} onChange={(e) => setPassword(e.target.value)} />
+          <input
+            className="input"
+            type="password"
+            autoComplete={mode === 'reset' ? 'new-password' : 'current-password'}
+            required
+            minLength={mode === 'reset' ? 10 : 1}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
         </label>
       )}
       {message && <p className={`text-sm ${ok ? 'text-ok' : 'text-bad'}`}>{message}</p>}
       <button className="btn btn-primary justify-center" disabled={busy} type="submit">
         {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : mode === 'forgot' ? 'Send reset link' : 'Set password'}
       </button>
-      <div className="flex justify-between text-xs text-muted">
-        {mode === 'signin' ? (
-          <button type="button" className="underline" onClick={() => setMode('forgot')}>
-            Forgot password?
-          </button>
-        ) : (
-          <button type="button" className="underline" onClick={() => setMode('signin')}>
-            Back to sign in
-          </button>
-        )}
-      </div>
+      {!localUsers && (
+        <div className="flex justify-between text-xs text-muted">
+          {mode === 'signin' ? (
+            <button type="button" className="underline" onClick={() => setMode('forgot')}>
+              Forgot password?
+            </button>
+          ) : (
+            <button type="button" className="underline" onClick={() => setMode('signin')}>
+              Back to sign in
+            </button>
+          )}
+        </div>
+      )}
     </form>
   );
 }

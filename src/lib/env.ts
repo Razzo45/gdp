@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { supabaseAuthConfig } from '@/lib/auth/supabasePublic';
 
 /**
  * Server configuration, validated once. Public (browser) values are the two
@@ -64,8 +65,8 @@ const Schema = z
     BOOTSTRAP_ADMIN_EMAILS: z.string().default(''),
     PUBLIC_APP_URL: z.string().url().optional(),
     STORAGE_BUCKET: z.string().default('gdp-private'),
-    /** `supabase` (default when a service key exists) or `local` (filesystem; dev only). */
-    STORAGE_DRIVER: z.enum(['supabase', 'local']).optional(),
+    /** `gcs` on Cloud Run, `supabase` if a service key exists, else `local`. */
+    STORAGE_DRIVER: z.enum(['gcs', 'supabase', 'local']).optional(),
     STORAGE_LOCAL_DIR: z.string().default('tmp/storage'),
     /** Set to "0" on web instances when a dedicated worker process runs the queue. */
     RUN_WORKER: z.string().default('1'),
@@ -73,11 +74,21 @@ const Schema = z
   })
   .superRefine((value, ctx) => {
     if (value.AUTH_MODE === 'supabase') {
-      if (!value.NEXT_PUBLIC_SUPABASE_URL) ctx.addIssue({ code: 'custom', path: ['NEXT_PUBLIC_SUPABASE_URL'], message: 'required when AUTH_MODE=supabase' });
-      if (!value.NEXT_PUBLIC_SUPABASE_ANON_KEY) ctx.addIssue({ code: 'custom', path: ['NEXT_PUBLIC_SUPABASE_ANON_KEY'], message: 'required when AUTH_MODE=supabase' });
+      const url = value.NEXT_PUBLIC_SUPABASE_URL ?? process.env['SUPABASE_READ_URL']?.trim();
+      const key =
+        value.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+        process.env['NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY']?.trim() ??
+        process.env['SUPABASE_PUBLISHABLE_KEY']?.trim() ??
+        value.SUPABASE_SERVICE_ROLE_KEY ??
+        process.env['SUPABASE_READ_SERVICE_ROLE_KEY']?.trim();
+      if (!url) ctx.addIssue({ code: 'custom', path: ['NEXT_PUBLIC_SUPABASE_URL'], message: 'required when AUTH_MODE=supabase (or set SUPABASE_READ_URL)' });
+      if (!key) ctx.addIssue({ code: 'custom', path: ['NEXT_PUBLIC_SUPABASE_ANON_KEY'], message: 'required when AUTH_MODE=supabase (publishable/anon key, or a service-role key on the server)' });
     }
     if (value.STORAGE_DRIVER === 'supabase' && !value.SUPABASE_SERVICE_ROLE_KEY) {
       ctx.addIssue({ code: 'custom', path: ['SUPABASE_SERVICE_ROLE_KEY'], message: 'required when STORAGE_DRIVER=supabase' });
+    }
+    if (value.STORAGE_DRIVER === 'gcs' && !value.STORAGE_BUCKET) {
+      ctx.addIssue({ code: 'custom', path: ['STORAGE_BUCKET'], message: 'required when STORAGE_DRIVER=gcs' });
     }
   });
 
@@ -101,16 +112,14 @@ export function env(): Env {
 export const authMode = () => env().AUTH_MODE;
 export const geminiMockEnabled = () => env().GEMINI_MOCK === '1';
 
-export function storageDriver(): 'supabase' | 'local' {
+export function storageDriver(): 'gcs' | 'supabase' | 'local' {
   const e = env();
   return e.STORAGE_DRIVER ?? (e.SUPABASE_SERVICE_ROLE_KEY ? 'supabase' : 'local');
 }
 
 export function publicEnv(): { url: string; anonKey: string } {
-  const url = process.env['NEXT_PUBLIC_SUPABASE_URL'];
-  const anonKey = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'];
-  if (!url || !anonKey) throw new Error('NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not configured.');
-  return { url, anonKey };
+  const { url, key } = supabaseAuthConfig();
+  return { url, anonKey: key };
 }
 
 export function bootstrapAdminEmails(): Set<string> {
