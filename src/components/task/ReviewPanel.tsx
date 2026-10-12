@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, calibrationInBand } from '@/domain/gates';
+import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
 import { api } from '../client';
@@ -12,15 +13,15 @@ import { Pill } from '../StageBadge';
 import type { PanelProps } from './TaskWorkspace';
 
 /**
- * Human AI evaluation. The reviewer answers every statement against the AI
- * output by hand. Drafts autosave; submission locks the score the gates use.
+ * Human AI evaluation. Write when there is no eval yet. After a return from
+ * the rubric team, rescore the existing answers, then approve or send back.
  */
 export function ReviewPanel({ view, refresh, notify }: PanelProps) {
   const statements = seatsInDisplayOrder(view.rubric?.statements ?? []);
   const seats = seatIndexById(statements);
   const weights = useMemo(() => normalisedWeights(statements.length), [statements.length]);
   const latest = view.review.latest;
-  const canEdit = view.can.review && !(latest?.submitted ?? false);
+  const canEdit = reviewGradesEditable({ holdsReviewSeat: view.can.review, submitted: latest?.submitted });
   const [answers, setAnswers] = useState<Record<string, boolean>>(latest?.answers ?? {});
   const [evidence, setEvidence] = useState<Record<string, string>>(latest?.evidence ?? {});
   const [dirty, setDirty] = useState(false);
@@ -77,7 +78,10 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
   }
 
   const submitted = view.review.submittedPercent;
+  const complete = score.answered === statements.length && score.thin === 0;
+  const approvalPercent = reviewApprovalScore({ latestCompletePercent: complete ? score.percent : null, submittedPercent: submitted });
   const inBand = calibrationInBand(score.percent);
+  const approvalInBand = calibrationInBand(approvalPercent);
 
   return (
     <section className="card space-y-3">
@@ -111,7 +115,7 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
               id={`rubric-statement-${s.id}`}
               data-seat-row
               tabIndex={canEdit ? 0 : -1}
-              className="grid scroll-mt-24 gap-3 rounded-2xl py-4 outline-none focus-visible:ring-2 focus-visible:ring-accent md:grid-cols-[2.5rem_minmax(0,1fr)_14rem]"
+              className="grid scroll-mt-24 gap-3 rounded-2xl border border-line p-4 outline-none focus-visible:ring-2 focus-visible:ring-accent md:grid-cols-[2.25rem_minmax(0,1fr)]"
               onKeyDown={(event) => {
                 if (!canEdit) return;
                 const next = gradeFromKey(event);
@@ -125,40 +129,42 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
               <span className="font-mono text-xs tabular-nums text-muted" title={seatLabel(seats.get(s.id))}>
                 {String(seats.get(s.id) ?? '').padStart(2, '0')}
               </span>
-              <div>
-                <p className="text-[15px] leading-relaxed">{s.statement}</p>
-                <span className="text-xs text-muted">{s.tag}</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                <Choice
-                  value={answers[s.id] ?? null}
-                  disabled={!canEdit}
-                  clearable={false}
-                  onChange={(value) => {
-                    if (value === null) return;
-                    setAnswers((a) => ({ ...a, [s.id]: value }));
-                    schedule();
-                  }}
-                />
-                <span className="text-xs tabular-nums text-muted" title="Percentage share of the rubric score">{formatWeight(weights[seats.get(s.id)! - 1] ?? 0)}</span>
-                </div>
-                {canEdit ? (
-                  <label className="block">
-                    <span className="text-[11px] text-muted">Evidence</span>
-                    <textarea
-                      className="input mt-0.5 min-h-16 text-xs"
-                      placeholder="Add the observation supporting this grade"
-                      value={evidence[s.id] ?? ''}
-                      onChange={(e) => { setEvidence((ev) => ({ ...ev, [s.id]: e.target.value })); schedule(); }}
+              <div className="min-w-0 space-y-2">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                  <div className="min-w-0 space-y-2">
+                    <p className="text-[15px] leading-relaxed">{s.statement}</p>
+                    <span className="text-xs text-muted">{s.tag}</span>
+                    {canEdit ? (
+                      <label className="block">
+                        <span className="text-xs font-medium text-muted">Evidence</span>
+                        <textarea
+                          className="input mt-1 min-h-24"
+                          placeholder="Add the observation supporting this grade"
+                          value={evidence[s.id] ?? ''}
+                          onChange={(e) => { setEvidence((ev) => ({ ...ev, [s.id]: e.target.value })); schedule(); }}
+                        />
+                      </label>
+                    ) : (
+                      evidence[s.id] ? <p className="text-sm leading-relaxed text-muted">{evidence[s.id]}</p> : null
+                    )}
+                    {canEdit && answers[s.id] !== undefined && (evidence[s.id] ?? '').trim().length < EVIDENCE_MIN_CHARS ? (
+                      <p className="text-[11px] text-warn">Add an observation of at least {EVIDENCE_MIN_CHARS} characters.</p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col items-center justify-center gap-1.5">
+                    <Choice
+                      value={answers[s.id] ?? null}
+                      disabled={!canEdit}
+                      clearable={false}
+                      onChange={(value) => {
+                        if (value === null) return;
+                        setAnswers((a) => ({ ...a, [s.id]: value }));
+                        schedule();
+                      }}
                     />
-                  </label>
-                ) : (
-                  evidence[s.id] && <p className="text-xs text-muted">{evidence[s.id]}</p>
-                )}
-                {canEdit && answers[s.id] !== undefined && (evidence[s.id] ?? '').trim().length < EVIDENCE_MIN_CHARS && (
-                  <p className="text-[11px] text-warn">Add an observation of at least {EVIDENCE_MIN_CHARS} characters.</p>
-                )}
+                    <span className="text-xs tabular-nums text-muted" title="Percentage share of the rubric score">{formatWeight(weights[seats.get(s.id)! - 1] ?? 0)}</span>
+                  </div>
+                </div>
               </div>
             </li>
           ))}
@@ -166,48 +172,45 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
       )}
 
       {view.can.review && (
-        <div className="space-y-2 border-t border-line pt-3">
-          {!latest?.submitted ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <button className="btn" disabled={busy !== null} type="button" onClick={() => save(false)}>
-                {busy === 'save' ? 'Saving…' : 'Save draft'}
+        <div className="space-y-3 border-t border-line pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn" disabled={busy !== null} type="button" onClick={() => save(false)}>
+              {busy === 'save' ? 'Saving…' : 'Save draft'}
+            </button>
+            <button className="btn btn-primary" disabled={busy !== null || score.answered !== statements.length || score.thin > 0} type="button" onClick={() => save(true)}>
+              {busy === 'submit' ? 'Submitting…' : `${latest?.submitted ? 'Resubmit' : 'Submit'} evaluation${score.percent !== null ? ` (${pct(score.percent)})` : ''}`}
+            </button>
+            {score.answered !== statements.length ? (
+              <span className="text-sm text-muted">{statements.length - score.answered} left to answer</span>
+            ) : null}
+            {score.answered === statements.length && score.thin > 0 ? (
+              <span className="text-sm text-muted">{score.thin} need an observation of at least {EVIDENCE_MIN_CHARS} characters.</span>
+            ) : null}
+            {score.answered === statements.length && !inBand ? (
+              <span className="text-sm text-warn">
+                Outside the {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}% band — you can still submit, then request changes.
+              </span>
+            ) : null}
+          </div>
+          <textarea className="input min-h-20" placeholder="Explain what the assignee should revise" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
+          <div className="flex flex-col items-start gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-primary" disabled={busy !== null || !complete || !approvalInBand} type="button" onClick={() => decide('approved')}>
+                Approve and return
               </button>
-              <button className="btn btn-primary" disabled={busy !== null || score.answered !== statements.length || score.thin > 0} type="button" onClick={() => save(true)}>
-                {busy === 'submit' ? 'Submitting…' : `Submit evaluation${score.percent !== null ? ` (${pct(score.percent)})` : ''}`}
+              <button className="btn" disabled={busy !== null || feedback.trim().length < 1} type="button" onClick={() => decide('changes_requested')}>
+                Request revisions
               </button>
-              {score.answered !== statements.length && (
-                <span className="text-sm text-muted">{statements.length - score.answered} left to answer</span>
-              )}
-              {score.answered === statements.length && score.thin > 0 && (
-                <span className="text-sm text-muted">{score.thin} need an observation of at least {EVIDENCE_MIN_CHARS} characters.</span>
-              )}
-              {score.answered === statements.length && !inBand && (
-                <span className="text-sm text-warn">
-                  Outside the {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}% band — you can still submit, then request changes.
-                </span>
-              )}
             </div>
-          ) : (
-            <>
-              <textarea className="input min-h-20" placeholder="Explain what the assignee should revise" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
-              <div className="flex flex-col items-start gap-2">
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-primary" disabled={busy !== null || !calibrationInBand(submitted)} type="button" onClick={() => decide('approved')}>
-                    Approve and return
-                  </button>
-                  <button className="btn" disabled={busy !== null || feedback.trim().length < 1} type="button" onClick={() => decide('changes_requested')}>
-                    Request revisions
-                  </button>
-                </div>
-                {!calibrationInBand(submitted) && (
-                  <p className="text-sm text-muted">Approval needs an AI score between {CALIBRATION_MIN_PERCENT}% and {CALIBRATION_MAX_PERCENT}%. It is {submitted ?? '—'}% now.</p>
-                )}
-                {feedback.trim().length < 1 && (
-                  <p className="text-sm text-muted">Add a note if you are sending this back.</p>
-                )}
-              </div>
-            </>
-          )}
+            {!complete ? (
+              <p className="text-sm text-muted">Finish every statement before approving. You can still send this back with notes.</p>
+            ) : !approvalInBand ? (
+              <p className="text-sm text-muted">Approval needs an AI score between {CALIBRATION_MIN_PERCENT}% and {CALIBRATION_MAX_PERCENT}%. It is {approvalPercent ?? '—'}% now.</p>
+            ) : null}
+            {feedback.trim().length < 1 ? (
+              <p className="text-sm text-muted">Add a note if you are sending this back.</p>
+            ) : null}
+          </div>
         </div>
       )}
     </section>

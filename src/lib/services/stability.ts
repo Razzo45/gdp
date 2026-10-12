@@ -10,6 +10,7 @@ import { conflict, forbidden, invalid } from './errors';
 import { submittedCalibration } from './review';
 import { currentRubric, statementsOf } from './rubric';
 import { scheduleReap } from '@/lib/ai/reaper';
+import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -65,6 +66,7 @@ export async function stabilityView(
 }
 
 export async function acceptStability(actor: Actor, submissionId: string, groupId: string): Promise<void> {
+  const previous = await getSubmission(db(), submissionId);
   await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
@@ -88,6 +90,7 @@ export async function acceptStability(actor: Actor, submissionId: string, groupI
     await tx.update(submissions).set({ stage: 'handoff' }).where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'stability_accepted', { groupId, scores: view.gate.scores, spread: view.gate.spread });
   });
+  scheduleWorkStatusSheet(previous, await getSubmission(db(), submissionId));
   scheduleReap();
 }
 
@@ -128,6 +131,7 @@ export async function noteFlip(actor: Actor, submissionId: string, input: { grou
  */
 export async function reopenRubricFromStability(actor: Actor, submissionId: string, reason: string): Promise<void> {
   if (reason.trim().length < 5) throw invalid('Say why the rubric is reopening.');
+  const previous = await getSubmission(db(), submissionId);
   await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
@@ -135,4 +139,5 @@ export async function reopenRubricFromStability(actor: Actor, submissionId: stri
     await tx.update(submissions).set({ stage: 'rubric', reviewStatus: 'changes_requested' }).where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'stability_reopened_rubric', { reason: reason.trim() });
   });
+  scheduleWorkStatusSheet(previous, await getSubmission(db(), submissionId));
 }

@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signLocalSession, verifyLocalSession } from '@/lib/auth/local';
+import { loginRedirectUrl } from '@/lib/auth/urls';
 import { verifyLivePassword } from '@/lib/auth/livePassword';
 import { hashPassword, verifyPassword } from '@/lib/auth/passwords';
 import { hashAuthToken } from '@/lib/auth/tokens';
 import { supabaseAuthConfig } from '@/lib/auth/supabasePublic';
 import { splitStatements } from '@/db/migrate';
+
+describe('logout redirect', () => {
+  it('sends production logouts to the live login page, and keeps localhost on itself', () => {
+    expect(loginRedirectUrl('https://gdp-production-83d5.up.railway.app/auth/signout')).toBe('https://gdp.wirestock.io/login');
+    expect(loginRedirectUrl('https://gdp.wirestock.io/auth/signout')).toBe('https://gdp.wirestock.io/login');
+    expect(loginRedirectUrl('http://localhost:3000/auth/signout')).toBe('http://localhost:3000/login');
+    expect(loginRedirectUrl('http://127.0.0.1:3000/auth/signout')).toBe('http://127.0.0.1:3000/login');
+  });
+});
 
 describe('local session', () => {
   const secret = 'a-test-secret-of-sufficient-length';

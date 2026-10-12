@@ -1,13 +1,12 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { BoardFreshness } from '@/components/BoardFreshness';
-import { ClaimTask } from '@/components/ClaimTask';
 import { CatalogReturnQueue } from '@/components/CatalogReturnQueue';
 import { ImportTask } from '@/components/ImportTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { currentActor } from '@/lib/auth/identity';
-import { claimableSeat, isController } from '@/lib/auth/permissions';
+import { isController } from '@/lib/auth/permissions';
 import { listPendingCatalogReturns } from '@/lib/services/catalogReturn';
 import { listSubmissions } from '@/lib/services/submissions';
 import { TaskLabel } from '@/components/TaskLabel';
@@ -30,7 +29,8 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
     listSubmissions(actor, { mine, q }),
     pm ? listPendingCatalogReturns(actor) : Promise.resolve([]),
   ]);
-  const listed = workState ? listedQuery.filter((r) => r.workState === workState) : listedQuery;
+  const scoped = pm ? listedQuery : listedQuery.filter((r) => !r.blinded);
+  const listed = workState ? scoped.filter((r) => r.workState === workState) : scoped;
   const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
 
@@ -41,17 +41,23 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Submissions"
         actions={
-          <>
-            <Link href="/submissions" className={`chip ${!workState && !mine && !q ? 'chip-on' : ''}`}>
-              All
-            </Link>
-            <Link href="/submissions?mine=1" className={`chip ${mine ? 'chip-on' : ''}`}>
-              Mine
-            </Link>
-          </>
+          pm ? (
+            <>
+              <Link href="/submissions" className={`chip ${!workState && !mine && !q ? 'chip-on' : ''}`}>
+                All
+              </Link>
+              <Link href="/submissions?mine=1" className={`chip ${mine ? 'chip-on' : ''}`}>
+                Mine
+              </Link>
+            </>
+          ) : undefined
         }
       >
-        {workState ? WORK_STATE_HINT[workState] : pm ? 'Tasks from the Data Catalog this team is grading.' : 'Your claimed work, plus a blind queue of tasks you can take.'}
+        {workState
+          ? WORK_STATE_HINT[workState]
+          : pm
+            ? 'This project’s board. Claim and personal status live on the dashboard when more projects land.'
+            : 'This project’s tasks you already hold. Claim from the dashboard.'}
       </PageHeader>
 
       {pm && <WorkStateChips counts={counts} active={workState} />}
@@ -96,7 +102,6 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               </tr>
             )}
             {listed.map((s) => {
-              const seat = s.blinded ? claimableSeat(actor, s) : null;
               const assignee =
                 s.workState === 'in_review'
                   ? (s.reviewerName ?? 'Review Team')
@@ -104,25 +109,18 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               return (
               <tr key={s.id} className="relative hover:bg-wash">
                 <td className="px-4 py-3.5 align-middle">
-                  {s.blinded ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold">{s.stage === 'review' ? 'Unclaimed review task' : 'Unclaimed rubric task'}</span>
-                      {seat && <ClaimTask submissionId={s.id} seat={seat} />}
-                    </div>
-                  ) : (
-                    <Link href={`/submissions/${s.id}`} className="after:absolute after:inset-0 hover:underline">
-                      <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} />
-                    </Link>
-                  )}
+                  <Link href={`/submissions/${s.id}`} className="after:absolute after:inset-0 hover:underline">
+                    <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} />
+                  </Link>
                 </td>
                 <td className="px-4 py-3.5 align-middle">
                   <WorkStatusPill state={s.workState} size="board" />
                 </td>
                 <td className="px-4 py-3.5 align-middle">
-                  {s.blinded || !assignee ? <span className="text-quiet">—</span> : <span className="text-sm font-semibold leading-[22px]">{assignee}</span>}
+                  {assignee ? <span className="text-sm font-semibold leading-[22px]">{assignee}</span> : <span className="text-quiet">—</span>}
                 </td>
                 <td className="px-4 py-3.5 align-middle text-xs leading-[18px] text-muted">
-                  {s.blinded ? '—' : <TimeAgo iso={s.lastSeenAt} />}
+                  <TimeAgo iso={s.lastSeenAt} />
                 </td>
               </tr>
               );

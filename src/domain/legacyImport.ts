@@ -166,12 +166,128 @@ export function factoryStatementsFromLegacy(rows: unknown) {
   }));
 }
 
-export function latestLegacyRun<T extends { created_at?: unknown; native_generation_superseded?: unknown }>(runs: T[]): T | null {
+export function latestLegacyRun<T extends { created_at?: unknown; id?: unknown; native_generation_superseded?: unknown }>(runs: T[]): T | null {
   return (
     runs
       .filter((run) => run.native_generation_superseded !== true)
-      .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')))[0] ?? null
+      .sort((a, b) => {
+        const byTime = String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+        return byTime !== 0 ? byTime : String(b.id ?? '').localeCompare(String(a.id ?? ''));
+      })[0] ?? null
   );
+}
+
+const STABILITY_SOURCES = new Set(['autorate_stability_1', 'autorate_stability_2', 'autorate_stability_3']);
+
+export interface LegacyStabilityImportGroup {
+  group_id: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
+  parent_group_id: string | null;
+  evaluation: { scores: number[]; spread: number };
+  runs: {
+    ordinal: number;
+    answers: Record<string, unknown>;
+    evidence: Record<string, unknown>;
+    grades: Record<string, unknown>;
+    scorePercent: number | null;
+    model: string | null;
+  }[];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function stabilityAcceptance(questions: unknown): { groupId: string; acceptedAt: string | null; acceptedBy: string | null } | null {
+  const raw = asRecord(questions)['__observability_stability_acceptance'];
+  let marker: Record<string, unknown> = {};
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      marker = asRecord(JSON.parse(raw));
+    } catch {
+      return null;
+    }
+  } else {
+    marker = asRecord(raw);
+  }
+  const groupId = typeof marker.groupId === 'string' ? marker.groupId : '';
+  if (!groupId) return null;
+  return {
+    groupId,
+    acceptedAt: typeof marker.acceptedAt === 'string' ? marker.acceptedAt : null,
+    acceptedBy: typeof marker.acceptedBy === 'string' ? marker.acceptedBy : null,
+  };
+}
+
+function completeStabilityGroups(autorateRuns: unknown): Map<string, LegacyStabilityImportGroup> {
+  const buckets = new Map<string, Record<string, unknown>[]>();
+  const order: string[] = [];
+  for (const raw of Array.isArray(autorateRuns) ? autorateRuns : []) {
+    const pass = asRecord(raw);
+    const source = typeof pass.source === 'string' ? pass.source : '';
+    const groupId = typeof pass.groupId === 'string' ? pass.groupId : '';
+    if (!groupId || !STABILITY_SOURCES.has(source)) continue;
+    if (!buckets.has(groupId)) {
+      buckets.set(groupId, []);
+      order.push(groupId);
+    }
+    buckets.get(groupId)!.push(pass);
+  }
+  const out = new Map<string, LegacyStabilityImportGroup>();
+  for (const groupId of order) {
+    const passes = buckets.get(groupId) ?? [];
+    const sources = new Set(passes.map((pass) => pass.source));
+    if (STABILITY_SOURCES.size !== sources.size || ![...STABILITY_SOURCES].every((source) => sources.has(source))) continue;
+    const graded = passes.every((pass) => {
+      const grades = asRecord(pass.grades);
+      const errors = asRecord(pass.errors);
+      const seats = Object.keys(grades);
+      return seats.length > 0 && seats.every((seat) => !String(errors[seat] ?? '').trim());
+    });
+    if (!graded) continue;
+    const runs = [...passes]
+      .sort((a, b) => Number(a.ordinal ?? 0) - Number(b.ordinal ?? 0))
+      .map((pass) => ({
+        ordinal: Number(pass.ordinal ?? 0) || Number(String(pass.source).slice(-1)) || 1,
+        answers: asRecord(pass.answers),
+        evidence: asRecord(pass.evidence),
+        grades: asRecord(pass.grades),
+        scorePercent: typeof pass.scorePercent === 'number' ? pass.scorePercent : null,
+        model: typeof pass.model === 'string' ? pass.model : null,
+      }));
+    const scores = runs.map((pass) => pass.scorePercent).filter((score): score is number => typeof score === 'number');
+    const parentGroupId = passes
+      .map((pass) => asRecord(pass.evidenceReview).parentGroupId)
+      .find((id): id is string => typeof id === 'string' && id.length > 0) ?? null;
+    out.set(groupId, {
+      group_id: groupId,
+      accepted_at: null,
+      accepted_by: null,
+      parent_group_id: parentGroupId,
+      evaluation: { scores, spread: scores.length ? Math.max(...scores) - Math.min(...scores) : 0 },
+      runs,
+    });
+  }
+  return out;
+}
+
+/** Official 3-pass Stability lives in rubric_answers.autorate_runs, not local_stability_*. */
+export function stabilityGroupsFromAutorate(autorateRuns: unknown, questions: unknown): LegacyStabilityImportGroup[] {
+  const groups = completeStabilityGroups(autorateRuns);
+  if (groups.size === 0) return [];
+  const marker = stabilityAcceptance(questions);
+  const lastId = [...groups.keys()].at(-1);
+  const currentId = (marker && groups.has(marker.groupId) ? marker.groupId : lastId) ?? '';
+  const current = groups.get(currentId);
+  if (!current) return [];
+  if (marker && current.group_id === marker.groupId) {
+    current.accepted_at = marker.acceptedAt;
+    current.accepted_by = marker.acceptedBy;
+  }
+  const parentId = current.parent_group_id;
+  const parent = parentId && parentId !== current.group_id ? groups.get(parentId) : null;
+  return parent ? [current, parent] : [current];
 }
 
 export function seedsFromLegacy(run: { seeds?: unknown; rows?: unknown }): string[] {
@@ -240,6 +356,24 @@ export function remapVerdicts(legacy: Record<string, unknown> | null | undefined
     if (id && verdict !== null) out[id] = verdict;
   }
   return out;
+}
+
+export interface LegacyStabilityHostLookup {
+  internalIds: Set<string>;
+  catalogToInternal: Map<string, string>;
+  runIdToInternal: Map<string, string>;
+}
+
+/** Attach a leftover stability group only when it still belongs to a live task. */
+export function legacyStabilityHostId(
+  group: { submission_id?: unknown; rubric_run_id?: unknown },
+  lookup: LegacyStabilityHostLookup,
+): string | null {
+  const submissionId = typeof group.submission_id === 'string' ? group.submission_id : '';
+  if (submissionId && lookup.internalIds.has(submissionId)) return submissionId;
+  if (submissionId && lookup.catalogToInternal.has(submissionId)) return lookup.catalogToInternal.get(submissionId) ?? null;
+  const runId = typeof group.rubric_run_id === 'string' ? group.rubric_run_id : '';
+  return (runId && lookup.runIdToInternal.get(runId)) || null;
 }
 
 export function remapEvidence(legacy: Record<string, unknown> | null | undefined, seats: Map<string, string>): Record<string, string> {

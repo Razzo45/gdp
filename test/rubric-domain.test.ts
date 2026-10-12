@@ -7,7 +7,7 @@ import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStat
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
 import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
-import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts } from '@/domain/legacyImport';
+import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
 import { normalisedWeights, scoreSeats } from '@/domain/weights';
 
@@ -295,6 +295,59 @@ describe('legacy snapshot import', () => {
     expect(asLegacyVerdict('Yes')).toBe(true);
     expect(asLegacyVerdict({ answer: 'No' })).toBe(false);
     expect(remapVerdicts({ b0_4: true, missing: false }, seats)).toEqual({ 'new-1': true });
+  });
+
+  it('hosts a stability group by internal id, catalog id, or rubric run, and otherwise leaves it unattached', () => {
+    const lookup = {
+      internalIds: new Set(['internal-1']),
+      catalogToInternal: new Map([['catalog-1', 'internal-1']]),
+      runIdToInternal: new Map([['run-9', 'internal-2']]),
+    };
+    expect(legacyStabilityHostId({ submission_id: 'internal-1' }, lookup)).toBe('internal-1');
+    expect(legacyStabilityHostId({ submission_id: 'catalog-1' }, lookup)).toBe('internal-1');
+    expect(legacyStabilityHostId({ submission_id: 'gone', rubric_run_id: 'run-9' }, lookup)).toBe('internal-2');
+    expect(legacyStabilityHostId({ submission_id: 'gone', rubric_run_id: 'missing-run' }, lookup)).toBe(null);
+  });
+
+  it('reads Stability from autorate_runs: accepted group if marked, else last complete group, plus reviewed parent', () => {
+    const pass = (groupId: string, source: string, score: number, parent?: string) => ({
+      groupId,
+      ordinal: Number(source.slice(-1)),
+      source,
+      at: '2026-10-09T15:06:29Z',
+      model: parent ? 'Replit Agent — original-source evidence review' : 'gemini',
+      scorePercent: score,
+      answers: { b0_1: true },
+      evidence: { b0_1: 'note' },
+      grades: { b0_1: { answer: true, evidence: 'note', statement: 'The file is delivered.' } },
+      errors: {},
+      evidenceReview: parent ? { kind: 'ai_original_source_review', parentGroupId: parent } : undefined,
+    });
+    const parent = 'cf61f48f-fdf2-41a3-9778-3aa8a12281af';
+    const reviewed = '67b11091-5af7-486c-b6c6-427a0623d556';
+    const older = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const newerUnmarked = '63780a80-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const accepted = 'a954edb2-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const trio = (id: string, scores: [number, number, number], parentId?: string) =>
+      [1, 2, 3].map((n, i) => pass(id, `autorate_stability_${n}`, scores[i]!, parentId));
+
+    const noMarker = stabilityGroupsFromAutorate(
+      [...trio(parent, [44, 50, 48]), ...trio(reviewed, [46, 46, 46], parent)],
+      {},
+    );
+    expect(noMarker.map((row) => row.group_id)).toEqual([reviewed, parent]);
+    expect(noMarker[0]?.evaluation.scores).toEqual([46, 46, 46]);
+    expect(noMarker[0]?.parent_group_id).toBe(parent);
+    expect(noMarker[0]?.accepted_at).toBe(null);
+
+    const marked = stabilityGroupsFromAutorate(
+      [...trio(accepted, [54, 52, 54]), ...trio(newerUnmarked, [50, 50, 54])],
+      { __observability_stability_acceptance: JSON.stringify({ groupId: accepted, acceptedAt: '2026-10-12T10:12:00Z', acceptedBy: 'user-1' }) },
+    );
+    expect(marked.map((row) => row.group_id)).toEqual([accepted]);
+    expect(marked[0]?.accepted_at).toBe('2026-10-12T10:12:00Z');
+
+    expect(stabilityGroupsFromAutorate([...trio(older, [48, 48, 46])], null).map((row) => row.group_id)).toEqual([older]);
   });
 
   it('infers live board lanes from the Catalog workflow graph, not status names', () => {

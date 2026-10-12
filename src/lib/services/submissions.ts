@@ -12,8 +12,9 @@ import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn }
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
-import { readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
+import { projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import type { CatalogSubmission } from '@/lib/catalog/types';
+import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
 
 /**
@@ -44,7 +45,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
   const fp = sourceFingerprint(fetched.submission);
   const now = new Date().toISOString();
 
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const existing = (await tx.select().from(submissions).where(eq(submissions.catalogSubmissionId, catalogSubmissionId)).limit(1))[0];
     if (!existing) {
       const [created] = await tx
@@ -61,7 +62,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
         })
         .returning();
       await recordEvent(tx, created!.id, actorId, 'landed', { statusId: read.statusId, projectId: read.projectId });
-      return noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, created!), actorId, hint?.returnNote);
+      return { previous: null, next: await noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, created!), actorId, hint?.returnNote) };
     }
     const changed = existing.sourceFingerprint !== fp;
     const statusMoved = existing.statusId !== read.statusId;
@@ -78,8 +79,10 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
       .where(eq(submissions.id, existing.id))
       .returning();
     if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
-    return noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote);
+    return { previous: existing, next: await noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote) };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 /** Parked + Catalog on a watched inbound status (K / E) is ready to assign. */
@@ -146,7 +149,8 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
   reviewerName: string | null;
   workState: WorkState;
   catalogStatusName: string | null;
-  /** True when this row is only a claim slot — no title, catalog id, or project. */
+  projectName: string;
+  /** True when this row is only a claim slot — catalog id stays hidden. */
   blinded: boolean;
 }
 
@@ -230,13 +234,15 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
     const blinded = !isController(actor) && !held;
     const workState = workStateOf(r.submission);
+    const watch = watchByProject.get(r.submission.projectId);
     return {
       ...r.submission,
-      ...(blinded ? { title: '', catalogSubmissionId: '', projectId: '' } : {}),
+      ...(blinded ? { catalogSubmissionId: '', projectId: '' } : {}),
       rubricAssigneeName: blinded ? null : (r.rubricAssigneeName ?? null),
       reviewerName: blinded ? null : (r.reviewerName ?? null),
       workState,
       catalogStatusName: blinded ? null : statusName(r.submission),
+      projectName: projectDisplayName(watch),
       blinded,
     };
   });
@@ -276,10 +282,10 @@ export async function claimSeat(actor: Actor, submissionId: string, seat: Seat):
   if (seat === 'review' && !canReview(actor)) throw forbidden('Only reviewers can claim the review seat.');
   const column = seatColumns[seat];
   const now = new Date().toISOString();
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const current = await getSubmission(tx, submissionId);
     if (seat === 'review' && current.stage !== 'review') throw conflict('This task is not in review yet.');
-    if (current[column.key] === actor.id) return current;
+    if (current[column.key] === actor.id) return { previous: current, next: current };
     const [updated] = await tx
       .update(submissions)
       .set({ [column.key]: actor.id, [column.at]: now, lastClaimedAt: now })
@@ -287,19 +293,21 @@ export async function claimSeat(actor: Actor, submissionId: string, seat: Seat):
       .returning();
     if (!updated) throw conflict('Someone else claimed this task a moment ago.');
     await recordEvent(tx, submissionId, actor.id, `${seat}_claimed`, {});
-    return updated;
+    return { previous: current, next: updated };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 /** Clear a seat. Only PMs and admins — holders cannot drop work they claimed. */
 export async function releaseSeat(actor: Actor, submissionId: string, seat: Seat): Promise<Submission> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can change assignment.');
   const column = seatColumns[seat];
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const current = await getSubmission(tx, submissionId);
     if (!canAssignSeatAt(current, seat)) throw conflict(seatStageError(seat));
     const holder = current[column.key];
-    if (holder === null) return current;
+    if (holder === null) return { previous: current, next: current };
     const [updated] = await tx
       .update(submissions)
       .set({ [column.key]: null, lastClaimedAt: new Date().toISOString() })
@@ -307,15 +315,17 @@ export async function releaseSeat(actor: Actor, submissionId: string, seat: Seat
       .returning();
     if (!updated) throw conflict('The seat changed hands while you were releasing it.');
     await recordEvent(tx, submissionId, actor.id, `${seat}_released`, { previousHolder: holder });
-    return updated;
+    return { previous: current, next: updated };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 /** PMs hand a seat to a team member, or to the team pool (`userId` null). */
 export async function assignSeat(actor: Actor, submissionId: string, seat: Seat, userId: string | null): Promise<Submission> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can assign seats.');
   const column = seatColumns[seat];
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const current = await getSubmission(tx, submissionId);
     if (!canAssignSeatAt(current, seat)) throw conflict(seatStageError(seat));
     if (userId) {
@@ -332,8 +342,10 @@ export async function assignSeat(actor: Actor, submissionId: string, seat: Seat,
       .returning();
     if (!updated) throw notFound('The submission');
     await recordEvent(tx, submissionId, actor.id, `${seat}_assigned`, { userId });
-    return updated;
+    return { previous: current, next: updated };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 /* ─────────────────────────────────────── PM overview ── */

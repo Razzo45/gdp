@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calibrationInBand, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate } from '@/domain/gates';
+import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
 const all = (v: boolean) => Object.fromEntries(ids.map((id) => [id, v]));
@@ -21,6 +22,20 @@ describe('goldenGate', () => {
     expect(goldenGate({ answers: { ...all(true), c: null }, errors: {}, statementIds: ids }).ok).toBe(false);
     expect(goldenGate({ answers: all(true), errors: { a: 'timeout' }, statementIds: ids }).ok).toBe(false);
     expect(goldenGate({ answers: {}, errors: {}, statementIds: [] }).ok).toBe(false);
+  });
+});
+
+describe('review grades', () => {
+  it('stay editable after the reviewer submits a score', () => {
+    expect(reviewGradesEditable({ holdsReviewSeat: true, submitted: true })).toBe(true);
+    expect(reviewGradesEditable({ holdsReviewSeat: true, submitted: false })).toBe(true);
+    expect(reviewGradesEditable({ holdsReviewSeat: false, submitted: false })).toBe(false);
+  });
+
+  it('approves the current complete pass, not the previous submitted score', () => {
+    expect(reviewApprovalScore({ latestCompletePercent: 25, submittedPercent: 75 })).toBe(25);
+    expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: 40 })).toBe(40);
+    expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: null })).toBeNull();
   });
 });
 

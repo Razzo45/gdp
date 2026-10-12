@@ -4,7 +4,7 @@ import { BoardFreshness } from '@/components/BoardFreshness';
 import { ClaimTask } from '@/components/ClaimTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
-import { StageBadge } from '@/components/StageBadge';
+import { shortTaskDescriptor } from '@/components/format';
 import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
@@ -28,13 +28,13 @@ export default async function Dashboard() {
     <Page>
     <BoardFreshness />
     <div className="space-y-5">
-    <PageHeader title="Your work">Tasks you hold, and the next one you can claim.</PageHeader>
+    <PageHeader title="Your work">The tasks you hold, and anything you can claim — across projects.</PageHeader>
     <div className="grid gap-5 lg:grid-cols-3">
       <section className="card lg:col-span-2">
         <h2 className="section-title mb-4 text-lg">Your seats ({mine.length})</h2>
         {mine.length === 0 ? (
           <p className="text-sm text-muted">
-            You hold no tasks. Claim the next one from the queue — you will not see the brief until you take it.
+            You hold no tasks. Claim one from the queue — the short description and project are visible so you can pick a field you know.
           </p>
         ) : (
           <SeatList rows={mine} actorId={actor.id} />
@@ -45,17 +45,7 @@ export default async function Dashboard() {
         {queue.length === 0 ? (
           <p className="text-sm text-muted">Nothing is waiting to be claimed.</p>
         ) : (
-          <ul className="divide-y divide-line">
-            {queue.map((s) => {
-              const seat = claimableSeat(actor, s);
-              return (
-                <li key={s.id} className="flex items-center justify-between gap-3 py-3">
-                  <span className="text-sm text-muted">{s.stage === 'review' ? 'Review task' : 'Rubric task'}</span>
-                  {seat && <ClaimTask submissionId={s.id} seat={seat} />}
-                </li>
-              );
-            })}
-          </ul>
+          <ClaimQueue rows={queue} actor={actor} />
         )}
       </section>
     </div>
@@ -199,6 +189,33 @@ function SignalBadge({ signal }: { signal: 'attention' | 'moving' | 'quiet' }) {
   return <span className="badge badge-muted">Quiet</span>;
 }
 
+function ClaimQueue({
+  rows,
+  actor,
+}: {
+  rows: Awaited<ReturnType<typeof listSubmissions>>;
+  actor: Actor;
+}) {
+  return (
+    <ul className="divide-y divide-line">
+      {rows.map((s) => {
+        const seat = claimableSeat(actor, s);
+        return (
+          <li key={s.id} className="flex items-center justify-between gap-3 py-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium leading-5 text-ink">
+                {shortTaskDescriptor(s.title) || (s.stage === 'review' ? 'Review task' : 'Rubric task')}
+              </p>
+              <p className="mt-0.5 text-xs text-muted">{s.projectName}</p>
+            </div>
+            {seat ? <ClaimTask submissionId={s.id} seat={seat} /> : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function SeatList({
   rows,
   actorId,
@@ -210,14 +227,14 @@ function SeatList({
     <ul className="divide-y divide-line">
       {rows.map((s) => (
         <li key={s.id} className="relative flex items-center gap-3 py-3">
-          <StageBadge stage={s.stage} />
+          <WorkStatusPill state={s.workState} size="board" />
           <Link href={`/submissions/${s.id}`} className="min-w-0 flex-1 after:absolute after:inset-0 hover:underline">
             <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
+            <span className="mt-0.5 block text-xs font-normal text-muted">
+              {s.projectName} · {s.rubricAssigneeId === actorId ? 'rubric seat' : 'review seat'} · claimed{' '}
+              <TimeAgo iso={s.rubricAssigneeId === actorId ? s.rubricClaimedAt : s.reviewClaimedAt} />
+            </span>
           </Link>
-          <span className="shrink-0 text-xs text-muted">
-            {s.rubricAssigneeId === actorId ? 'rubric seat' : 'review seat'} · claimed{' '}
-            <TimeAgo iso={s.rubricAssigneeId === actorId ? s.rubricClaimedAt : s.reviewClaimedAt} />
-          </span>
         </li>
       ))}
     </ul>

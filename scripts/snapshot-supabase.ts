@@ -1,5 +1,5 @@
 import './env';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import postgres from 'postgres';
@@ -66,9 +66,23 @@ async function main() {
   }
 
   await writeFile(path.join(OUT, 'index.json'), JSON.stringify(index, null, 2));
+  await dropStaleFiles(new Set(['index.json', ...index.tables.map((name) => `${name}.json`)]));
   console.log(`Read-only snapshot via ${index.via} → ${OUT}`);
   console.log(`Tables: ${Object.entries(index.counts).map(([k, n]) => `${k}=${n}`).join(', ') || '(none of the known task tables)'}`);
+  const expected = [...LEGACY.map((name) => `public.${name}`), ...APP.map((name) => `app.${name}`)];
+  const skipped = expected.filter((name) => !(name in index.counts));
+  if (skipped.length) console.warn(`Skipped (not visible to this read): ${skipped.join(', ')}`);
   console.log(`Tasks: ${index.tasks.length}`);
+}
+
+async function dropStaleFiles(keep: Set<string>): Promise<void> {
+  const staleDir = path.join(process.cwd(), 'tmp', 'supabase-snapshot-stale');
+  await mkdir(staleDir, { recursive: true });
+  for (const name of await readdir(OUT)) {
+    if (!name.endsWith('.json') || keep.has(name)) continue;
+    await rename(path.join(OUT, name), path.join(staleDir, name));
+    console.warn(`Moved stale ${name} out of the snapshot (not in this pull).`);
+  }
 }
 
 async function viaApi(url: string, key: string): Promise<Index> {
@@ -133,7 +147,10 @@ async function selectAll(client: SupabaseClient, schema: string, table: string):
   for (let fromRow = 0; ; fromRow += PAGE) {
     const { data, error } = await from.select('*').range(fromRow, fromRow + PAGE - 1);
     if (error) {
-      if (missingTable(error.message)) return null;
+      if (missingTable(error.message)) {
+        console.warn(`Skip ${schema}.${table}: ${error.message}`);
+        return null;
+      }
       throw new Error(`${schema}.${table}: ${error.message}`);
     }
     if (!data?.length) break;

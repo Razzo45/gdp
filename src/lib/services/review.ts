@@ -11,6 +11,7 @@ import { pruneCalibrations, pruneReviewFeedback } from './retention';
 import { listAiOutputs } from './files';
 import { currentRubric, goldenState, statementsOf } from './rubric';
 import { latestGroup } from './stability';
+import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -23,6 +24,7 @@ import { getSubmission, recordEvent } from './submissions';
  */
 
 export async function sendToReview(actor: Actor, submissionId: string): Promise<void> {
+  const previous = await getSubmission(db(), submissionId);
   await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
@@ -48,6 +50,8 @@ export async function sendToReview(actor: Actor, submissionId: string): Promise<
       .where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'sent_to_review', { rubricId: rubric.id, revision: rubric.revision, statements: statements.length });
   });
+  const next = await getSubmission(db(), submissionId);
+  scheduleWorkStatusSheet(previous, next);
 }
 
 export async function latestCalibration(database: DbOrTx, rubricId: string): Promise<Calibration | null> {
@@ -109,25 +113,25 @@ export async function saveCalibration(actor: Actor, submissionId: string, input:
 }
 
 export async function decideReview(actor: Actor, submissionId: string, decision: 'approved' | 'changes_requested', feedback: string): Promise<void> {
+  const previous = await getSubmission(db(), submissionId);
   await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsReviewSeat(actor, submission)) throw forbidden('You do not hold the review seat on this task.');
     if (submission.stage !== 'review') throw conflict('The task is not in review.');
     const rubric = await currentRubric(tx, submissionId);
     if (!rubric) throw notFound('The rubric');
-    // Approve may use a complete saved draft: the reviewer already answered
-    // every seat, they just did not click "Submit evaluation" separately.
-    let calibration = await submittedCalibration(tx, rubric.id);
-    if (decision === 'approved' && !calibration) {
-      const latest = await latestCalibration(tx, rubric.id);
-      const statements = await statementsOf(tx, rubric.id);
-      if (latest && statements.every((s) => typeof latest.answers[s.id] === 'boolean')) {
+    // Approve uses the latest complete pass — including a draft the reviewer
+    // just rescored after the rubric came back — not an older submitted row.
+    const statements = await statementsOf(tx, rubric.id);
+    const latest = await latestCalibration(tx, rubric.id);
+    const latestComplete = Boolean(latest && statements.every((s) => typeof latest.answers[s.id] === 'boolean'));
+    let calibration = latestComplete ? latest : await submittedCalibration(tx, rubric.id);
+    if (decision === 'approved') {
+      if (!latestComplete || !latest) throw conflict('Save every Human Calibration answer before approving.');
+      if (!latest.submitted) {
         const [locked] = await tx.update(calibrations).set({ submitted: true }).where(eq(calibrations.id, latest.id)).returning();
         calibration = locked ?? latest;
       }
-    }
-
-    if (decision === 'approved') {
       if (!calibration) throw conflict('Save every Human Calibration answer before approving.');
       if (!calibrationInBand(calibration.scorePercent)) {
         throw conflict(`The AI scored ${calibration.scorePercent.toFixed(1)}%; approval needs ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}%. Request changes so the creator can tighten or relax the rubric.`);
@@ -148,6 +152,8 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
       .where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, decision === 'approved' ? 'review_approved' : 'review_changes_requested', { calibrationId: calibration?.id ?? null, scorePercent: calibration?.scorePercent ?? null });
   });
+  const next = await getSubmission(db(), submissionId);
+  scheduleWorkStatusSheet(previous, next);
 }
 
 export async function feedbackFor(database: DbOrTx, submissionId: string) {

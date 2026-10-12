@@ -21,6 +21,7 @@
     "db:import-eval": "tsx --conditions=react-server scripts/import-eval.ts",
     "db:repair-pipeline": "tsx --conditions=react-server scripts/repair-pipeline.ts",
     "db:sync-live": "tsx --conditions=react-server scripts/sync-live.ts",
+    "sheets:work-status": "tsx --conditions=react-server scripts/push-work-status-sheet.ts",
     "setup:renderer": "tsx scripts/ensure-libreoffice.ts",
     "mock:catalog": "tsx scripts/mock-catalog.ts",
     "worker": "tsx --conditions=react-server scripts/worker.ts"

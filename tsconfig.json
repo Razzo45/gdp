@@ -48,6 +48,12 @@
     "scripts/restore-task-dates.ts",
     "scripts/restore-rubric-families.ts",
     "scripts/migrate-railway-public.ts",
-    "scripts/hydrate-ai-outputs.ts"
+    "scripts/hydrate-ai-outputs.ts",
+    "scripts/dump-ae10-raw.ts",
+    "scripts/dump-ae10-source.ts",
+    "scripts/listen-ae10.ts",
+    "scripts/probe-ae10.ts",
+    "scripts/walk-ae10.ts",
+    "tmp"
   ]
 }

@@ -1,4 +1,4 @@
-import './env';
+import './railway-target';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';

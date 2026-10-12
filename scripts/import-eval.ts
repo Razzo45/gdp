@@ -15,11 +15,11 @@ import {
   stabilityAcceptances,
   stabilityPasses,
   submissions,
-  watchedProjects,
 } from '@/db/schema';
-import { sha256, sourceFingerprint, statementHash } from '@/domain/fingerprint';
+import { sha256, statementHash } from '@/domain/fingerprint';
 import { isLiveHumanNote } from '@/domain/golden';
-import { factoryStatementsFromLegacy, latestLegacyRun, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts, seedsFromLegacy } from '@/domain/legacyImport';
+import { keepCatalogId } from '@/domain/cutoverKeep';
+import { factoryStatementsFromLegacy, latestLegacyRun, legacyStabilityHostId, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts, seedsFromLegacy, stabilityGroupsFromAutorate, type LegacyStabilityImportGroup } from '@/domain/legacyImport';
 import { installFactoryVersion } from '@/lib/services/rubric';
 import { pruneCalibrations, pruneGoldenRatings, pruneReviewFeedback, pruneStabilityGroups } from '@/lib/services/retention';
 import { putObject } from '@/lib/storage';
@@ -51,9 +51,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function str(row: Record<string, unknown>, ...keys: string[]): string {
+function str(row: object, ...keys: string[]): string {
+  const rec = row as Record<string, unknown>;
   for (const key of keys) {
-    const value = row[key];
+    const value = rec[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return '';
@@ -146,11 +147,24 @@ async function main() {
   const stability = load('public.local_stability_results.json').filter(isRecord);
   const reviews = [...load('public.wirestock_reviews_v1.json'), ...load('public.wirestock_submission_reviews.json')].filter(isRecord);
   const feedback = load('public.wirestock_review_feedback.json').filter(isRecord);
+  const stabilityHosts = {
+    internalIds: new Set(legacySubs.filter(isRecord).map((row) => str(row, 'id'))),
+    catalogToInternal: internalOf,
+    runIdToInternal: new Map(runs.map((run) => [str(run, 'id'), str(run, 'submission_id')])),
+  };
+  const stabilityFor = (internal: string) =>
+    stability.filter((row) => legacyStabilityHostId(row, stabilityHosts) === internal);
+  const autorateStabilityFor = (run: Record<string, unknown> | null): LegacyStabilityImportGroup[] => {
+    if (!run) return [];
+    const row = answers.find((answer) => str(answer, 'run_id') === str(run, 'id'));
+    return stabilityGroupsFromAutorate(row?.['autorate_runs'], row?.['questions']);
+  };
 
   const database = db();
   const knownUsers = new Set((await database.select({ id: profiles.id }).from(profiles)).map((row) => row.id));
   const knownUser = (id: string | null) => (id && knownUsers.has(id) ? id : null);
-  const neonSubs = await database.select().from(submissions);
+  const keepOnly = !arg('--all');
+  const neonSubs = (await database.select().from(submissions)).filter((row) => !keepOnly || keepCatalogId(row.catalogSubmissionId));
   const currentRubrics = await database.select().from(rubrics).where(eq(rubrics.isCurrent, true));
   const allStatements = await database.select().from(rubricStatements);
   const statementsByRubric = new Map<string, typeof allStatements>();
@@ -180,11 +194,15 @@ async function main() {
 
   for (const row of plan) matchedSeats += row.seats.size;
   const missingRubric = plan.filter((item) => !item.rubric && item.run && factoryStatementsFromLegacy(item.run['rows']).length);
-  console.log(`Target (${apply ? 'APPLY' : 'dry-run'}): ${neonSubs.length} tasks, ${plan.filter((p) => p.rubric).length} with a rubric, ${matchedSeats} seats remapped, ${missingRubric.length} missing rubrics that have a live run.`);
-  console.log(`Sources: quality=${quality.length} rubric_answers=${answers.length} calibrations=${cals.length} stability=${stability.length} reviews=${reviews.length}`);
+  const attachedStability = stability.filter((row) => legacyStabilityHostId(row, stabilityHosts));
+  const autoratePlan = plan.map((item) => ({ catalogId: item.sub.catalogSubmissionId, groups: autorateStabilityFor(item.run) }));
+  const autorateTasks = autoratePlan.filter((row) => row.groups.length > 0);
+  console.log(`Target (${apply ? 'APPLY' : 'dry-run'}): ${neonSubs.length} tasks${keepOnly ? ' keep-set' : ''}, ${plan.filter((p) => p.rubric).length} with a rubric, ${matchedSeats} seats remapped, ${missingRubric.length} missing rubrics that have a live run.`);
+  console.log(`Sources: quality=${quality.length} rubric_answers=${answers.length} calibrations=${cals.length} local_stability=${stability.length} (attached=${attachedStability.length} leftover=${stability.length - attachedStability.length}) reviews=${reviews.length}`);
+  console.log(`Stability from newest-run autorate_runs: ${autorateTasks.length} tasks, ${autoratePlan.reduce((n, row) => n + row.groups.length, 0)} groups (accepted=${autoratePlan.reduce((n, row) => n + row.groups.filter((g) => g.accepted_at).length, 0)}, parents=${autoratePlan.reduce((n, row) => n + row.groups.filter((g) => g.parent_group_id).length, 0)})`);
 
   if (!apply) {
-    console.log('Re-run with --apply [--fill-missing] to write Golden, human AI eval, stability, and AI files.');
+    console.log('Re-run with --apply [--fill-missing] after import-snapshot --replace. Leftover local_stability is not invented as a board row.');
     process.exit(0);
   }
 
@@ -227,10 +245,8 @@ async function main() {
       cals.filter((row) => str(row, 'submission_id') === internal),
       (row) => str(row, 'created_at'),
     );
-    const stabFor = latest(
-      stability.filter((row) => str(row, 'submission_id') === internal),
-      (row) => str(row, 'created_at'),
-    );
+    const fromAutorate = autorateStabilityFor(item.run);
+    const stabFor = fromAutorate.length ? fromAutorate : latest(stabilityFor(internal), (row) => str(row, 'created_at'));
     const keepGolden = fillMissing && (await database.select({ id: goldenRatings.id }).from(goldenRatings).where(eq(goldenRatings.rubricId, rubric.id)).limit(1))[0];
     const keepCal = fillMissing && (await database.select({ id: calibrations.id }).from(calibrations).where(eq(calibrations.rubricId, rubric.id)).limit(1))[0];
     const keepStab = fillMissing && (await database.select({ id: stabilityPasses.id }).from(stabilityPasses).where(eq(stabilityPasses.rubricId, rubric.id)).limit(1))[0];
@@ -405,7 +421,13 @@ async function main() {
           errors: {},
           scorePercent: typeof pass['scorePercent'] === 'number' ? pass['scorePercent'] : null,
           model: typeof pass['model'] === 'string' ? pass['model'] : null,
-          basis: { rubricRevision: rubric.revision, ...basisFiles, legacyGroupId: groupId },
+          basis: {
+            rubricRevision: rubric.revision,
+            ...basisFiles,
+            legacyGroupId: groupId,
+            provenance: fromAutorate.length ? 'legacy-autorate-runs' : 'legacy-snapshot',
+            parentGroupId: 'parent_group_id' in group ? group.parent_group_id : null,
+          },
         });
       }
       stabGroups += 1;
@@ -447,8 +469,6 @@ async function main() {
   }
 
   const jobs = load('public.local_stability_jobs.json').filter(isRecord);
-  const watches = await database.select().from(watchedProjects);
-  const fallbackProject = watches[0]?.projectId ?? '';
   let reconstructed = 0;
 
   const rowsFromRecord = (value: unknown): { id: string; statement: string }[] =>
@@ -510,48 +530,8 @@ async function main() {
       }
     }
     if (!item || !item.rubric || seats.size === 0) {
-      if (fillMissing) {
-        console.warn(`Stability ${str(group, 'id') || hostId} has no host task; fill-missing will not invent one.`);
-        continue;
-      }
-      if (!hostId || !legacyStatements.length || !fallbackProject) {
-        console.warn(`Stability ${str(group, 'id') || hostId} has no host task and no statements to reconstruct.`);
-        continue;
-      }
-      let sub = (await database.select().from(submissions).where(eq(submissions.catalogSubmissionId, hostId)).limit(1))[0];
-      if (!sub) {
-        const title = legacyStatements[0]?.statement.replace(/^The (output document|document|submitted output)\s+/i, '').slice(0, 140) || `Stability ${hostId.slice(0, 8)}`;
-        const source = { provenance: 'legacy-stability-orphan', submissionId: hostId, statements: Object.fromEntries(legacyStatements.map((row) => [row.id, row.statement])) };
-        const [created] = await database
-          .insert(submissions)
-          .values({
-            catalogSubmissionId: hostId,
-            projectId: fallbackProject,
-            statusId: null,
-            title,
-            source,
-            sourceFingerprint: sourceFingerprint(source),
-            landedAt: str(group, 'created_at') || new Date().toISOString(),
-            lastSeenAt: str(group, 'created_at') || new Date().toISOString(),
-            stage: 'parked',
-          })
-          .returning();
-        sub = created!;
-        reconstructed += 1;
-      }
-      let rubric = (await database.select().from(rubrics).where(eq(rubrics.submissionId, sub.id))).find((row) => row.isCurrent);
-      let statements = rubric ? await database.select().from(rubricStatements).where(eq(rubricStatements.rubricId, rubric.id)) : [];
-      seats = rubric ? mapLegacySeatIds(legacyStatements, statements) : new Map();
-      if (!rubric || seats.size === 0) {
-        rubric = await installFactoryVersion(database, sub.id, knownUser(str(group, 'created_by') || null), {
-          seeds: [],
-          statements: factoryStatementsFromLegacy(legacyStatements.map((row) => ({ statement: row.statement, claim_key: row.id }))),
-          generation: { provenance: 'legacy-stability-orphan', catalogId: hostId, statements: legacyStatements.length },
-        });
-        statements = await database.select().from(rubricStatements).where(eq(rubricStatements.rubricId, rubric.id));
-        seats = mapLegacySeatIds(legacyStatements, statements);
-      }
-      item = { sub, internal: hostId, rubric, statements, run: null, seats };
+      console.warn(`Stability ${str(group, 'id') || hostId} belongs to a task that is no longer on the live board; skipped.`);
+      continue;
     }
     if (!item.rubric) {
       console.warn(`Stability ${hostId} still has no rubric after reconstruct.`);
@@ -615,85 +595,51 @@ async function main() {
     await pruneStabilityGroups(database, rubric.id);
   }
 
-  const parseMarker = (raw: unknown): Record<string, unknown> | null => {
-    if (typeof raw !== 'string' || !raw.trim()) return null;
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      return isRecord(parsed) ? parsed : null;
-    } catch {
-      return null;
-    }
-  };
-
   let fromAnswers = 0;
   for (const item of plan) {
     if (!item.internal || !item.rubric || item.seats.size === 0) continue;
-    const runIds = new Set((runsByInternal.get(item.internal) ?? []).map((row) => str(row, 'id')));
-    const answerRows = answers.filter((row) => runIds.has(str(row, 'run_id')));
-    const byGroup = new Map<string, Record<string, unknown>[]>();
-    let marker: Record<string, unknown> | null = null;
-    for (const row of answerRows) {
-      marker = parseMarker(record(row['questions'])['__observability_stability_acceptance']) ?? marker;
-      const list = Array.isArray(row['autorate_runs']) ? (row['autorate_runs'] as Record<string, unknown>[]) : [];
-      for (const pass of list) {
-        if (!String(pass['source'] ?? '').startsWith('autorate_stability_')) continue;
-        const groupId = str(pass, 'groupId', 'group_id');
-        if (!groupId) continue;
-        const bucket = byGroup.get(groupId) ?? [];
-        bucket.push(pass);
-        byGroup.set(groupId, bucket);
+    for (const group of autorateStabilityFor(item.run)) {
+      const groupId = asGroupId(group.group_id);
+      const already = (await database.select({ id: stabilityPasses.id }).from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId)).limit(1))[0];
+      if (already) continue;
+      let wrote = 0;
+      for (const pass of group.runs) {
+        const mapped = remapVerdicts(Object.keys(pass.answers).length ? pass.answers : pass.grades, item.seats);
+        const evidence = remapEvidence(Object.keys(pass.evidence).length ? pass.evidence : pass.grades, item.seats);
+        if (!Object.keys(mapped).length && pass.scorePercent == null) continue;
+        await database.insert(stabilityPasses).values({
+          rubricId: item.rubric.id,
+          groupId,
+          passIndex: pass.ordinal,
+          answers: mapped,
+          evidence,
+          errors: {},
+          scorePercent: pass.scorePercent,
+          model: pass.model,
+          basis: {
+            rubricRevision: item.rubric.revision,
+            provenance: 'legacy-autorate-runs',
+            legacyGroupId: group.group_id,
+            parentGroupId: group.parent_group_id,
+          },
+        });
+        wrote += 1;
       }
+      if (!wrote) continue;
+      fromAnswers += 1;
+      stabGroups += 1;
+      if (group.accepted_at) {
+        await database.insert(stabilityAcceptances).values({
+          rubricId: item.rubric.id,
+          groupId,
+          acceptedBy: knownUser(group.accepted_by),
+          scores: group.evaluation.scores,
+          spread: group.evaluation.spread,
+          basis: { provenance: 'legacy-observability-acceptance', acceptedAt: group.accepted_at, parentGroupId: group.parent_group_id },
+        });
+      }
+      await pruneStabilityGroups(database, item.rubric.id);
     }
-    const preferred = marker ? str(marker, 'groupId') : '';
-    const complete = [...byGroup.entries()]
-      .map(([groupId, passes]) => ({ groupId, passes }))
-      .filter((row) => row.passes.length >= 3)
-      .sort((a, b) => {
-        if (a.groupId === preferred) return -1;
-        if (b.groupId === preferred) return 1;
-        const at = (passes: Record<string, unknown>[]) => passes.map((pass) => str(pass, 'at')).sort().at(-1) ?? '';
-        return at(b.passes).localeCompare(at(a.passes));
-      })[0];
-    if (!complete) continue;
-    const groupId = asGroupId(complete.groupId);
-    const already = (await database.select({ id: stabilityPasses.id }).from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId)).limit(1))[0];
-    if (already) continue;
-    let wrote = 0;
-    const scores: number[] = [];
-    for (const pass of complete.passes) {
-      const ordinal = Number(pass['ordinal'] ?? pass['passIndex'] ?? 0) || wrote + 1;
-      const mapped = remapVerdicts(Object.keys(record(pass['answers'])).length ? record(pass['answers']) : record(pass['grades']), item.seats);
-      const evidence = remapEvidence(Object.keys(record(pass['evidence'])).length ? record(pass['evidence']) : record(pass['grades']), item.seats);
-      if (!Object.keys(mapped).length && typeof pass['scorePercent'] !== 'number') continue;
-      if (typeof pass['scorePercent'] === 'number') scores.push(pass['scorePercent']);
-      await database.insert(stabilityPasses).values({
-        rubricId: item.rubric.id,
-        groupId,
-        passIndex: ordinal,
-        answers: mapped,
-        evidence,
-        errors: {},
-        scorePercent: typeof pass['scorePercent'] === 'number' ? pass['scorePercent'] : null,
-        model: typeof pass['model'] === 'string' ? pass['model'] : null,
-        basis: { rubricRevision: item.rubric.revision, provenance: 'legacy-autorate-runs', legacyGroupId: complete.groupId },
-      });
-      wrote += 1;
-    }
-    if (!wrote) continue;
-    fromAnswers += 1;
-    stabGroups += 1;
-    if (marker && str(marker, 'groupId') === complete.groupId) {
-      const spread = scores.length ? Math.max(...scores) - Math.min(...scores) : 0;
-      await database.insert(stabilityAcceptances).values({
-        rubricId: item.rubric.id,
-        groupId,
-        acceptedBy: knownUser(str(marker, 'acceptedBy') || null),
-        scores,
-        spread,
-        basis: { provenance: 'legacy-observability-acceptance', acceptedAt: str(marker, 'acceptedAt'), calibrationPercent: marker['calibrationPercent'] },
-      });
-    }
-    await pruneStabilityGroups(database, item.rubric.id);
   }
 
   console.log(`Wrote goldenJobs=${goldenJobs} humanOverrides=${humanRows} calibrations=${calRows} stabilityGroups=${stabGroups} reconstructedTasks=${reconstructed} fromAnswers=${fromAnswers} reviews=${reviewsWritten} aiFiles=${files} (${Math.round(fileBytes / 1024)} KB)`);

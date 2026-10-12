@@ -16,6 +16,7 @@ import { conflict, forbidden, invalid, ServiceError } from './errors';
 import { submittedCalibration } from './review';
 import { currentRubric, goldenState, statementsOf, type GoldenState } from './rubric';
 import { stabilityView, type StabilityView } from './stability';
+import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { getSubmission, recordEvent, watchedProjectFor } from './submissions';
 
 /**
@@ -84,7 +85,7 @@ const LADDER: Record<HandoffTarget, Submission['handoffStatus'][]> = {
 };
 
 export async function setHandoffStatus(actor: Actor, submissionId: string, target: HandoffTarget, reason: string): Promise<Submission> {
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     const controllerOnly = target === 'final_review_pass' || target === 'bounced';
     if (controllerOnly ? !isController(actor) : !holdsRubricSeat(actor, submission)) throw forbidden('You may not make that handoff move.');
@@ -100,8 +101,10 @@ export async function setHandoffStatus(actor: Actor, submissionId: string, targe
       .where(eq(submissions.id, submissionId))
       .returning();
     await recordEvent(tx, submissionId, actor.id, `handoff_${target}`, { reason: reason.trim() });
-    return updated!;
+    return { previous: submission, next: updated! };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 /* ───────────────────────────────────────────── Catalog push ── */
@@ -211,6 +214,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
         .where(eq(submissions.id, submissionId));
       await recordEvent(tx, submissionId, actor.id, 'pushed_to_catalog', { rubricItems: items.items.length, moves });
     });
+    scheduleWorkStatusSheet(submission, { ...submission, stage: 'done', handoffStatus: 'client_visible' });
     scheduleReap();
     return { rubricItems: items.items.length, moves };
   } catch (error) {
@@ -249,6 +253,7 @@ async function reconcileLocalPush(
       .where(and(eq(submissions.id, submission.id), sql`${submissions.pushedAt} is null`));
     await recordEvent(tx, submission.id, actor.id, 'pushed_to_catalog', { recovered: true, rubricItems: items.length });
   });
+  scheduleWorkStatusSheet(submission, { ...submission, stage: 'done', handoffStatus: 'client_visible' });
   scheduleReap();
   return { rubricItems: items.length, moves: [handoffStatusId] };
 }

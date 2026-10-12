@@ -6,13 +6,14 @@ import { submissions, type Submission } from '@/db/schema';
 import { parseCatalogReturn, type PendingCatalogReturn } from '@/domain/catalogReturn';
 import { isController, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden } from './errors';
+import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { getSubmission, recordEvent } from './submissions';
 
 export type { PendingCatalogReturn };
 
 export async function acceptCatalogReturn(actor: Actor, submissionId: string): Promise<Submission> {
   if (!isController(actor)) throw forbidden('Only PMs and admins can accept a Catalog return.');
-  return db().transaction(async (tx) => {
+  const result = await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     const pending = parseCatalogReturn(submission.catalogReturn);
     if (pending?.outcome !== 'pending') throw conflict('There is no Catalog return waiting on this task.');
@@ -33,8 +34,10 @@ export async function acceptCatalogReturn(actor: Actor, submissionId: string): P
       rubricAssigneeId: submission.rubricAssigneeId,
       reviewerId: submission.reviewerId,
     });
-    return updated!;
+    return { previous: submission, next: updated! };
   });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 export async function dismissCatalogReturn(actor: Actor, submissionId: string): Promise<Submission> {

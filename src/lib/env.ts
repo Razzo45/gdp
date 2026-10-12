@@ -75,6 +75,13 @@ const Schema = z
     /** Set to "0" on web instances when a dedicated worker process runs the queue. */
     RUN_WORKER: z.string().default('1'),
     LIBREOFFICE_BIN: z.string().optional(),
+
+    /** 1 = write GDP work status into the PM Google Sheet. Leave 0 until cutover. */
+    SHEETS_SYNC: z.enum(['0', '1']).default('0'),
+    SHEETS_SPREADSHEET_ID: z.string().optional(),
+    SHEETS_SHEET_GID: z.coerce.number().int().optional(),
+    /** Service-account JSON (client_email + private_key). Sheet shared as Editor. */
+    GOOGLE_SHEETS_CREDENTIALS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.AUTH_MODE === 'supabase') {

@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { catalogAsciiText, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
-import { readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
+import { projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
 
 const project = {
@@ -141,5 +141,13 @@ describe('webhook signature', () => {
     const b64 = raw.toString('base64');
     const d = createHmac('sha256', raw).update(`${ts}.${body}`).digest('hex');
     expect(signatureMatches(d, body, ts, b64)).toBe(true);
+  });
+});
+
+describe('project display name', () => {
+  it('prefers the watch label, then the Catalog project name', () => {
+    expect(projectDisplayName({ label: 'GDP Eval', project })).toBe('GDP Eval');
+    expect(projectDisplayName({ label: '', project })).toBe('Deck QA');
+    expect(projectDisplayName(null)).toBe('Project');
   });
 });

@@ -1,4 +1,4 @@
-import './env';
+import './railway-target';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -16,6 +16,7 @@ import {
   type LegacyReviewStatus,
 } from '@/domain/legacyImport';
 import { readCatalogSubmission } from '@/lib/catalog/read';
+import { keepCatalogId } from '@/domain/cutoverKeep';
 import { installFactoryVersion } from '@/lib/services/rubric';
 import { syncSubmission } from '@/lib/services/submissions';
 
@@ -299,7 +300,8 @@ async function main() {
   const users = plannedUsers();
   const projects = plannedProjects();
   const allTasks = plannedTasks();
-  const tasks = allTasks.slice(0, limit);
+  const keepOnly = !arg('--all');
+  const tasks = (keepOnly ? allTasks.filter((task) => keepCatalogId(task.catalogId)) : allTasks).slice(0, limit);
   const withRubric = tasks.filter((t) => t.statements > 0).length;
   const withSeat = tasks.filter((t) => t.seats.rubric || t.seats.review).length;
   const roleCounts = { admin: 0, pm: 0, rubric_creator: 0, reviewer: 0 };
@@ -308,7 +310,7 @@ async function main() {
   console.log(`Target: ${hostOf(target)} (${clone ? 'CLONE' : apply ? 'APPLY' : 'dry-run'})`);
   console.log(`Users: ${users.size}  roles ${JSON.stringify(roleCounts)}`);
   console.log(`Watched projects: ${projects.size}`);
-  console.log(`Tasks: ${tasks.length}  with current rubric ${withRubric}  with a seat ${withSeat}`);
+  console.log(`Tasks: ${tasks.length}${keepOnly ? ` keep-set (of ${allTasks.length})` : ''}  with current rubric ${withRubric}  with a seat ${withSeat}`);
   console.log('Skipped on purpose: golden ratings, calibrations, stability, human AI eval (hash/file bound).');
 
   if (!apply) {

@@ -319,6 +319,14 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
   };
 }
 
+/** Watch label first — that is what PMs will set when more projects land. */
+export function projectDisplayName(watch: { label?: string | null; project?: unknown } | null | undefined): string {
+  const label = watch?.label?.trim();
+  if (label) return label;
+  const name = readProjectStatuses(watch?.project ?? null)?.name.trim();
+  return name || 'Project';
+}
+
 export function readProjectStatuses(rawProject: unknown): { name: string; statuses: CatalogStatus[] } | null {
   const parsed = ProjectPayload.safeParse(rawProject);
   if (!parsed.success) return null;
