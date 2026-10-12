@@ -67,36 +67,42 @@ const Verdicts = z.object({
 
 const Inventory = z.object({ defects: z.array(z.string()).max(18) });
 
-export const AUTORATER_SYSTEM = `You are a strict rubric autorater. You will be shown a numbered list of
-affirmative statements and the FILES they are graded against: CONSIDERED OUTPUT
-attachments (the work being judged) and, when relevant, SUBMITTED INPUT
-attachments (the brief's source material). Treat the attachments and any
-FILE FACTS / text digests as the files themselves.
+/** Enough tokens for the model to inspect before it answers. 0 was a blurt. */
+export const AUTORATE_THINKING_BUDGET = 2048;
+export const INVENTORY_UNAVAILABLE = '__inventory_unavailable__';
 
-Grade EVERY statement independently. For each, answer exactly Yes or No and give
-ONE SENTENCE of evidence citing the specific element of the attached files you used.
+export const AUTORATER_SYSTEM = `You are a rubric autorater. You have no preference for Yes or No, no target
+score, and you do not know or care whether the file is a Golden or an AI output.
+Grade the statement as written against the attached files only.
 
-Yes = the statement is true / holds for the deliverable.
-No = the statement is false.
+You will be shown numbered affirmative statements and the FILES they are graded
+against: CONSIDERED OUTPUT attachments (the work being judged) and, when relevant,
+SUBMITTED INPUT attachments. Treat the attachments and any FILE FACTS / text
+digests as the files themselves. Think through each claim before you answer.
 
-Never answer N/A. Every statement always applies. If something optional is
-absent, answer No only when the statement required it; otherwise judge the
-criterion as written on what is present.
+Grade EVERY statement independently. Do not carry a Yes or a No from a
+neighbouring seat. For each, answer exactly Yes or No and give ONE SENTENCE of
+evidence citing the specific element of the attached files you used.
+
+Yes = the statement holds on the files. That requires you to locate the claim.
+No = the statement does not hold on the files.
+Never answer N/A. Every statement always applies.
 
 Rules:
-- Answer strictly against the attached files. Do not invent content that is not
-  evidenced; do not deny content that is plainly present in an attachment or digest.
+- Answer only the claim in that statement. Do not fail extra faults the statement
+  did not ask about. Do not pass a claim you did not verify.
+- Do not invent content that is not evidenced; do not deny content that is
+  plainly present in an attachment or digest.
 - If a statement names a specific file, evaluate that file (match by filename even
   if the path differs slightly).
-- INSPECT attached images, video, audio, PDF and rendered slide/page stills. Prefer what you see/hear over a
-  text summary when they conflict. A slide still labelled "slide N" is that page of the deck.
+- INSPECT attached images, video, audio, PDF and rendered slide/page stills.
+  Prefer what you see/hear over a text summary when they conflict. A slide still
+  labelled "slide N" is that page of the deck.
 - For video/audio: only claim events, dialogue or specs evidenced in the clip.
 - Logical consistency is mandatory: the Yes/No MUST agree with the evidence sentence.
-- "rather than X" / "instead of X" / "free of X": if X is absent and the positive
-  alternative is present, answer Yes — but only when the statement's sole claim is
-  that contrast. If it ALSO asserts a positive match (to a reference, plan, count,
-  measurement or named property), absence of X alone is never enough: verify the
-  positive claim. If you cannot verify it, answer No.
+- "rather than X" / "instead of X" / "free of X": the claim holds only when X is
+  absent and any required positive alternative is present. If the statement also
+  asserts a match, count, measurement or named property, verify that too.
 - If a statement requires a measurement (dimension, ratio, count, duration,
   contrast), state the measured value in the evidence. FILE FACTS blocks are
   authoritative for counts, sizes, aspect ratios, fonts and embedded media.
@@ -104,43 +110,50 @@ Rules:
   failures that contradict the attachment.
 - NAMING WHAT YOU PERCEIVE: do not assert labels the deliverable does not clearly
   show. If unsure what an element is, describe it neutrally.
-- Do not assume a clean idealised version of the deliverable when the attachment
-  plainly contains defects — judge what is actually there.
-- FAILURE MODES: answer No when the deliverable shows a defect a competent
-  professional in this field would reject, even if it is otherwise polished.
+- Judge what is actually there — not a clean ideal, not a worst-case guess.
 - SUBMITTED INPUTS: when a statement requires fidelity to them, compare the
-  deliverable to those refs — never answer Yes from the deliverable's overall
-  impression alone.
-- VERIFICATION BURDEN: a statement asserting correspondence — to a SUBMITTED INPUT,
-  across files, or between elements — may only be Yes after you locate the
-  corresponding elements on BOTH sides. "Looks plausible" is not verification.
-- Your evidence must describe THE DELIVERABLE. Restating the brief or the
-  reference is not evidence of anything.
+  deliverable to those refs. Overall impression is not a match.
+- VERIFICATION BURDEN: a correspondence claim may only be Yes after you locate
+  the corresponding elements on BOTH sides.
+- Your evidence must describe THE DELIVERABLE. Restating the brief is not evidence.
 - COMPOSITE/COLLAGE: pasted insets, swatch strips, cutout photos or moodboard
-  elements ARE part of the deliverable. When a finished artifact was required,
-  count them as defects, not decor.
-- Soft presence is not enough: "something of that kind is present" does not
-  satisfy a statement that requires a match, a measurement or a free-of check.
+  elements ARE part of the deliverable when the statement is about the finished work.
+- Soft presence is not enough when the statement requires a match, a measurement
+  or a free-of check.
 - MULTIPLE DELIVERABLES: if a statement applies to all deliverables and any one
   of them fails the claim, answer No.
-- DEFECT_INVENTORY: any listed defect that falsifies a statement → No.
-- A file marked NOT ATTACHED cannot support a Yes on a statement that depends on that file; answer No and say why.
-- FILE FACTS are authoritative for slide/page counts, aspect, fonts and embedded-media presence — those may be Yes from FILE FACTS alone.
-- Embedded images attached after NO FULL-PAGE RENDER may support Yes on photograph/asset claims. Only use evidence "no render available" for slide-level layout, spacing or typography you cannot see.
-- UNCERTAINTY: if you cannot verify the hard half of a claim from the
-  attachments, answer No — never Yes on a guess.
+- DEFECT_INVENTORY: use a listed defect only when it actually falsifies this
+  statement. An unavailable inventory is not proof the file is clean.
+- A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
+  that file; answer No and say why.
+- FILE FACTS are authoritative for slide/page counts, aspect, fonts and
+  embedded-media presence.
+- Embedded images attached after NO FULL-PAGE RENDER may support photograph/asset
+  claims. For slide-level layout, spacing or typography you cannot see, the
+  statement does not hold.
+- If the files do not show the claimed property, the statement does not hold.
+  Do not guess it in to make Yes. Do not invent a defect to make No.
 
 Return JSON only: { "verdicts": [ { "id": "<seat id like s008>", "answer": "Yes" | "No", "evidence": "<one sentence>" } ] }
 Include every seat id exactly once. Refer to seats as Seat 8 in evidence, never as a UUID.`;
 
-const INVENTORY_SYSTEM = `You inspect CONSIDERED OUTPUT attachments (and any SUBMITTED INPUT attachments) for a
-foundation-model eval. List concrete, falsifiable defects a competent professional
-would reject — even if the output looks polished.
+export function inventoryPromptBlock(inventory: string[]): string | null {
+  if (inventory.includes(INVENTORY_UNAVAILABLE)) {
+    return 'DEFECT_INVENTORY: unavailable. Do not treat the deliverable as clean. Verify each statement from the attached files only.';
+  }
+  const defects = inventory.map((row) => row.trim()).filter((row) => row && row !== INVENTORY_UNAVAILABLE);
+  if (!defects.length) return null;
+  return `DEFECT_INVENTORY:\n${defects.map((row) => `- ${row}`).join('\n')}`;
+}
+
+const INVENTORY_SYSTEM = `You inspect CONSIDERED OUTPUT attachments (and any SUBMITTED INPUT attachments).
+List concrete, falsifiable defects you can actually see. You have no preference
+for finding defects or calling the file clean.
 
 Return JSON only: { "defects": [ "<short defect>", ... ] } with at most 18 items, or
-{ "defects": [] } if clean.
+{ "defects": [] } if you looked and found none.
 
-Include defects when clearly visible, for example:
+Include a defect only when it is clearly visible, for example:
 - collage / moodboard / swatch strip / cutout product photos sold as a finished view
 - layout mismatch vs SUBMITTED INPUT (wrong counts, mirrored or rearranged zones)
 - floating objects, clipping, ungrounded geometry
@@ -157,7 +170,8 @@ function evidenceParts(files: { outputs: PreparedFile[]; inputs: PreparedFile[] 
   if (context) parts.push(`TASK CONTEXT:\n${context.length > GRADE_CONTEXT_CHARS ? `${context.slice(0, GRADE_CONTEXT_CHARS)}\n…` : context}`);
   parts.push(`CONSIDERED_OUTPUTS${allOutputs ? ' (every current deliverable; any one fail → No)' : ''}: ${files.outputs.map((f) => f.name).join(', ') || '(none)'}`);
   if (files.inputs.length) parts.push(`SUBMITTED_INPUTS: ${files.inputs.map((f) => f.name).join(', ')}`);
-  if (inventory.length) parts.push(`DEFECT_INVENTORY:\n${inventory.map((d) => `- ${d}`).join('\n')}`);
+  const inventoryBlock = inventoryPromptBlock(inventory);
+  if (inventoryBlock) parts.push(inventoryBlock);
   for (const file of files.outputs) parts.push(...file.parts);
   for (const file of files.inputs) parts.push(...file.parts);
   return tightenSendParts(parts);
@@ -194,20 +208,23 @@ export async function inventoriesForObservations(input: GradeInput): Promise<Rec
 
 export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'inputs' | 'taskContext' | 'model'>): Promise<string[]> {
   if (input.outputs.length === 0) return [];
-  try {
-    const result = await generateJson({
-      model: input.model,
-      system: INVENTORY_SYSTEM,
-      parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1),
-      schema: Inventory,
-      temperature: 0.1,
-      maxOutputTokens: 2048,
-    });
-    return result.value.defects.map((d) => d.trim()).filter(Boolean);
-  } catch {
-    // The inventory is an aid, not a gate. Grading proceeds without it.
-    return [];
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const result = await generateJson({
+        model: input.model,
+        system: INVENTORY_SYSTEM,
+        parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1),
+        schema: Inventory,
+        temperature: 0.1,
+        maxOutputTokens: 2048,
+        thinkingBudget: AUTORATE_THINKING_BUDGET,
+      });
+      return result.value.defects.map((d) => d.trim()).filter(Boolean);
+    } catch {
+      if (attempt === 2) return [INVENTORY_UNAVAILABLE];
+    }
   }
+  return [INVENTORY_UNAVAILABLE];
 }
 
 export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
@@ -257,11 +274,11 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
       result.inventoryByKey[entry.key] = input.defectInventory ?? (await defectInventory({ outputs: files.outputs, inputs: files.inputs, taskContext: input.taskContext, model }));
     }
     const inventory = result.inventoryByKey[entry.key] ?? [];
-    result.defectInventory = [...new Set([...result.defectInventory, ...inventory])];
+    result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
     const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs), statementsBlock(batch)];
     const wanted = new Set(batch.map((s) => s.id));
     try {
-      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 8192, thinkingBudget: 0 });
+      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 8192, thinkingBudget: AUTORATE_THINKING_BUDGET });
       record(result, response);
       for (const verdict of response.value.verdicts) {
         const statement = matchStatement(batch, verdict.id);
@@ -284,7 +301,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     for (const id of wanted) {
       const statement = batch.find((s) => s.id === id)!;
       try {
-        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: [...parts.slice(0, -1), statementsBlock([statement])], schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 1024, thinkingBudget: 0 });
+        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: [...parts.slice(0, -1), statementsBlock([statement])], schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 1024, thinkingBudget: AUTORATE_THINKING_BUDGET });
         record(result, response);
         const verdict = response.value.verdicts.find((v) => matchStatement([statement], v.id)) ?? response.value.verdicts[0];
         if (!verdict) throw new GeminiError('invalid_output', 'Gemini returned no verdict for the statement.');

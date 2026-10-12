@@ -53,7 +53,7 @@ const Schema = z
      * pipeline so rubric / golden / stability can be walked without output tokens.
      */
     GEMINI_MOCK: z.enum(['0', '1']).default('0'),
-    AUTORATE_BATCH_SIZE: z.coerce.number().int().min(1).max(25).default(10),
+    AUTORATE_BATCH_SIZE: z.coerce.number().int().min(1).max(25).default(1),
 
     WIRESTOCK_API_BASE_URL: z.string().url().default('https://api.wirestock.io/data-program/core'),
     WIRESTOCK_API_TOKEN: z.string().min(1).optional(),

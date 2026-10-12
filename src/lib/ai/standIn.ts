@@ -75,7 +75,7 @@ export function standInValue<T>(input: { system: string; parts: (string | MediaP
   const text = `${input.system}\n${flattenParts(input.parts)}`;
   const system = input.system;
   let raw: unknown;
-  if (/strict rubric autorater/i.test(system)) raw = mockVerdicts(text);
+  if (/rubric autorater/i.test(system)) raw = mockVerdicts(text);
   else if (/List concrete, falsifiable defects/i.test(system) || /"defects"/i.test(system) && /at most 18/i.test(system)) raw = { defects: /\bai[-_]/i.test(text) ? ['Title slide has a spelling error.'] : [] };
   else if (/ONE expert human/i.test(system) || /GRANULAR Precise Boolean/i.test(system)) raw = mockBank(text);
   else if (/write EVERY distinct/i.test(system) || /EXPERT SEED a peer/i.test(system)) {

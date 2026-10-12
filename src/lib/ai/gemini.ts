@@ -172,9 +172,14 @@ function retryAfterMs(error: unknown): number | null {
 
 const SEND_TEXT_CHARS = 12_000;
 
+export function mediaResolutionFor(_mime: string): 'low' | 'medium' | 'high' {
+  return 'medium';
+}
+
 function mediaResolution(mime: string): PartMediaResolutionLevel {
-  if (/^(video|audio)\//.test(mime)) return PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW;
-  if (mime === 'application/pdf') return PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW;
+  const level = mediaResolutionFor(mime);
+  if (level === 'high') return PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH;
+  if (level === 'low') return PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW;
   return PartMediaResolutionLevel.MEDIA_RESOLUTION_MEDIUM;
 }
 
