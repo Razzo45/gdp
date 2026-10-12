@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { geminiFiles, geminiFileUses } from '@/db/schema';
 import { cachedGeminiUriDecision } from '@/domain/geminiFileCache';
+import { shouldRetryWithoutSchema } from '@/domain/geminiSchema';
 import { env, geminiMockEnabled } from '@/lib/env';
 import { AdaptiveAdmission, type AdmissionOptions, type AdmissionSnapshot } from './admission';
 import { modelContext } from './context';
@@ -330,8 +331,8 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
         throw reason instanceof GeminiError ? reason : new GeminiError('timeout', 'The request was cancelled.');
       }
       const failure = classify(error);
-      if (failure.kind === 'refused' && useSchema && /schema|response_json_schema|responseJsonSchema/i.test(failure.message)) {
-        // Some models reject particular schema features; fall back to prompt-only JSON.
+      if (useSchema && shouldRetryWithoutSchema(failure)) {
+        // Gemini often 400s the schema with a generic INVALID_ARGUMENT (Pietro's Generate).
         useSchema = false;
         continue;
       }
