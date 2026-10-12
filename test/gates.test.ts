@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calibrationInBand, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate } from '@/domain/gates';
+import { calibrationInBand, canConfirmStabilityPassFrom, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate } from '@/domain/gates';
 import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
@@ -124,5 +124,13 @@ describe('handoff', () => {
     expect(handoffTransitionGate('ready_for_review', open).ok).toBe(false);
     expect(handoffTransitionGate('stability_pass', open).ok).toBe(false);
     expect(handoffTransitionGate('final_review_pass', closed).ok).toBe(true);
+  });
+
+  it('lets the creator confirm stability without a separate ready-for-review click', () => {
+    expect(canConfirmStabilityPassFrom(null)).toBe(true);
+    expect(canConfirmStabilityPassFrom('ready_for_review')).toBe(true);
+    expect(canConfirmStabilityPassFrom('bounced')).toBe(true);
+    expect(canConfirmStabilityPassFrom('stability_pass')).toBe(false);
+    expect(canConfirmStabilityPassFrom('final_review_pass')).toBe(false);
   });
 });

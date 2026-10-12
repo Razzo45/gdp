@@ -237,9 +237,8 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
   const s = view.submission;
   const canSend = view.can.editRubric && view.golden?.gate.ok && view.aiOutputs.length > 0;
   const showSend = view.can.editRubric && s.stage === 'rubric';
-  const showSubmit = view.can.push;
 
-  if (!showSend && !showSubmit) return null;
+  if (!showSend) return null;
 
   async function send() {
     setBusy(true);
@@ -265,11 +264,6 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
           </button>
           {blocked && <p className="text-right text-xs text-muted">{blocked}</p>}
         </>
-      )}
-      {showSubmit && (
-        <a className="btn btn-primary" href="#handoff">
-          Go to submit
-        </a>
       )}
     </div>
   );

@@ -87,7 +87,7 @@ export async function acceptStability(actor: Actor, submissionId: string, groupI
       calibrationId: calibration?.id ?? null,
       basis: { rubricRevision: rubric.revision, passIds: view.passes.map((p) => p.id), calibrationPercent: view.calibrationPercent },
     });
-    await tx.update(submissions).set({ stage: 'handoff' }).where(eq(submissions.id, submissionId));
+    await tx.update(submissions).set({ stage: 'handoff', handoffStatus: 'stability_pass' }).where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'stability_accepted', { groupId, scores: view.gate.scores, spread: view.gate.spread });
   });
   scheduleWorkStatusSheet(previous, await getSubmission(db(), submissionId));

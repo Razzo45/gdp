@@ -171,6 +171,11 @@ export function handoffGates(input: {
 
 export type HandoffTarget = 'ready_for_review' | 'bounced' | 'stability_pass' | 'final_review_pass';
 
+/** After Stability is accepted, skip "mark ready" — confirm from the start of handoff. */
+export function canConfirmStabilityPassFrom(status: string | null): boolean {
+  return status === null || status === 'ready_for_review' || status === 'bounced';
+}
+
 export function handoffTransitionGate(target: HandoffTarget, gates: HandoffGates): { ok: true } | { ok: false; error: string } {
   if (target === 'bounced') return { ok: true };
   if (target === 'ready_for_review' && !gates.golden) {

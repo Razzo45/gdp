@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { canConfirmStabilityPassFrom } from '@/domain/gates';
 import { api } from '../client';
 import { formatDate, pct } from '../format';
 import { Pill } from '../StageBadge';
@@ -74,17 +75,12 @@ export function HandoffPanel({ view, refresh, notify }: PanelProps) {
         <div className="space-y-2 border-t border-line pt-3">
           <input className="input" placeholder="Bounce reason" value={reason} onChange={(e) => setReason(e.target.value)} />
           <div className="flex flex-wrap gap-2">
-            {creator && (status === null || status === 'bounced') && (
+            {creator && (status === null || status === 'bounced') && !(g.golden && g.calibration && g.stability) && (
               <button className="btn" disabled={busy || !g.golden} onClick={() => move('ready_for_review')} type="button">
                 Mark ready for review
               </button>
             )}
-            {creator && status === 'bounced' && (
-              <button className="btn" disabled={busy} onClick={() => move('ready_for_review')} type="button">
-                Return to review
-              </button>
-            )}
-            {creator && (status === 'ready_for_review' || status === 'bounced') && (
+            {creator && canConfirmStabilityPassFrom(status) && (
               <button className="btn" disabled={busy || !(g.golden && g.calibration && g.stability)} onClick={() => move('stability_pass')} type="button">
                 Confirm stability pass
               </button>

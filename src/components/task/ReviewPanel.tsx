@@ -44,29 +44,30 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
     return { yes, no, answered: yes + no, thin, percent: yes + no === 0 ? null : (yes / (yes + no)) * 100 };
   }, [answers, evidence, statements]);
 
-  async function save(submit: boolean) {
-    setBusy(submit ? 'submit' : 'save');
-    try {
-      await api(`/api/submissions/${view.submission.id}/review/calibration`, { method: 'PUT', body: { answers, evidence, submit } });
-      setDirty(false);
-      if (submit) notify('Human AI evaluation submitted.');
-      await refresh();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'Save failed.', 'bad');
-    } finally {
-      setBusy(null);
+  async function persistDraft() {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
     }
+    if (!dirty) return;
+    await api(`/api/submissions/${view.submission.id}/review/calibration`, { method: 'PUT', body: { answers, evidence, submit: false } });
+    setDirty(false);
   }
 
   const schedule = () => {
     setDirty(true);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void save(false), 1200);
+    timer.current = setTimeout(() => {
+      void persistDraft().catch((error) => {
+        notify(error instanceof Error ? error.message : 'Save failed.', 'bad');
+      });
+    }, 1200);
   };
 
   async function decide(decision: 'approved' | 'changes_requested') {
     setBusy(decision);
     try {
+      await persistDraft();
       await api(`/api/submissions/${view.submission.id}/review/decision`, { body: { decision, feedback } });
       notify(decision === 'approved' ? 'Approved. The creator can now run stability.' : 'Sent back to the creator.');
       await refresh();
@@ -89,8 +90,11 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
         <h2 className="font-semibold">Human Calibration</h2>
         <span className="text-xs text-muted">Grade the AI output files against the current rubric. Tab a seat, then Y or N — it moves to the next. Every answer needs an observation of at least {EVIDENCE_MIN_CHARS} characters.</span>
         <span className="ml-auto flex items-center gap-2">
-          {submitted !== null && <Pill tone={calibrationInBand(submitted) ? 'ok' : 'warn'}>submitted {pct(submitted)}</Pill>}
-          {latest && !latest.submitted && <Pill tone={score.answered === statements.length ? (inBand ? 'ok' : 'warn') : 'muted'}>draft {pct(score.percent)} · {score.answered}/{statements.length}</Pill>}
+          {score.percent !== null ? (
+            <Pill tone={complete ? (inBand ? 'ok' : 'warn') : 'muted'}>
+              {pct(score.percent)} · {score.answered}/{statements.length}
+            </Pill>
+          ) : null}
         </span>
       </div>
 
@@ -173,39 +177,29 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
 
       {view.can.review && (
         <div className="space-y-3 border-t border-line pt-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn" disabled={busy !== null} type="button" onClick={() => save(false)}>
-              {busy === 'save' ? 'Saving…' : 'Save draft'}
-            </button>
-            <button className="btn btn-primary" disabled={busy !== null || score.answered !== statements.length || score.thin > 0} type="button" onClick={() => save(true)}>
-              {busy === 'submit' ? 'Submitting…' : `${latest?.submitted ? 'Resubmit' : 'Submit'} evaluation${score.percent !== null ? ` (${pct(score.percent)})` : ''}`}
-            </button>
-            {score.answered !== statements.length ? (
-              <span className="text-sm text-muted">{statements.length - score.answered} left to answer</span>
-            ) : null}
-            {score.answered === statements.length && score.thin > 0 ? (
-              <span className="text-sm text-muted">{score.thin} need an observation of at least {EVIDENCE_MIN_CHARS} characters.</span>
-            ) : null}
-            {score.answered === statements.length && !inBand ? (
-              <span className="text-sm text-warn">
-                Outside the {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}% band — you can still submit, then request changes.
-              </span>
-            ) : null}
-          </div>
+          {score.answered !== statements.length ? (
+            <p className="text-sm text-muted">{statements.length - score.answered} left to answer. Answers save as you go.</p>
+          ) : score.thin > 0 ? (
+            <p className="text-sm text-muted">{score.thin} need an observation of at least {EVIDENCE_MIN_CHARS} characters.</p>
+          ) : !inBand ? (
+            <p className="text-sm text-warn">
+              Outside the {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}% band — request revisions so the creator can tighten or relax the rubric.
+            </p>
+          ) : null}
           <textarea className="input min-h-20" placeholder="Explain what the assignee should revise" value={feedback} onChange={(e) => setFeedback(e.target.value)} />
           <div className="flex flex-col items-start gap-2">
             <div className="flex flex-wrap gap-2">
-              <button className="btn btn-primary" disabled={busy !== null || !complete || !approvalInBand} type="button" onClick={() => decide('approved')}>
-                Approve and return
+              <button className="btn btn-primary" disabled={busy !== null || !complete || !approvalInBand} type="button" onClick={() => void decide('approved')}>
+                {busy === 'approved' ? 'Approving…' : 'Approve'}
               </button>
-              <button className="btn" disabled={busy !== null || feedback.trim().length < 1} type="button" onClick={() => decide('changes_requested')}>
-                Request revisions
+              <button className="btn" disabled={busy !== null || feedback.trim().length < 1} type="button" onClick={() => void decide('changes_requested')}>
+                {busy === 'changes_requested' ? 'Sending…' : 'Request revisions'}
               </button>
             </div>
             {!complete ? (
               <p className="text-sm text-muted">Finish every statement before approving. You can still send this back with notes.</p>
             ) : !approvalInBand ? (
-              <p className="text-sm text-muted">Approval needs an AI score between {CALIBRATION_MIN_PERCENT}% and {CALIBRATION_MAX_PERCENT}%. It is {approvalPercent ?? '—'}% now.</p>
+              <p className="text-sm text-muted">Approval needs an AI score between {CALIBRATION_MIN_PERCENT}% and {CALIBRATION_MAX_PERCENT}%. It is {pct(approvalPercent)} now.</p>
             ) : null}
             {feedback.trim().length < 1 ? (
               <p className="text-sm text-muted">Add a note if you are sending this back.</p>

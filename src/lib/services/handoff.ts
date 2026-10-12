@@ -77,10 +77,10 @@ export async function handoffView(database: DbOrTx, submission: Submission, load
   };
 }
 
-const LADDER: Record<HandoffTarget, Submission['handoffStatus'][]> = {
+const LADDER: Record<HandoffTarget, Array<Submission['handoffStatus'] | null>> = {
   ready_for_review: [null, 'bounced'],
   bounced: ['ready_for_review', 'stability_pass'],
-  stability_pass: ['ready_for_review', 'bounced'],
+  stability_pass: [null, 'ready_for_review', 'bounced'],
   final_review_pass: ['stability_pass'],
 };
 
@@ -97,7 +97,11 @@ export async function setHandoffStatus(actor: Actor, submissionId: string, targe
     if (!gate.ok) throw conflict(gate.error);
     const [updated] = await tx
       .update(submissions)
-      .set({ handoffStatus: target, handoffBasis: { by: actor.id, at: new Date().toISOString(), reason: reason.trim(), gates: view.gates, goldenPercent: view.goldenPercent, calibrationPercent: view.calibrationPercent, stabilityScores: view.stabilityScores }, ...(target === 'bounced' ? { stage: 'rubric' as const } : {}) })
+      .set({
+        handoffStatus: target,
+        handoffBasis: { by: actor.id, at: new Date().toISOString(), reason: reason.trim(), gates: view.gates, goldenPercent: view.goldenPercent, calibrationPercent: view.calibrationPercent, stabilityScores: view.stabilityScores },
+        stage: target === 'bounced' ? 'rubric' : 'handoff',
+      })
       .where(eq(submissions.id, submissionId))
       .returning();
     await recordEvent(tx, submissionId, actor.id, `handoff_${target}`, { reason: reason.trim() });
