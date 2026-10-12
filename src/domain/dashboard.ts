@@ -10,7 +10,7 @@ export const STATE_ENTRY_ACTIONS: Record<WorkState, readonly string[]> = {
   in_review: ['sent_to_review', 'review_claimed', 'review_assigned'],
   review_returned: ['review_changes_requested', 'stability_reopened_rubric'],
   stability: ['review_approved'],
-  platform_returned: ['handoff_bounced'],
+  platform_returned: ['handoff_bounced', 'catalog_returned'],
   handoff: ['stability_accepted'],
   submitted: ['pushed_to_catalog'],
   other: ['parked'],

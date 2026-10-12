@@ -326,6 +326,7 @@ describe('legacy snapshot import', () => {
     expect(workStateOf({ stage: 'review', rubricAssigneeId: 'x', reviewStatus: 'pending' })).toBe('in_review');
     expect(workStateOf({ stage: 'parked', rubricAssigneeId: null, reviewStatus: null })).toBe('other');
     expect(workStateOf({ stage: 'handoff', rubricAssigneeId: 'x', reviewStatus: 'approved', handoffStatus: 'bounced' })).toBe('platform_returned');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: 'approved', handoffStatus: 'bounced' })).toBe('platform_returned');
     expect(workStateOf({ stage: 'done', rubricAssigneeId: 'x', reviewStatus: 'approved' })).toBe('submitted');
   });
 });

@@ -67,6 +67,7 @@ const TRACKED_ACTIONS = [
   'rubric_claimed',
   'rubric_assigned',
   'handoff_bounced',
+  'catalog_returned',
   'review_claimed',
   'review_assigned',
   'stability_reopened_rubric',

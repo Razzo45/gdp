@@ -2,11 +2,13 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { BoardFreshness } from '@/components/BoardFreshness';
 import { ClaimTask } from '@/components/ClaimTask';
+import { CatalogReturnQueue } from '@/components/CatalogReturnQueue';
 import { ImportTask } from '@/components/ImportTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { currentActor } from '@/lib/auth/identity';
 import { claimableSeat, isController } from '@/lib/auth/permissions';
+import { listPendingCatalogReturns } from '@/lib/services/catalogReturn';
 import { listSubmissions } from '@/lib/services/submissions';
 import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
@@ -24,7 +26,10 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const q = params['q']?.trim() || undefined;
   const mine = params['mine'] === '1';
   const pm = isController(actor);
-  const listedQuery = await listSubmissions(actor, { mine, q });
+  const [listedQuery, pendingReturns] = await Promise.all([
+    listSubmissions(actor, { mine, q }),
+    pm ? listPendingCatalogReturns(actor) : Promise.resolve([]),
+  ]);
   const listed = workState ? listedQuery.filter((r) => r.workState === workState) : listedQuery;
   const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
@@ -69,6 +74,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
         </form>
       )}
 
+      {pm && <CatalogReturnQueue items={pendingReturns} />}
       {pm && <ImportTask />}
 
       <div className="card overflow-x-auto p-0">

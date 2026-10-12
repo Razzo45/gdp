@@ -8,6 +8,7 @@ import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
+import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
 import { readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
@@ -32,7 +33,7 @@ export function readSource(submission: Pick<Submission, 'source'>): CatalogSubmi
 }
 
 /** Pulls the latest Catalog state and upserts our record. Safe to call often. */
-export async function syncSubmission(catalogSubmissionId: string, actorId: string | null): Promise<Submission> {
+export async function syncSubmission(catalogSubmissionId: string, actorId: string | null, hint?: { returnNote?: string | null }): Promise<Submission> {
   const fetched = await fetchSubmission(catalogSubmissionId);
   if (!fetched.ok) throw new ServiceError(fetched.status === 404 ? 404 : 502, fetched.error);
   const read = readCatalogSubmission(fetched.submission, fetched.project);
@@ -76,8 +77,35 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
       .where(eq(submissions.id, existing.id))
       .returning();
     if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
-    return updated!;
+    return noteCatalogReturnIfNeeded(tx, updated!, actorId, hint?.returnNote);
   });
+}
+
+/** Queue a PM reconciliation when Catalog sent a submitted task back. Does not change stage. */
+export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Submission, actorId: string | null, returnNote?: string | null): Promise<Submission> {
+  const watched = await watchedProjectFor(database, submission.projectId);
+  const { lane, detail } = catalogReturnFromSync({
+    statusId: submission.statusId,
+    source: submission.source as { submission?: unknown; project?: unknown },
+    watched,
+  });
+  if (!detail.note && returnNote?.trim()) detail.note = returnNote.trim();
+  const existing = parseCatalogReturn(submission.catalogReturn);
+  if (
+    !shouldEnqueueCatalogReturn({
+      stage: submission.stage,
+      handoffStatus: submission.handoffStatus,
+      catalogLane: lane,
+      catalogStatusId: submission.statusId,
+      existing,
+    })
+  ) {
+    return submission;
+  }
+  const catalogReturn = { ...detail, outcome: 'pending' as const };
+  const [updated] = await database.update(submissions).set({ catalogReturn }).where(eq(submissions.id, submission.id)).returning();
+  await recordEvent(database, submission.id, actorId, 'catalog_return_pending', detail);
+  return updated!;
 }
 
 export async function getSubmission(database: DbOrTx, id: string): Promise<Submission> {
@@ -119,12 +147,16 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     conditions.push(sql`false`);
   }
   if (filter.workState === 'preparing') {
-    conditions.push(and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`));
+    conditions.push(
+      and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`, sql`${submissions.handoffStatus} is distinct from 'bounced'`),
+    );
   }
   if (filter.workState === 'in_review') conditions.push(eq(submissions.stage, 'review'));
-  if (filter.workState === 'review_returned') conditions.push(and(eq(submissions.stage, 'rubric'), eq(submissions.reviewStatus, 'changes_requested')));
+  if (filter.workState === 'review_returned') {
+    conditions.push(and(eq(submissions.stage, 'rubric'), eq(submissions.reviewStatus, 'changes_requested'), sql`${submissions.handoffStatus} is distinct from 'bounced'`));
+  }
   if (filter.workState === 'stability') conditions.push(eq(submissions.stage, 'stability'));
-  if (filter.workState === 'platform_returned') conditions.push(and(eq(submissions.stage, 'handoff'), eq(submissions.handoffStatus, 'bounced')));
+  if (filter.workState === 'platform_returned') conditions.push(and(eq(submissions.handoffStatus, 'bounced'), sql`${submissions.stage} is distinct from 'done'`));
   if (filter.workState === 'handoff') conditions.push(and(eq(submissions.stage, 'handoff'), sql`${submissions.handoffStatus} is distinct from 'bounced'`));
   if (filter.workState === 'submitted') conditions.push(eq(submissions.stage, 'done'));
   if (filter.workState === 'other') conditions.push(eq(submissions.stage, 'parked'));

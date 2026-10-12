@@ -5,6 +5,7 @@ import { webhookEvents } from '@/db/schema';
 import { json } from '@/lib/api';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
 import { env } from '@/lib/env';
+import { catalogNoteFromPayload } from '@/domain/catalogReturn';
 import { syncSubmission, watchedProjectFor } from '@/lib/services/submissions';
 
 /**
@@ -27,6 +28,8 @@ const Delivery = z.object({
   projectId: z.string().optional(),
   submissionId: z.string().min(1),
   status: z.string().optional(),
+  note: z.string().optional(),
+  comment: z.string().optional(),
 });
 
 const ACTED_ON = new Set(['submission.status-changed', 'submission.created']);
@@ -82,7 +85,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const submission = await syncSubmission(event.submissionId, null);
+    const submission = await syncSubmission(event.submissionId, null, { returnNote: catalogNoteFromPayload(decoded) ?? event.note ?? event.comment });
     await outcome('synced', submission.id);
     return json({ ok: true, outcome: 'synced' });
   } catch (error) {

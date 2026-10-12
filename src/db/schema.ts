@@ -138,6 +138,7 @@ export const submissions = app.table('submissions', {
   handoffBasis: jsonb('handoff_basis').$type<Record<string, unknown>>(),
   pushedAt: ts('pushed_at'),
   pushReceipt: jsonb('push_receipt').$type<Record<string, unknown>>(),
+  catalogReturn: jsonb('catalog_return').$type<Record<string, unknown>>(),
   createdAt: ts('created_at').notNull().defaultNow(),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });

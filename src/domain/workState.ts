@@ -62,7 +62,7 @@ export function workStateOf(row: {
 }): WorkState {
   if (row.stage === 'parked') return 'other';
   if (row.stage === 'done') return 'submitted';
-  if (row.stage === 'handoff' && row.handoffStatus === 'bounced') return 'platform_returned';
+  if (row.handoffStatus === 'bounced') return 'platform_returned';
   if (row.stage === 'handoff') return 'handoff';
   if (row.stage === 'stability') return 'stability';
   if (row.stage === 'review') return 'in_review';
