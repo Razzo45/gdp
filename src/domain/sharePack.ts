@@ -23,6 +23,7 @@ export function shareFileHref(submissionId: string, fileId: string, token: strin
 }
 
 const HIDDEN_SHARE_FIELD = /^(expert\s*review|acceptance\s*criteria|preview(?:\s*image)?|notes)$/i;
+const HIDDEN_BRIEF_FIELD = /^(expert\s*(qa|review)|preview(?:\s*image)?)$/i;
 
 function fieldToken(value: string): string {
   return value
@@ -32,7 +33,16 @@ function fieldToken(value: string): string {
     .trim();
 }
 
+function hiddenBy(pattern: RegExp, field: { key: string; label: string }): boolean {
+  return pattern.test(fieldToken(field.key)) || pattern.test(fieldToken(field.label));
+}
+
 /** Catalog leftover the expert page should not show: review Q&A, acceptance list, preview, notes. */
 export function shareVisibleFields<T extends { key: string; label: string }>(fields: T[]): T[] {
-  return fields.filter((field) => !HIDDEN_SHARE_FIELD.test(fieldToken(field.key)) && !HIDDEN_SHARE_FIELD.test(fieldToken(field.label)));
+  return fields.filter((field) => !hiddenBy(HIDDEN_SHARE_FIELD, field));
+}
+
+/** Task brief: drop Catalog expert Q&A and the preview image; keep the brief itself. */
+export function briefVisibleFields<T extends { key: string; label: string }>(fields: T[]): T[] {
+  return fields.filter((field) => !hiddenBy(HIDDEN_BRIEF_FIELD, field));
 }

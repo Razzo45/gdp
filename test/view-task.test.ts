@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
-import { shareVisibleFields } from '@/domain/sharePack';
+import { briefVisibleFields, shareVisibleFields } from '@/domain/sharePack';
 import { viewTaskHref, viewTaskToken, viewTaskTokenMatches } from '@/domain/viewTask';
 
 describe('viewTask link', () => {
@@ -40,5 +40,17 @@ describe('share visible fields', () => {
       { key: 'notes', label: 'Notes', text: 'These two have a partial redundancy.' },
     ]);
     expect(kept.map((f) => f.key)).toEqual(['generalInformation']);
+  });
+});
+
+describe('brief visible fields', () => {
+  it('drops Expert Review and Preview image, and keeps the task and acceptance criteria', () => {
+    const kept = briefVisibleFields([
+      { key: 'task', label: 'Task', text: 'Turn the research into a four-ad test.' },
+      { key: 'expertQa', label: 'Expert Review', text: 'Question 1: Answer: Yes' },
+      { key: 'previewImage', label: 'Preview image', text: '[file: Screenshot 2026-10-05 at 16.49.58.png]' },
+      { key: 'acceptanceCriteria', label: 'Acceptance criteria', text: 'Are exactly four ads delivered?' },
+    ]);
+    expect(kept.map((f) => f.key)).toEqual(['task', 'acceptanceCriteria']);
   });
 });

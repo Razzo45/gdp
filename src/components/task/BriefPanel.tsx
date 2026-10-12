@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { prefersDirectAiUpload } from '@/domain/aiUpload';
+import { briefVisibleFields } from '@/domain/sharePack';
 import { FilePreview, FilePreviewList } from '../FilePreview';
 import { api } from '../client';
 import type { PanelProps } from './TaskWorkspace';
@@ -72,9 +73,9 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
     }
   }
 
-  const visibleFields = reviewer
-    ? view.brief.fields.filter((f) => /general|task|input/i.test(f.key) || /general|task/i.test(f.label))
-    : view.brief.fields;
+  const visibleFields = briefVisibleFields(
+    reviewer ? view.brief.fields.filter((f) => /general|task|input/i.test(f.key) || /general|task/i.test(f.label)) : view.brief.fields,
+  );
 
   return (
     <section className="card space-y-3">
@@ -97,8 +98,8 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
           {visibleFields.length === 0 && <dd className="text-muted">The Catalog payload has no readable fields.</dd>}
           {visibleFields.map((f) => (
             <div key={f.key}>
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted">{f.label}</dt>
-              <dd className="mt-0.5 whitespace-pre-wrap break-words leading-relaxed">{f.text}</dd>
+              <dt className="text-base font-bold">{f.label}</dt>
+              <dd className="mt-1 whitespace-pre-wrap break-words leading-relaxed">{f.text}</dd>
             </div>
           ))}
         </dl>
@@ -106,17 +107,17 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
 
       {view.can.seeGoldenFiles && (
         <div>
-          <h3 className="mb-1 text-xs font-medium text-muted">Golden files</h3>
+          <h3 className="mb-1 text-base font-bold">Golden files</h3>
           <FilePreviewList files={view.brief.goldenFiles} hrefFor={(f) => `/api/submissions/${s.id}/files/${f.id}`} empty="No explicit Golden files were provided." />
         </div>
       )}
       <div>
-        <h3 className="mb-1 text-xs font-medium text-muted">Input files</h3>
+        <h3 className="mb-1 text-base font-bold">Input files</h3>
         <FilePreviewList files={view.brief.inputFiles} hrefFor={(f) => `/api/submissions/${s.id}/files/${f.id}`} empty="No input files." />
       </div>
       <div id="ai-output-files">
         <div className="mb-1 flex flex-wrap items-center gap-2">
-          <h3 className="text-xs font-medium text-muted">AI output files ({view.aiOutputs.length})</h3>
+          <h3 className="text-base font-bold">AI output files ({view.aiOutputs.length})</h3>
           {uploadsAllowed && (
             <>
               <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
