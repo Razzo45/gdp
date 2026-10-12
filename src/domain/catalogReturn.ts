@@ -12,6 +12,7 @@ export interface CatalogReturnDetail {
   statusName: string | null;
   trigger: string | null;
   note: string | null;
+  [key: string]: unknown;
 }
 
 export interface CatalogReturnRecord extends CatalogReturnDetail {
