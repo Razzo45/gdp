@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { catalogAsciiText, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
-import { projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
+import { heroDeliverableFromSource, heroDeliverableOf, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
 
 const project = {
@@ -149,5 +149,50 @@ describe('project display name', () => {
     expect(projectDisplayName({ label: 'GDP Eval', project })).toBe('GDP Eval');
     expect(projectDisplayName({ label: '', project })).toBe('Deck QA');
     expect(projectDisplayName(null)).toBe('Project');
+  });
+});
+
+describe('hero deliverable', () => {
+  it('reads Hero deliverables from General Information', () => {
+    expect(
+      heroDeliverableOf({
+        generalInformation: { industry: 'Finance', heroDeliverables: 'Short-form video' },
+      }),
+    ).toBe('Short-form video');
+    expect(heroDeliverableOf({ generalInformation: { heroDeliverable: ['PPTX', 'MP4'] } })).toBe('PPTX, MP4');
+    expect(heroDeliverableOf({ generalInformation: 'Industry: Finance\nHero deliverables: Graphical' })).toBe('Graphical');
+    expect(heroDeliverableOf({ prompt: 'Make a deck.' })).toBe('');
+  });
+
+  it('reads the field from a stored Catalog source wrap', () => {
+    expect(
+      heroDeliverableFromSource({
+        submission: { projectId: 'p1', submission: { generalInformation: { heroDeliverables: 'Video' } } },
+      }),
+    ).toBe('Video');
+    expect(
+      heroDeliverableFromSource({
+        projectId: 'p1',
+        submission: { prompt: 'Make a deck.', generalInformation: { heroDeliverables: 'Graphical' } },
+      }),
+    ).toBe('Graphical');
+  });
+
+  it('reads Hero deliverables from a schema title when the key is opaque', () => {
+    expect(
+      heroDeliverableFromSource({
+        submission: { projectId: 'p1', submission: { generalInformation: { gi02: 'Video' } } },
+        project: {
+          formSchema: {
+            properties: {
+              generalInformation: {
+                title: 'General Information',
+                properties: { gi02: { title: 'Hero deliverables' } },
+              },
+            },
+          },
+        },
+      }),
+    ).toBe('Video');
   });
 });

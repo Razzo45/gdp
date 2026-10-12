@@ -29,6 +29,53 @@ export async function makeUser(db: Db, email: string, roles: Role[]): Promise<Ac
   return { id, email, displayName: email.split('@')[0]!, roles: new Set(roles), isActive: true };
 }
 
+/** 5 Format / 15 Content / 30 Visual — unique enough to pass local lint. */
+export function seatedRubricInputs() {
+  const upserts: Array<{
+    tag: 'Format/File' | 'Content - Semantics' | 'Visual - Layout';
+    statement: string;
+    notes: string;
+    scope: 'output';
+    inputFileIds: string[];
+    outputFile: null;
+  }> = [];
+  for (let i = 0; i < 5; i += 1) {
+    upserts.push({
+      tag: 'Format/File',
+      statement: `The delivered presentation uses a 16:9 page size on format seat ${i}.`,
+      notes: '',
+      scope: 'output',
+      inputFileIds: [],
+      outputFile: null,
+    });
+  }
+  for (let i = 0; i < 15; i += 1) {
+    upserts.push({
+      tag: 'Content - Semantics',
+      statement: `The deck names unique content claim ${i} for the client review.`,
+      notes: '',
+      scope: 'output',
+      inputFileIds: [],
+      outputFile: null,
+    });
+  }
+  for (let i = 0; i < 30; i += 1) {
+    upserts.push({
+      tag: 'Visual - Layout',
+      statement: `The title sits in the lower third on visual seat ${i}.`,
+      notes: '',
+      scope: 'output',
+      inputFileIds: [],
+      outputFile: null,
+    });
+  }
+  return upserts;
+}
+
+export function yesAnswers(ids: string[], yesCount: number): Record<string, boolean> {
+  return Object.fromEntries(ids.map((id, index) => [id, index < yesCount]));
+}
+
 export async function makeSubmission(db: Db, overrides: Partial<typeof schema.submissions.$inferInsert> = {}) {
   const source = {
     projectId: 'p1',

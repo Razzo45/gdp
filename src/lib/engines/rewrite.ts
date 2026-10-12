@@ -20,8 +20,9 @@ const Proposal = z.object({
 
 const SYSTEM = `You rewrite ONE rubric statement for foundation-model evaluation. A statement is an
 affirmative Precise Boolean proposition: "Yes" means the desired state holds. Never a
-question. One testable claim. No invented hex colours, brand strings, filenames or
-numbers that are absent from the original statement or the task context.
+question. One testable claim. Name files by role ("the delivered presentation"), never
+name.extension. No invented hex colours, brand strings, filenames or numbers that are
+absent from the original statement or the task context.
 
 Return JSON only: { "statement": "…", "rationale": "one short sentence" }`;
 

@@ -5,6 +5,7 @@ import { assemble, type BankRow } from '@/domain/assemble';
 import { allPass, lintStatement, nearDuplicate, toAffirmativeStatement, type LintResult, type LintVerdicts, LINT_ATTRIBUTES } from '@/domain/lint';
 import { enhancerRowsPerSeed, extractSeedsFromNotes, shouldExtractNotes } from '@/domain/seeds';
 import { inferFileScope } from '@/domain/fileScope';
+import { describeNamedFiles } from '@/domain/fileLanguage';
 import { correctTag, familyOfTag, familyQuotas, isRubricTag, MAX_SEEDS, RUBRIC_TAGS, RUBRIC_TARGET, type Family } from '@/domain/rubric';
 import { env } from '@/lib/env';
 import { GeminiError, generateJson, type MediaPart } from '@/lib/ai/gemini';
@@ -144,6 +145,9 @@ Return JSON only: { "rows": [ { "claim_key": "kebab-case-unique-id", "statement"
 - Exactly ONE testable claim per statement (non-stacked).
 - statement MUST be an affirmative proposition (Precise Boolean statement). Yes means the statement holds.
 - FORBIDDEN: "?" anywhere in statement. Do NOT emit interrogatives (no trailing ?, no Does/Do/Is/Are/Can/Will/Has/Have openers).
+- NEVER write a filename or name.extension (no deck.pptx, hero.mp4, brand-guide.pdf).
+  Name the file by role: "the delivered presentation", "the delivered video",
+  "the delivered image", "the source workbook", "the brand guide".
 - Do not invent output filenames or grade planned filenames.
 - Default handoff is ONE deliverable. Unless the CLIENT PROMPT clearly requires multiple
   deliverables, FORBIDDEN: statements that require an extra file/variant in the package.
@@ -178,7 +182,7 @@ supports, up to ${MAX_SEEDS}. One seed per distinct check. Do NOT collapse a
 numbered or bulleted list into a handful of themes. When notes are present, turn
 those notes into seeds; do not invent a different rubric. Cover format/delivery,
 the content the brief demands, and the visual craft of this medium. Each seed is
-one theme with one representative affirmative statement (no question marks).
+one theme with one representative affirmative statement (no question marks, no filenames).
 
 Return JSON only: { "seeds": [ { "theme": "short theme", "statement": "affirmative statement", "tag": "${TAG_LIST}" } ] }`;
 
@@ -453,7 +457,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
   const bank: BankRow[] = [];
   const usedKeys = new Set<string>();
   for (const seed of seeds) {
-    const statement = toAffirmativeStatement(seed.statement);
+    const statement = describeNamedFiles(toAffirmativeStatement(seed.statement));
     const tag = correctTag(statement, seed.tag && isRubricTag(seed.tag) ? seed.tag : undefined);
     const key = uniqueClaimKey(seed.statement || seed.id, usedKeys);
     bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: 'expert seed' });
@@ -487,7 +491,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
         totalTokens += result.usage.totalTokens;
         let kept = 0;
         for (const row of result.value.rows) {
-          const statement = toAffirmativeStatement(row.statement);
+          const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
           const tag = correctTag(statement, isRubricTag(row.tag) ? row.tag : seed.tag);
           const key = uniqueClaimKey(row.claim_key || row.statement, usedKeys);
           bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: row.notes.trim() });

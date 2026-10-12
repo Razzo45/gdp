@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { calibrations, reviewFeedback, submissions, type Calibration } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate } from '@/domain/gates';
+import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid, notFound } from './errors';
 import { pruneCalibrations, pruneReviewFeedback } from './retention';
@@ -32,6 +33,8 @@ export async function sendToReview(actor: Actor, submissionId: string): Promise<
     const rubric = await currentRubric(tx, submissionId);
     if (!rubric) throw conflict('Generate or write a rubric first.');
     const statements = await statementsOf(tx, rubric.id);
+    const spread = quotaSpread(countFamilies(statements));
+    if (!spread.ready) throw conflict(`Seat the rubric at 5 Format, 15 Content, 30 Visual first. ${spread.warning}`);
     const golden = await goldenState(tx, rubric.id, statements);
     if (!golden.gate.ok) throw conflict(`Golden must grade 100% before review: ${golden.gate.reasons.join(' ')}`);
     const preview = stabilityGate({

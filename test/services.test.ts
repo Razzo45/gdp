@@ -8,9 +8,11 @@ import { claimNext, complete, enqueue, expireOverdue, fail, heartbeat, JobConfli
 import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
 import { KEEP } from '@/lib/services/retention';
-import { currentRubric, goldenState, installFactoryVersion, overrideGolden, saveStatements, statementsOf } from '@/lib/services/rubric';
+import { startGoldenAutorate } from '@/lib/jobs/start';
+import { compactBankRow } from '@/domain/bank';
+import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
 import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, releaseSeat } from '@/lib/services/submissions';
-import { makeSubmission, makeUser, testDb } from './helpers/db';
+import { makeSubmission, makeUser, seatedRubricInputs, testDb, yesAnswers } from './helpers/db';
 
 let handle: Awaited<ReturnType<typeof testDb>>;
 let db: Db;
@@ -70,6 +72,22 @@ describe('seats', () => {
     expect(slot?.projectId).toBe('');
     expect(slot?.projectName).toBe('Project');
     expect(slot?.rubricAssigneeName).toBeNull();
+  });
+
+  it('lists Hero deliverables from General Information on claim slots', async () => {
+    const s = await makeSubmission(db, {
+      source: {
+        projectId: 'p1',
+        projectSubmissionId: `cs-${crypto.randomUUID().slice(0, 8)}`,
+        submission: {
+          prompt: 'Make a deck.',
+          generalInformation: { industry: 'Finance', heroDeliverables: 'Short-form video' },
+        },
+        files: [],
+      },
+    });
+    const queue = await listSubmissions(creator2);
+    expect(queue.find((r) => r.id === s.id)?.heroDeliverable).toBe('Short-form video');
   });
 
   it('lists parked tasks for a PM so a catchup rewrite cannot empty the board', async () => {
@@ -225,15 +243,102 @@ describe('rubric autosave with revision CAS', () => {
   });
 });
 
+describe('rubric quota seats', () => {
+  const passLint = {
+    overall: 'pass' as const,
+    verdicts: {
+      falsifiable: 'pass',
+      universal: 'pass',
+      unambiguous: 'pass',
+      self_contained: 'pass',
+      non_stacked: 'pass',
+      timeless: 'pass',
+      expected_yes: 'pass',
+      file_addressed_present: 'pass',
+    } as const,
+    reasons: [] as string[],
+    rewriteSuggestion: '',
+    source: 'local' as const,
+  };
+
+  it('refuses Add from the bank when that family is already full', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    await installFactoryVersion(db, s.id, creator.id, {
+      seeds: [],
+      statements: [0, 1, 2, 3, 4].map((i) => ({
+        family: 'format' as const,
+        tag: 'Format/File',
+        statement: `The delivered presentation uses a 16:9 page size on format seat ${i}.`,
+        notes: '',
+        claimKey: `fmt-${i}`,
+        origin: 'factory' as const,
+        lint: passLint,
+        scope: 'output' as const,
+        inputFileIds: [] as string[],
+        outputFile: null,
+      })),
+      generation: {
+        bank: [
+          compactBankRow({
+            claimKey: 'extra-fmt',
+            statement: 'The delivered presentation uses a 4:3 page size.',
+            tag: 'Format/File',
+            family: 'format',
+            notes: '',
+            seedId: 's1',
+          }),
+          compactBankRow({
+            claimKey: 'extra-content',
+            statement: 'The deck names the extra content claim.',
+            tag: 'Content - Exact',
+            family: 'content',
+            notes: '',
+            seedId: 's1',
+          }),
+        ],
+      },
+    });
+    await expectStatus(addFromBank(creator, s.id, { claimKey: 'extra-fmt', revision: 0 }), 409);
+    const added = await addFromBank(creator, s.id, { claimKey: 'extra-content', revision: 0 });
+    expect(added.statements).toHaveLength(6);
+  });
+
+  it('replaces the current rubric with a pasted 5 / 15 / 30 set and refuses a short paste', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const first = await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [{ tag: 'Content - Exact', statement: 'The deck names the client.', notes: '', scope: 'output', inputFileIds: [], outputFile: null }],
+      deletes: [],
+    });
+    await expectStatus(replaceRubricFromPaste(creator, s.id, { revision: first.revision, rows: seatedRubricInputs().slice(0, 40) }), 422);
+    const replaced = await replaceRubricFromPaste(creator, s.id, { revision: first.revision, rows: seatedRubricInputs() });
+    expect(replaced.imported).toBe(50);
+    expect(replaced.statements).toHaveLength(50);
+    expect(replaced.statements.some((row) => row.statement === 'The deck names the client.')).toBe(false);
+    const versions = await db.select().from(rubrics).where(eq(rubrics.submissionId, s.id));
+    expect(versions.filter((row) => row.isCurrent)).toHaveLength(1);
+    expect(Math.max(...versions.map((row) => row.version))).toBe(2);
+  });
+
+  it('refuses Golden autorate until the 5 / 15 / 30 spread is seated', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [{ tag: 'Content - Exact', statement: 'The deck names the client.', notes: '', scope: 'output', inputFileIds: [], outputFile: null }],
+      deletes: [],
+    });
+    await expectStatus(startGoldenAutorate(creator, s.id, { requestId: crypto.randomUUID() }), 409);
+  });
+});
+
 describe('review flow', () => {
   async function readyForReview() {
     const s = await makeSubmission(db);
     await claimSeat(creator, s.id, 'rubric');
-    const saved = await saveStatements(creator, s.id, {
-      revision: 0,
-      upserts: ['The deck names the client.', 'The deck has a title slide.', 'The chart axes are labelled.', 'Every slide has a footer.'].map((statement) => ({ tag: 'Content - Structural' as const, statement, notes: '', scope: 'output' as const, inputFileIds: [], outputFile: null })),
-      deletes: [],
-    });
+    const saved = await saveStatements(creator, s.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
     for (const st of saved.statements) await overrideGolden(creator, s.id, st.id, true, 'Verified manually.');
     return { s, statements: saved.statements };
   }
@@ -252,17 +357,18 @@ describe('review flow', () => {
 
     await claimSeat(reviewer, s.id, 'review');
     await expectStatus(saveCalibration(creator2, s.id, { answers: {}, evidence: {}, submit: false }), 403);
-    const [a, b, c, d] = statements.map((x) => x.id) as [string, string, string, string];
+    const ids = statements.map((x) => x.id);
+    const first = ids[0]!;
 
     // Partial draft is fine; submit with gaps or thin evidence is not.
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true }, evidence: {}, submit: false });
-    await expectStatus(saveCalibration(reviewer, s.id, { answers: { [a]: true }, evidence: {}, submit: true }), 422);
-    await expectStatus(saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: true, [c]: true, [d]: false }, evidence: {}, submit: true }), 422);
+    await saveCalibration(reviewer, s.id, { answers: { [first]: true }, evidence: {}, submit: false });
+    await expectStatus(saveCalibration(reviewer, s.id, { answers: { [first]: true }, evidence: {}, submit: true }), 422);
+    await expectStatus(saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 38), evidence: {}, submit: true }), 422);
 
-    const noted = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
 
-    // 75% → out of band → approval refused, changes can be requested.
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: true, [c]: true, [d]: false }, evidence: noted([a, b, c, d]), submit: true });
+    // 76% → out of band → approval refused, changes can be requested.
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 38), evidence: noted, submit: true });
     await expectStatus(decideReview(reviewer, s.id, 'approved', ''), 409);
     await expectStatus(decideReview(reviewer, s.id, 'changes_requested', 'short'), 422);
     await decideReview(reviewer, s.id, 'changes_requested', 'Too lenient: tighten the structural checks.');
@@ -272,9 +378,9 @@ describe('review flow', () => {
     expect(after.rubricAssigneeId).toBe(creator.id);
     await expectStatus(assignSeat(pm, s.id, 'review', reviewer.id), 409);
 
-    // Back to review with a 25% score → approved → stability.
+    // Back to review with a 26% score → approved → stability.
     await sendToReview(creator, s.id);
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: false, [c]: false, [d]: false }, evidence: noted([a, b, c, d]), submit: true });
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 13), evidence: noted, submit: true });
     await decideReview(reviewer, s.id, 'approved', '');
     after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('stability');
@@ -285,21 +391,21 @@ describe('review flow', () => {
     await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-return', storagePath: `return-${s.id}`, uploadedBy: creator.id });
     await sendToReview(creator, s.id);
     await claimSeat(reviewer, s.id, 'review');
-    const [a, b, c, d] = statements.map((x) => x.id) as [string, string, string, string];
-    const noted = Object.fromEntries([a, b, c, d].map((id) => [id, 'Checked on the output.']));
+    const ids = statements.map((x) => x.id);
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
 
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: true, [c]: true, [d]: false }, evidence: noted, submit: true });
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 38), evidence: noted, submit: true });
     await decideReview(reviewer, s.id, 'changes_requested', 'Too lenient: tighten the structural checks.');
     await sendToReview(creator, s.id);
 
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: false, [c]: false, [d]: false }, evidence: noted, submit: false });
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 13), evidence: noted, submit: false });
     await decideReview(reviewer, s.id, 'approved', '');
     const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('stability');
     const rubric = await currentRubric(db, s.id);
     const latest = (await db.select().from(calibrations).where(eq(calibrations.rubricId, rubric!.id))).sort((x, y) => x.createdAt.localeCompare(y.createdAt)).at(-1);
     expect(latest?.submitted).toBe(true);
-    expect(latest?.scorePercent).toBe(25);
+    expect(latest?.scorePercent).toBe(26);
   });
 
   it('lets the reviewer send a returned eval back again with notes', async () => {
@@ -307,13 +413,13 @@ describe('review flow', () => {
     await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-notes', storagePath: `notes-${s.id}`, uploadedBy: creator.id });
     await sendToReview(creator, s.id);
     await claimSeat(reviewer, s.id, 'review');
-    const [a, b, c, d] = statements.map((x) => x.id) as [string, string, string, string];
-    const noted = Object.fromEntries([a, b, c, d].map((id) => [id, 'Checked on the output.']));
+    const ids = statements.map((x) => x.id);
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
 
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: false, [c]: false, [d]: false }, evidence: noted, submit: true });
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 13), evidence: noted, submit: true });
     await decideReview(reviewer, s.id, 'changes_requested', 'Too lenient: tighten the structural checks.');
     await sendToReview(creator, s.id);
-    await saveCalibration(reviewer, s.id, { answers: { [a]: true, [b]: true, [c]: false, [d]: false }, evidence: noted, submit: false });
+    await saveCalibration(reviewer, s.id, { answers: yesAnswers(ids, 25), evidence: noted, submit: false });
     await decideReview(reviewer, s.id, 'changes_requested', 'Still off: drop the extra structural yes.');
     const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('rubric');
@@ -352,11 +458,7 @@ describe('retention', () => {
     const { s, statements } = await (async () => {
       const row = await makeSubmission(db);
       await claimSeat(creator, row.id, 'rubric');
-      const saved = await saveStatements(creator, row.id, {
-        revision: 0,
-        upserts: ['The deck names the client.', 'The deck has a title slide.', 'The chart axes are labelled.', 'Every slide has a footer.'].map((statement) => ({ tag: 'Content - Structural' as const, statement, notes: '', scope: 'output' as const, inputFileIds: [], outputFile: null })),
-        deletes: [],
-      });
+      const saved = await saveStatements(creator, row.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
       for (const st of saved.statements) await overrideGolden(creator, row.id, st.id, true, 'Verified manually.');
       await db.insert(aiOutputFiles).values({ submissionId: row.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-draft', storagePath: `draft-${row.id}`, uploadedBy: creator.id });
       await sendToReview(creator, row.id);
@@ -376,11 +478,7 @@ describe('retention', () => {
     const { s, statements } = await (async () => {
       const row = await makeSubmission(db);
       await claimSeat(creator, row.id, 'rubric');
-      const saved = await saveStatements(creator, row.id, {
-        revision: 0,
-        upserts: ['The deck names the client.', 'The deck has a title slide.', 'The chart axes are labelled.', 'Every slide has a footer.'].map((statement) => ({ tag: 'Content - Structural' as const, statement, notes: '', scope: 'output' as const, inputFileIds: [], outputFile: null })),
-        deletes: [],
-      });
+      const saved = await saveStatements(creator, row.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
       for (const st of saved.statements) await overrideGolden(creator, row.id, st.id, true, 'Verified manually.');
       await db.insert(aiOutputFiles).values({ submissionId: row.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-rescore', storagePath: `rescore-${row.id}`, uploadedBy: creator.id });
       await sendToReview(creator, row.id);

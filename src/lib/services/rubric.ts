@@ -8,11 +8,11 @@ import type { DbOrTx } from '@/db/types';
 import { statementHash } from '@/domain/fingerprint';
 import { isLiveHumanNote } from '@/domain/golden';
 import { goldenGate, type GoldenGate, type Verdict } from '@/domain/gates';
-import { parseImport } from '@/domain/import';
+import { describeNamedFiles } from '@/domain/fileLanguage';
 import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
-import { lintStatement, nearDuplicate, type LintResult } from '@/domain/lint';
+import { lintStatement, nearDuplicate, toAffirmativeStatement, type LintResult } from '@/domain/lint';
 import { applyInferredScope } from '@/domain/fileScope';
-import { correctTag, familyOfStatement, familyOfTag, isRubricTag, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import type { FactoryStatement } from '@/lib/engines/rubricFactory';
 import { conflict, forbidden, invalid, notFound } from './errors';
@@ -30,8 +30,8 @@ function scopeFromCatalog<T extends { statement: string; scope: 'output' | 'inpu
  * Every write carries the revision the editor last saw. If the stored
  * revision moved, the save is refused with the current statements so the
  * editor can merge — no silent overwrites between two tabs or two people.
- * A new rubric *version* is created only by the factory or by an explicit
- * "start over"; edits never destroy golden/stability evidence silently,
+ * A new rubric *version* is created only by the factory or by pasting a
+ * full external rubric; edits never destroy golden/stability evidence silently,
  * because ratings are keyed by statement id and a changed statement text
  * invalidates its AI golden rating (see `goldenState`).
  */
@@ -313,7 +313,7 @@ function displacedOf(statement: RubricStatement): BankCandidate | null {
  * Unused candidates from the generation bank for a seat: same family, claim
  * key not already seated, wording not a paraphrase of any seated statement.
  */
-export async function replacementCandidates(database: DbOrTx, submissionId: string, statementId: string, limit = 5): Promise<{ statement: RubricStatement; candidates: BankCandidate[] }> {
+export async function replacementCandidates(database: DbOrTx, submissionId: string, statementId: string, limit = 8): Promise<{ statement: RubricStatement; candidates: BankCandidate[] }> {
   const rubric = await currentRubric(database, submissionId);
   if (!rubric) throw notFound('The rubric');
   const rows = await statementsOf(database, rubric.id);
@@ -370,6 +370,11 @@ export async function addFromBank(actor: Actor, submissionId: string, input: { c
     const rows = await statementsOf(tx, rubric.id);
     const candidate = unusedCandidate(rubric, rows, input.claimKey);
     const tag = correctTag(candidate.statement, candidate.tag);
+    const family = familyOfTag(tag);
+    const spread = quotaSpread(countFamilies(rows));
+    if (!spread.canAdd[family]) {
+      throw conflict(`Delete a ${family === 'format' ? 'Format' : family === 'content' ? 'Content' : 'Visual'} seat before adding another. ${spread.warning}`.trim());
+    }
     const lint = lintStatement({ statement: candidate.statement, tag });
     const scoped = scopeFromCatalog({ statement: candidate.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
     await tx.insert(rubricStatements).values({
@@ -401,35 +406,72 @@ export async function addFromBank(actor: Actor, submissionId: string, input: { c
 
 /* ────────────────────────────────────────────────── import ── */
 
-export async function importStatements(actor: Actor, submissionId: string, input: { text: string; revision: number }): Promise<SaveResult & { imported: number; skipped: string[] }> {
-  const parsed = parseImport(input.text);
-  if (parsed.rows.length === 0) throw invalid('No usable statements found. One statement per line, at least 8 characters.');
-  if (parsed.rows.length > 200) throw invalid('Import at most 200 statements at a time.');
+export async function replaceRubricFromPaste(
+  actor: Actor,
+  submissionId: string,
+  input: { revision: number; rows: { tag: (typeof RUBRIC_TAGS)[number]; statement: string }[] },
+): Promise<SaveResult & { imported: number }> {
+  if (input.rows.length === 0) throw invalid('Paste at least one statement.');
+  if (input.rows.length > 200) throw invalid('Import at most 200 statements at a time.');
+  const prepared = input.rows.map((row) => {
+    const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
+    const tag = correctTag(statement, row.tag);
+    return { statement, tag, family: familyOfTag(tag) };
+  });
+  if (prepared.some((row) => row.statement.length < 8 || row.statement.length > 600)) {
+    throw invalid('Every statement must be between 8 and 600 characters.');
+  }
+  const spread = quotaSpread(countFamilies(prepared), familyQuotas());
+  if (!spread.ready) throw invalid(`Seat the rubric at 5 Format, 15 Content, 30 Visual first. ${spread.warning}`);
+
   const result = await db().transaction(async (tx) => {
     const submission = await requireRubricSeat(tx, actor, submissionId);
-    const rubric = await ensureCurrentRubric(tx, submissionId, actor.id);
-    const locked = (await tx.select({ revision: rubrics.revision }).from(rubrics).where(eq(rubrics.id, rubric.id)).for('update'))[0]!;
-    if (locked.revision !== input.revision) throw conflict('Someone saved a newer version of this rubric. Your view has been refreshed.', { revision: locked.revision, statements: await statementsOf(tx, rubric.id) });
-    const existing = await statementsOf(tx, rubric.id);
-    const fresh = parsed.rows.filter((r) => !existing.some((s) => nearDuplicate(s.statement, r.statement)));
-    const now = new Date().toISOString();
-    if (fresh.length) {
-      await tx.insert(rubricStatements).values(
-        fresh.map((r, i) => {
-          const tag = correctTag(r.statement, r.tag);
-          const lint = lintStatement({ statement: r.statement, tag });
-          const scoped = scopeFromCatalog({ statement: r.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
-          return { rubricId: rubric.id, position: existing.length + i + 1, family: familyOfTag(tag), tag, statement: r.statement, notes: '', scope: scoped.scope, inputFileIds: scoped.inputFileIds, outputFile: scoped.outputFile, origin: 'import' as const, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now };
-        }),
-      );
+    const previous = await currentRubric(tx, submissionId);
+    if (previous) {
+      const locked = (await tx.select({ revision: rubrics.revision }).from(rubrics).where(eq(rubrics.id, previous.id)).for('update'))[0]!;
+      if (locked.revision !== input.revision) {
+        throw conflict('Someone saved a newer version of this rubric. Your view has been refreshed.', { revision: locked.revision, statements: await statementsOf(tx, previous.id) });
+      }
+      await tx.update(rubrics).set({ isCurrent: false }).where(eq(rubrics.id, previous.id));
+    } else if (input.revision !== 0) {
+      throw conflict('Someone saved a newer version of this rubric. Your view has been refreshed.');
     }
-    const [bumped] = await tx.update(rubrics).set({ revision: sql`${rubrics.revision} + 1` }).where(eq(rubrics.id, rubric.id)).returning({ revision: rubrics.revision });
+
+    const [rubric] = await tx
+      .insert(rubrics)
+      .values({ submissionId, version: (previous?.version ?? 0) + 1, seeds: [], generation: {}, createdBy: actor.id })
+      .returning();
+    const now = new Date().toISOString();
+    const warnings: SaveResult['warnings'] = [];
+    await tx.insert(rubricStatements).values(
+      seatsInDisplayOrder(prepared.map((row, index) => ({ ...row, id: String(index), position: index }))).map((row, index) => {
+        const lint = lintStatement({ statement: row.statement, tag: row.tag });
+        const scoped = scopeFromCatalog({ statement: row.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
+        if (lint.overall === 'fail') warnings.push({ statementId: '', reasons: lint.reasons });
+        return {
+          rubricId: rubric!.id,
+          position: index + 1,
+          family: row.family,
+          tag: row.tag,
+          statement: row.statement,
+          notes: '',
+          scope: scoped.scope,
+          inputFileIds: scoped.inputFileIds,
+          outputFile: scoped.outputFile,
+          origin: 'import' as const,
+          lint: lint as unknown as Record<string, unknown>,
+          updatedBy: actor.id,
+          updatedAt: now,
+        };
+      }),
+    );
     await tx.update(submissions).set({ revision: sql`${submissions.revision} + 1` }).where(eq(submissions.id, submissionId));
-    await recordEvent(tx, submissionId, actor.id, 'statements_imported', { imported: fresh.length, duplicates: parsed.rows.length - fresh.length });
-    const after = await statementsOf(tx, rubric.id);
-    return { revision: bumped!.revision, statements: after, warnings: after.filter((s) => (s.lint as { overall?: string } | null)?.overall === 'fail').map((s) => ({ statementId: s.id, reasons: ((s.lint as { reasons?: string[] }).reasons ?? []) })), imported: fresh.length };
+    await pruneRubricVersions(tx, submissionId);
+    await recordEvent(tx, submissionId, actor.id, 'rubric_replaced_from_paste', { version: rubric!.version, statements: prepared.length });
+    const statements = await statementsOf(tx, rubric!.id);
+    return { revision: rubric!.revision, statements, warnings, imported: statements.length };
   });
-  return { ...result, skipped: parsed.skipped };
+  return result;
 }
 
 export function toGradeStatement(s: RubricStatement, seat?: number) {

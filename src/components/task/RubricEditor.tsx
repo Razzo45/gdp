@@ -9,7 +9,8 @@ import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, RUBRIC_TARGET, correctTag, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { FAMILY_LABELS, MAX_ROUGH_CHARS, correctTag, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { PasteRubricModal } from './PasteRubricModal';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
@@ -60,10 +61,11 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
-  const [importText, setImportText] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [bankFocus, setBankFocus] = useState<BankFocus | null>(null);
+  const [swapPick, setSwapPick] = useState<{ rowId: string; candidates: BankCandidate[] } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveRef = useRef<() => Promise<void>>(async () => undefined);
+  const saveRef = useRef<() => Promise<number | undefined>>(async () => undefined);
   const browserRef = useRef<HTMLDivElement | null>(null);
   const bank = useMemo(() => parseBank(rubric?.generation), [rubric?.generation]);
 
@@ -77,7 +79,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   }, [rubric?.id, rubric?.revision, rubric?.statements.length]);
 
   const save = useCallback(async () => {
-    if (!rubric || (dirty.size === 0 && deleted.size === 0)) return;
+    if (!rubric || (dirty.size === 0 && deleted.size === 0)) return revision;
     setSaving('saving');
     const upserts = drafts.filter((d) => dirty.has(d.id)).map(({ isNew: _isNew, ...rest }) => rest);
     const deletes = [...deleted];
@@ -94,6 +96,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       setDirty(new Set());
       setDeleted(new Set());
       setSaving('saved');
+      return result.revision;
     } catch (error) {
       if (error instanceof ApiError && error.status === 409 && Array.isArray(error.detail['statements'])) {
         setDrafts((error.detail['statements'] as RubricStatement[]).map(toDraft));
@@ -106,6 +109,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         setSaving('error');
         notify(error instanceof Error ? error.message : 'Save failed.', 'bad');
       }
+      return revision;
     }
   }, [rubric, dirty, deleted, drafts, revision, view.submission.id, notify]);
   saveRef.current = save;
@@ -130,11 +134,22 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
     schedule();
   };
 
+  const remove = (id: string) => {
+    setDrafts((current) => current.filter((d) => d.id !== id));
+    setDeleted((current) => new Set(current).add(id));
+    setDirty((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+    schedule();
+  };
+
   async function run(label: string, path: string, body: Record<string, unknown>, okMessage: string) {
     setBusy(label);
     try {
-      await saveRef.current();
-      await api(path, { body });
+      const nextRevision = await saveRef.current();
+      await api(path, { body: typeof body.revision === 'number' && typeof nextRevision === 'number' ? { ...body, revision: nextRevision } : body });
       notify(okMessage);
       await refresh();
     } catch (error) {
@@ -161,35 +176,36 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   }
 
   async function proposeSwap(d: Draft) {
+    if (swapPick?.rowId === d.id) {
+      setSwapPick(null);
+      setBankFocus(null);
+      return;
+    }
     setBusy(`swap:${d.id}`);
     try {
       await saveRef.current();
       const result = await api<{ candidates: BankCandidate[] }>(`/api/submissions/${view.submission.id}/rubric/replacement`, {
         body: { action: 'propose', statementId: d.id },
       });
-      const top = result.candidates[0];
-      if (!top) {
-        notify('No unused stronger claim for this seat.', 'bad');
+      if (result.candidates.length === 0) {
+        notify('No unused bank claims for this seat.', 'bad');
+        setSwapPick(null);
         return;
       }
-      setProposal({
-        statementId: d.id,
-        kind: 'swap',
-        text: top.statement,
-        original: d.statement,
-        claimKey: top.claimKey,
-        rationale: top.strength !== undefined ? `Bank strength ${top.strength}` : undefined,
-      });
+      setProposal(null);
+      setSwapPick({ rowId: d.id, candidates: result.candidates });
+      setBankFocus({ rowId: d.id, family: seatedFamily(d), statement: d.statement });
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not suggest a replacement.', 'bad');
+      notify(error instanceof Error ? error.message : 'Could not load swap candidates.', 'bad');
     } finally {
       setBusy(null);
     }
   }
 
   async function swapFromBank(rowId: string, candidate: BankCandidate) {
-    await run('keep', `/api/submissions/${view.submission.id}/rubric/replacement`, { action: 'keep', statementId: rowId, claimKey: candidate.claimKey, revision }, 'Replacement kept. Golden autorate is stale.');
+    await run('keep', `/api/submissions/${view.submission.id}/rubric/replacement`, { action: 'keep', statementId: rowId, claimKey: candidate.claimKey, revision }, 'Seat swapped. Golden autorate is stale.');
     setBankFocus(null);
+    setSwapPick(null);
   }
 
   async function addBankRow(candidate: BankCandidate) {
@@ -213,7 +229,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
     return c;
   }, [drafts]);
   const quotas = rubric?.quotas ?? { format: 5, content: 15, visual: 30 };
-  const target = rubric?.target ?? RUBRIC_TARGET;
+  const spread = quotaSpread(counts, quotas);
   const golden = view.golden;
   const genJob = view.jobs.find((j) => j.kind === 'rubric_generate' && (j.status === 'queued' || j.status === 'running'));
   const rateJob = view.jobs.find((j) => j.kind === 'golden_autorate' && (j.status === 'queued' || j.status === 'running'));
@@ -241,7 +257,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       <section className="card space-y-3" id="rubrics-generated">
         <h2 className="font-semibold">Rubric Review</h2>
         <p className="text-sm text-muted">Read-only rubric the Reviewer Team is scoring against the AI output.</p>
-        <StatementGroups groups={groups} drafts={drafts} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} softIds={softIds} strengths={strengths} weightById={weightById} />
+        <StatementGroups groups={groups} drafts={drafts} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
       </section>
     );
   }
@@ -283,22 +299,27 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
           </button>
         )}
         {editable && (
-          <button
-            className={`btn ml-auto ${drafts.length === 0 ? 'btn-primary' : ''}`}
-            disabled={busy !== null || Boolean(genJob) || Boolean(rateJob)}
-            title={rateJob ? 'Wait for autorating to finish' : genJob ? 'Generation already running' : 'Generate the rubric from the notes above'}
-            type="button"
-            onClick={() => {
-              if (seedProblem) {
-                notify(seedProblem, 'bad');
-                return;
-              }
-              const body = { requestId: uuid(), source: seeds, target: rubric?.target ?? 50 };
-              void run('generate', `/api/submissions/${view.submission.id}/rubric/generate`, body, 'Generation queued. Watch the progress card.');
-            }}
-          >
-            {genJob ? 'Generating…' : busy === 'generate' ? 'Starting…' : drafts.length === 0 ? 'Generate rubric' : 'Regenerate rubric'}
-          </button>
+          <>
+            <button className="btn ml-auto" type="button" disabled={busy !== null} onClick={() => setPasteOpen(true)}>
+              Paste a rubric
+            </button>
+            <button
+              className={`btn ${drafts.length === 0 ? 'btn-primary' : ''}`}
+              disabled={busy !== null || Boolean(genJob) || Boolean(rateJob)}
+              title={rateJob ? 'Wait for autorating to finish' : genJob ? 'Generation already running' : 'Generate the rubric from the notes above'}
+              type="button"
+              onClick={() => {
+                if (seedProblem) {
+                  notify(seedProblem, 'bad');
+                  return;
+                }
+                const body = { requestId: uuid(), source: seeds, target: rubric?.target ?? 50 };
+                void run('generate', `/api/submissions/${view.submission.id}/rubric/generate`, body, 'Generation queued. Watch the progress card.');
+              }}
+            >
+              {genJob ? 'Generating…' : busy === 'generate' ? 'Starting…' : drafts.length === 0 ? 'Generate rubric' : 'Regenerate rubric'}
+            </button>
+          </>
         )}
       </div>
 
@@ -314,16 +335,10 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         />
       )}
 
-      {editable && drafts.length > 0 && drafts.length < target && FAMILY_ORDER.some((f) => counts[f] < (quotas[f] ?? 0)) && (
+      {editable && drafts.length > 0 && !spread.ready && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
-          <strong>Some rubric sections need more checks</strong>
-          <ul className="mt-1 text-xs">
-            {FAMILY_ORDER.filter((f) => counts[f] < (quotas[f] ?? 0)).map((f) => (
-              <li key={f}>
-                {FAMILY_HEADING[f]} short by {(quotas[f] ?? 0) - counts[f]} ({counts[f]} of {quotas[f]} seated)
-              </li>
-            ))}
-          </ul>
+          <strong>Seat 5 Format, 15 Content, 30 Visual</strong>
+          <p className="mt-1 text-xs">{spread.warning}</p>
         </div>
       )}
 
@@ -408,7 +423,8 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
               {view.can.runGolden ? (
                 <button
                   className="btn btn-primary"
-                  disabled={busy !== null || autorateLocked || drafts.length === 0}
+                  disabled={busy !== null || autorateLocked || drafts.length === 0 || !spread.ready}
+                  title={spread.ready ? undefined : spread.warning}
                   type="button"
                   onClick={() => run('golden', `/api/submissions/${view.submission.id}/golden`, { requestId: uuid() }, 'Autorating golden files')}
                 >
@@ -439,6 +455,9 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         onReassess={(d) => run('reassess', `/api/submissions/${view.submission.id}/golden`, { requestId: uuid(), statementIds: [d.id] }, 'Reassessing Golden statement')}
         onKeep={keepProposal}
         onDiscard={() => setProposal(null)}
+        onDelete={remove}
+        onApplySwap={swapFromBank}
+        swapPick={swapPick}
         softIds={softIds}
         strengths={strengths}
         weightById={weightById}
@@ -470,6 +489,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                   onClearFocus={() => setBankFocus(null)}
                   onAdd={addBankRow}
                   onSwap={swapFromBank}
+                  canAddFamily={(family) => spread.canAdd[family]}
                 />
               </>
             )}
@@ -478,18 +498,14 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         </div>
       )}
 
-      {editable && (
-        <details className="rounded-xl border border-line p-3 text-sm">
-          <summary className="cursor-pointer font-medium">Paste statements</summary>
-          <textarea className="input mt-2 min-h-24 font-mono text-xs" value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="One statement per line. Optional Tag | statement" />
-          <button
-            className="btn mt-2"
-            disabled={!importText.trim() || busy !== null}
-            onClick={() => run('import', `/api/submissions/${view.submission.id}/rubric/import`, { text: importText, revision }, 'Statements imported.').then(() => setImportText(''))}
-          >
-            Import
-          </button>
-        </details>
+      {pasteOpen && editable && (
+        <PasteRubricModal
+          busy={busy === 'import'}
+          onClose={() => setPasteOpen(false)}
+          onReplace={(rows) => {
+            void run('import', `/api/submissions/${view.submission.id}/rubric/import`, { revision, rows }, 'Rubric replaced.').then(() => setPasteOpen(false));
+          }}
+        />
       )}
     </section>
   );
@@ -566,6 +582,9 @@ function StatementGroups(props: {
   onReassess: (d: Draft) => void;
   onKeep: () => void;
   onDiscard: () => void;
+  onDelete: (id: string) => void;
+  onApplySwap: (rowId: string, candidate: BankCandidate) => void;
+  swapPick: { rowId: string; candidates: BankCandidate[] } | null;
   softIds: Set<string>;
   strengths: Record<string, number>;
   weightById: Map<string, number>;
@@ -601,7 +620,7 @@ function StatementGroups(props: {
   );
 }
 
-function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts'>) {
+function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard, onDelete, onApplySwap, swapPick }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts'>) {
   const lint = lintOf(d, view.rubric);
   const verdict = golden?.verdicts[d.id];
   const source = golden?.sources[d.id];
@@ -746,16 +765,37 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
             )}
           </div>
         )}
-        {mine && (
-          <div className={`rounded-lg p-2 text-sm ${proposal.kind === 'swap' ? 'border border-warn bg-warn-soft' : 'border border-accent bg-accent-soft'}`}>
-            <p className="text-[11px] font-medium text-muted">{proposal.kind === 'swap' ? 'Suggested replacement' : proposal.kind === 'harden' ? 'Harden proposal' : proposal.kind === 'polish' ? 'Polish proposal' : 'Wording proposal'}</p>
+        {mine && proposal.kind !== 'swap' && (
+          <div className="rounded-lg border border-accent bg-accent-soft p-2 text-sm">
+            <p className="text-[11px] font-medium text-muted">{proposal.kind === 'harden' ? 'Harden proposal' : proposal.kind === 'polish' ? 'Polish proposal' : 'Wording proposal'}</p>
             {proposal.original && <p className="mt-1 text-xs text-muted line-through">{proposal.original}</p>}
             <p className="mt-1">{proposal.text}</p>
             {proposal.rationale && <p className="mt-1 text-xs text-muted">{proposal.rationale}</p>}
             <div className="mt-2 flex gap-2">
-              <button className="btn btn-primary btn-sm" type="button" onClick={onKeep}>{proposal.kind === 'swap' ? 'Use this claim' : 'Keep'}</button>
-              <button className="btn btn-ghost btn-sm" type="button" onClick={onDiscard}>{proposal.kind === 'swap' ? 'Discard replacement' : 'Discard'}</button>
+              <button className="btn btn-primary btn-sm" type="button" onClick={onKeep}>Keep</button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={onDiscard}>Discard</button>
             </div>
+          </div>
+        )}
+        {swapPick?.rowId === d.id && (
+          <div className="rounded-xl border border-accent bg-accent-soft p-2 text-sm">
+            <p className="text-[11px] font-medium text-muted">Unused bank claims for this seat — same family, closest unused first.</p>
+            <ul className="mt-2 space-y-2">
+              {swapPick.candidates.map((candidate) => (
+                <li key={candidate.claimKey} className="flex items-start justify-between gap-2 rounded-lg border border-line bg-surface p-2">
+                  <div className="min-w-0">
+                    <p className="leading-snug">{candidate.statement}</p>
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      {candidate.tag}
+                      {candidate.strength !== undefined ? ` · strength ${candidate.strength}` : ''}
+                    </p>
+                  </div>
+                  <button className="btn btn-primary btn-sm shrink-0" disabled={busy !== null} type="button" onClick={() => onApplySwap(d.id, candidate)}>
+                    Swap in
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
         {editable && (
@@ -763,7 +803,12 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
             <button className="seat-pill seat-pill-edit" type="button" onClick={() => onEdit(open ? null : d.id)}>{open ? 'Done' : 'Edit'}</button>
             <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'polish')}>Polish</button>
             <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'harden')}>Harden</button>
-            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>Suggest replacement</button>
+            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>
+              {swapPick?.rowId === d.id ? 'Hide swaps' : 'Swap'}
+            </button>
+            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onDelete(d.id)}>
+              Delete
+            </button>
             <button className="seat-act ml-auto" disabled={busy !== null} type="button" onClick={() => onReassess(d)} title="Reassess only this statement against the Golden">
               Reassess
             </button>

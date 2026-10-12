@@ -12,7 +12,7 @@ import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn }
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
-import { projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
+import { heroDeliverableFromSource, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import type { CatalogSubmission } from '@/lib/catalog/types';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
@@ -150,6 +150,8 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
   workState: WorkState;
   catalogStatusName: string | null;
   projectName: string;
+  /** Catalog General Information → Hero deliverables. Safe on blinded claim slots. */
+  heroDeliverable: string;
   /** True when this row is only a claim slot — catalog id stays hidden. */
   blinded: boolean;
 }
@@ -214,6 +216,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     database
       .select({
         submission: submissionListColumns,
+        source: submissions.source,
         rubricAssigneeName: sql<string | null>`coalesce(${assignee.displayName}, ${assignee.email})`,
         reviewerName: sql<string | null>`coalesce(${reviewer.displayName}, ${reviewer.email})`,
       })
@@ -243,6 +246,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
       workState,
       catalogStatusName: blinded ? null : statusName(r.submission),
       projectName: projectDisplayName(watch),
+      heroDeliverable: heroDeliverableFromSource(r.source),
       blinded,
     };
   });

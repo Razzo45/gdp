@@ -1,3 +1,4 @@
+import { describeNamedFiles } from './fileLanguage';
 import { FAMILIES, type Family } from './rubric';
 
 /**
@@ -41,7 +42,7 @@ export function parseBank(generation: Record<string, unknown> | null | undefined
     })
     .map((r) => ({
       claimKey: r.k,
-      statement: r.s,
+      statement: describeNamedFiles(r.s),
       tag: r.t ?? '',
       family: isFamily(r.f) ? r.f : 'content',
       notes: r.n ?? '',

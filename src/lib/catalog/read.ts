@@ -319,6 +319,77 @@ export function readCatalogSubmission(rawSubmission: unknown, rawProject: unknow
   };
 }
 
+const HERO_KEY = /hero/i;
+const DELIVER_KEY = /deliver/i;
+const HERO_LINE = /hero\s+deliverables?\s*:\s*(.+)/i;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function clipLabel(text: string, max = 80): string {
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  return cleaned.length <= max ? cleaned : `${cleaned.slice(0, max - 1).trimEnd()}…`;
+}
+
+function scalarText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
+  if (Array.isArray(value)) return value.map(scalarText).filter(Boolean).join(', ');
+  const nested = pickHeroDeliverable(asRecord(value));
+  if (nested) return nested;
+  return Object.values(asRecord(value) ?? {})
+    .map(scalarText)
+    .filter(Boolean)
+    .join(', ');
+}
+
+function pickHeroDeliverable(row: Record<string, unknown> | null): string {
+  if (!row) return '';
+  for (const [key, value] of Object.entries(row)) {
+    if (!HERO_KEY.test(key) || !DELIVER_KEY.test(key)) continue;
+    const text = scalarText(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+function heroFromFlattened(text: string | undefined): string {
+  const match = text?.match(HERO_LINE);
+  return match?.[1] ? clipLabel(match[1]) : '';
+}
+
+/** Catalog General Information → Hero deliverables, for the claim queue. */
+export function heroDeliverableOf(values: Record<string, unknown> | null | undefined): string {
+  if (!values) return '';
+  const top = pickHeroDeliverable(values);
+  if (top) return clipLabel(top);
+  const general = values['generalInformation'] ?? values['general_information'];
+  const nested = pickHeroDeliverable(asRecord(general));
+  if (nested) return clipLabel(nested);
+  if (typeof general === 'string') return heroFromFlattened(general);
+  return '';
+}
+
+/** Reads the field from either a live Catalog wrap or a form-values source blob. */
+export function heroDeliverableFromSource(source: unknown): string {
+  const root = asRecord(source);
+  if (!root) return '';
+  const wrapped = asRecord(root.submission);
+  const catalog =
+    wrapped && ('submission' in wrapped || 'projectSubmissionId' in wrapped || 'files' in wrapped) ? wrapped : root;
+  const values = asRecord(catalog.submission) ?? wrapped ?? catalog;
+  const fromValues = heroDeliverableOf(values);
+  if (fromValues) return fromValues;
+  const read = readCatalogSubmission(catalog, root.project ?? catalog.project ?? null);
+  if (!read) return '';
+  const fromRead = heroDeliverableOf(read.values);
+  if (fromRead) return fromRead;
+  const field = read.fields.find((item) => item.key === 'generalInformation' || /general information/i.test(item.label));
+  return heroFromFlattened(field?.text);
+}
+
 /** Watch label first — that is what PMs will set when more projects land. */
 export function projectDisplayName(watch: { label?: string | null; project?: unknown } | null | undefined): string {
   const label = watch?.label?.trim();

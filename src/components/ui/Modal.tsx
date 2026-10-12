@@ -23,7 +23,7 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" onClick={onClose}>
-      <div className={`max-h-[90vh] overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-lg ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'}`} onClick={(e) => e.stopPropagation()}>
+      <div className={`max-h-[90vh] overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-lg ${wide ? 'w-full max-w-3xl' : 'w-full max-w-md'}`} onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between gap-3">
           <h2 id="modal-title" className="text-base font-semibold">
             {title}

@@ -8,11 +8,25 @@ import {
   resolveGradeFiles,
   statementNamesFile,
 } from '@/domain/fileScope';
+import { describeNamedFiles } from '@/domain/fileLanguage';
 
 const deck = { id: 'out-1', name: 'q3-regional-deck.pptx' };
 const notes = { id: 'out-2', name: 'speaker-notes.pdf' };
 const guide = { id: 'in-1', name: 'brand-guide.pdf' };
 const brief = { id: 'in-2', name: 'arvella-brief.docx' };
+
+describe('describeNamedFiles', () => {
+  it('replaces name.extension with a role descriptor', () => {
+    expect(describeNamedFiles('The q3-regional-deck.pptx uses a 16:9 page size.')).toBe(
+      'The delivered presentation uses a 16:9 page size.',
+    );
+    expect(describeNamedFiles('hero_final.mp4 is free of burned-in captions.')).toBe(
+      'The delivered video is free of burned-in captions.',
+    );
+    expect(describeNamedFiles('Colours follow brand-guide.pdf.')).toBe('Colours follow the delivered PDF.');
+    expect(describeNamedFiles('The title slide names the review.')).toBe('The title slide names the review.');
+  });
+});
 
 describe('statementNamesFile', () => {
   it('matches a full filename, not a generic "file 1" label', () => {

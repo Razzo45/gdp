@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } from '@/domain/freshness';
+import { countFamilies, quotaSpread } from '@/domain/rubric';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
 import { formatDate } from '../format';
@@ -235,7 +236,8 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
 function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'refresh' | 'notify'>) {
   const [busy, setBusy] = useState(false);
   const s = view.submission;
-  const canSend = view.can.editRubric && view.golden?.gate.ok && view.aiOutputs.length > 0;
+  const spread = quotaSpread(countFamilies(view.rubric?.statements ?? []));
+  const canSend = view.can.editRubric && view.golden?.gate.ok && view.aiOutputs.length > 0 && spread.ready;
   const showSend = view.can.editRubric && s.stage === 'rubric';
 
   if (!showSend) return null;
@@ -253,7 +255,14 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
     }
   }
 
-  const blocked = showSend && !canSend ? (!view.golden?.gate.ok ? 'Golden must be 100% first.' : 'Attach the AI output first.') : null;
+  const blocked =
+    showSend && !canSend
+      ? !spread.ready
+        ? spread.warning
+        : !view.golden?.gate.ok
+          ? 'Golden must be 100% first.'
+          : 'Attach the AI output first.'
+      : null;
 
   return (
     <div className="flex max-w-xs flex-col items-stretch gap-1.5 sm:items-end">

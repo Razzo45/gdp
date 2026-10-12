@@ -206,7 +206,10 @@ function ClaimQueue({
               <p className="text-sm font-medium leading-5 text-ink">
                 {shortTaskDescriptor(s.title) || (s.stage === 'review' ? 'Review task' : 'Rubric task')}
               </p>
-              <p className="mt-0.5 text-xs text-muted">{s.projectName}</p>
+              <p className="mt-0.5 text-xs text-muted">
+                {s.projectName}
+                {s.heroDeliverable ? ` · ${s.heroDeliverable}` : ''}
+              </p>
             </div>
             {seat ? <ClaimTask submissionId={s.id} seat={seat} /> : null}
           </li>

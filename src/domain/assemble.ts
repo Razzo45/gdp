@@ -1,3 +1,4 @@
+import { describeNamedFiles } from './fileLanguage';
 import { lintStatement, looksLikeInterrogative, nearDuplicate } from './lint';
 import { correctTag, familyOfTag, type Family } from './rubric';
 
@@ -35,7 +36,7 @@ export function assemble(bank: BankRow[], quotas: Record<Family, number>): Assem
   const soft: BankRow[] = [];
   const keys = new Set<string>();
   const tagged = (row: BankRow): BankRow | null => {
-    const statement = row.statement.trim();
+    const statement = describeNamedFiles(row.statement.trim());
     if (statement.length < 8 || looksLikeInterrogative(statement)) return null;
     const tag = correctTag(statement, row.tag);
     return { ...row, statement, tag, family: familyOfTag(tag) };

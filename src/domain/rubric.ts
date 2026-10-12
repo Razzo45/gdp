@@ -129,6 +129,40 @@ export function familyQuotas(n: number = RUBRIC_TARGET): Record<Family, number> 
   return { format, content, visual };
 }
 
+const FAMILY_SHORT: Record<Family, string> = { format: 'Format', content: 'Content', visual: 'Visual' };
+
+export function countFamilies(rows: readonly { family?: Family | null; tag?: string; statement?: string }[]): Record<Family, number> {
+  const counts: Record<Family, number> = { format: 0, content: 0, visual: 0 };
+  for (const row of rows) counts[seatedFamily(row)] += 1;
+  return counts;
+}
+
+export function quotaSpread(
+  counts: Record<Family, number>,
+  quotas: Record<Family, number> = familyQuotas(),
+): {
+  ready: boolean;
+  missing: Record<Family, number>;
+  extra: Record<Family, number>;
+  canAdd: Record<Family, boolean>;
+  warning: string;
+} {
+  const missing: Record<Family, number> = { format: 0, content: 0, visual: 0 };
+  const extra: Record<Family, number> = { format: 0, content: 0, visual: 0 };
+  const canAdd: Record<Family, boolean> = { format: false, content: false, visual: false };
+  const parts: string[] = [];
+  for (const family of FAMILIES) {
+    const have = counts[family] ?? 0;
+    const want = quotas[family] ?? 0;
+    missing[family] = Math.max(0, want - have);
+    extra[family] = Math.max(0, have - want);
+    canAdd[family] = have < want;
+    if (missing[family] > 0) parts.push(`${FAMILY_SHORT[family]} short by ${missing[family]} (${have} of ${want})`);
+    else if (extra[family] > 0) parts.push(`${FAMILY_SHORT[family]} has ${have} of ${want}`);
+  }
+  return { ready: parts.length === 0, missing, extra, canAdd, warning: parts.length ? `${parts.join('. ')}.` : '' };
+}
+
 export type StatementScope = 'output' | 'inputs';
 
 /** The editable shape of one seat. Mirrors app.rubric_statements. */

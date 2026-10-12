@@ -1,8 +1,15 @@
 import { z } from 'zod';
+import { RUBRIC_TAGS } from '@/domain/rubric';
 import { route } from '@/lib/api';
-import { importStatements } from '@/lib/services/rubric';
+import { replaceRubricFromPaste } from '@/lib/services/rubric';
 
-/** Paste statements, one per line (optional `Tag | statement`). Questions become affirmatives. */
-const Body = z.object({ text: z.string().min(1).max(200_000), revision: z.number().int().nonnegative() });
+/** Paste a full external rubric. Replaces the current version. Must seat 5 / 15 / 30. */
+const Body = z.object({
+  revision: z.number().int().nonnegative(),
+  rows: z
+    .array(z.object({ tag: z.enum(RUBRIC_TAGS), statement: z.string().trim().min(8).max(600) }))
+    .min(1)
+    .max(200),
+});
 
-export const POST = route({ body: Body }, async ({ actor, body, params }) => importStatements(actor, params['id']!, body));
+export const POST = route({ body: Body }, async ({ actor, body, params }) => replaceRubricFromPaste(actor, params['id']!, body));

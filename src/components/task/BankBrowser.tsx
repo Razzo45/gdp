@@ -44,6 +44,7 @@ export function BankBrowser({
   onClearFocus,
   onAdd,
   onSwap,
+  canAddFamily,
 }: {
   bank: BankCandidate[];
   seated: SeatedRow[];
@@ -53,6 +54,7 @@ export function BankBrowser({
   onClearFocus: () => void;
   onAdd: (c: BankCandidate) => void;
   onSwap: (rowId: string, c: BankCandidate) => void;
+  canAddFamily: (family: Family) => boolean;
 }) {
   const [family, setFamily] = useState<FamilyFilter>('all');
   const [tag, setTag] = useState('all');
@@ -141,14 +143,14 @@ export function BankBrowser({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <select className="input h-8 w-40 py-0 text-xs" value={family} onChange={(e) => { setFamily(e.target.value as FamilyFilter); setLimit(PAGE); }}>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <select className="input" value={family} onChange={(e) => { setFamily(e.target.value as FamilyFilter); setLimit(PAGE); }}>
           <option value="all">All families</option>
           <option value="format">{FAMILY_LABELS.format}</option>
           <option value="content">{FAMILY_LABELS.content}</option>
           <option value="visual">{FAMILY_LABELS.visual}</option>
         </select>
-        <select className="input h-8 min-w-40 py-0 text-xs" value={tag} onChange={(e) => { setTag(e.target.value); setLimit(PAGE); }}>
+        <select className="input" value={tag} onChange={(e) => { setTag(e.target.value); setLimit(PAGE); }}>
           <option value="all">All tags</option>
           {tags.map((t) => (
             <option key={t} value={t}>
@@ -156,18 +158,20 @@ export function BankBrowser({
             </option>
           ))}
         </select>
-        <select className="input h-8 w-40 py-0 text-xs" value={status} onChange={(e) => { setStatus(e.target.value as Status); setLimit(PAGE); }}>
+        <select className="input" value={status} onChange={(e) => { setStatus(e.target.value as Status); setLimit(PAGE); }}>
           <option value="out">Not in rubric</option>
           <option value="in">In rubric</option>
           <option value="all">All candidates</option>
         </select>
+      </div>
+      <div className="flex items-center gap-2">
         <input
-          className="input h-8 max-w-xs py-0 text-xs"
+          className="input"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setLimit(PAGE); }}
           placeholder="Search statement, tag, claim, seed…"
         />
-        <span className="text-xs text-muted">
+        <span className="shrink-0 text-xs text-muted">
           {items.length} of {bank.length + seated.length}
         </span>
       </div>
@@ -176,6 +180,7 @@ export function BankBrowser({
         {items.length === 0 && <p className="p-3 text-xs text-muted">No candidates match.</p>}
         {items.slice(0, limit).map((it) => {
           const canPlace = editable && !!it.candidate && !it.inRubric;
+          const familyOpen = canAddFamily(it.family);
           return (
             <div key={it.rowKey} className="space-y-1 p-2 text-xs">
               <div className="flex items-start gap-2">
@@ -201,7 +206,13 @@ export function BankBrowser({
                         Swap in
                       </button>
                     )}
-                    <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onAdd(it.candidate!)}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy || !familyOpen}
+                      title={familyOpen ? 'Add as a new seat' : `Delete a ${FAMILY_LABELS[it.family]} seat first`}
+                      onClick={() => onAdd(it.candidate!)}
+                    >
                       Add
                     </button>
                   </div>

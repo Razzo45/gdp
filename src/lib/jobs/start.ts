@@ -2,7 +2,7 @@ import 'server-only';
 
 import { db } from '@/db/client';
 import type { Job } from '@/db/schema';
-import { MAX_ROUGH_CHARS, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
+import { countFamilies, MAX_ROUGH_CHARS, quotaSpread, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
 import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/errors';
@@ -52,7 +52,6 @@ export async function startRubricGeneration(actor: Actor, submissionId: string, 
 }
 
 export async function startGoldenAutorate(actor: Actor, submissionId: string, input: { statementIds?: string[]; requestId: string }): Promise<Job> {
-  requireGemini();
   return wrap(() =>
     db().transaction(async (tx) => {
       const submission = await getSubmission(tx, submissionId);
@@ -61,6 +60,9 @@ export async function startGoldenAutorate(actor: Actor, submissionId: string, in
       if (!rubric) throw conflict('Write or generate a rubric first.');
       const statements = await statementsOf(tx, rubric.id);
       if (statements.length === 0) throw conflict('The rubric has no statements.');
+      const spread = quotaSpread(countFamilies(statements));
+      if (!spread.ready) throw conflict(`Seat the rubric at 5 Format, 15 Content, 30 Visual first. ${spread.warning}`);
+      requireGemini();
       const ids = input.statementIds?.filter((id) => statements.some((s) => s.id === id));
       const job = await enqueue(tx, { kind: 'golden_autorate', submissionId, rubricId: rubric.id, requestId: input.requestId, payload: ids?.length ? { statementIds: ids } : {}, createdBy: actor.id, deadlineMs: 60 * 60_000 });
       await recordEvent(tx, submissionId, actor.id, 'golden_autorate_started', { jobId: job.id, statements: ids?.length ?? statements.length });

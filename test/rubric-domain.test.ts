@@ -5,7 +5,7 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, quotaSpread, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
@@ -59,6 +59,40 @@ describe('factory bank compact form', () => {
     const bank = parseBank(next);
     expect(bank.map((c) => c.claimKey)).toEqual(['old-seat', 'axis-label']);
     expect(next.model).toBe('x');
+  });
+
+  it('reads unused bank claims with descriptor language instead of name.extension', () => {
+    const generation = {
+      bank: [compactBankRow({ ...row, statement: 'The q3-regional-deck.pptx uses a 16:9 page size.' })],
+    };
+    expect(parseBank(generation)[0]?.statement).toBe('The delivered presentation uses a 16:9 page size.');
+  });
+});
+
+describe('quota spread', () => {
+  it('is ready only at 5 Format, 15 Content, 30 Visual', () => {
+    const ready = quotaSpread({ format: 5, content: 15, visual: 30 });
+    expect(ready.ready).toBe(true);
+    expect(ready.warning).toBe('');
+    expect(ready.canAdd).toEqual({ format: false, content: false, visual: false });
+
+    const short = quotaSpread({ format: 3, content: 15, visual: 30 });
+    expect(short.ready).toBe(false);
+    expect(short.canAdd.format).toBe(true);
+    expect(short.warning).toBe('Format short by 2 (3 of 5).');
+
+    const over = quotaSpread({ format: 6, content: 15, visual: 30 });
+    expect(over.ready).toBe(false);
+    expect(over.canAdd.format).toBe(false);
+    expect(over.warning).toBe('Format has 6 of 5.');
+  });
+
+  it('counts seated families from tags', () => {
+    expect(countFamilies([{ tag: 'Format/File' }, { tag: 'Content - Exact' }, { tag: 'Visual - Layout' }])).toEqual({
+      format: 1,
+      content: 1,
+      visual: 1,
+    });
   });
 });
 
@@ -197,6 +231,23 @@ describe('assemble', () => {
     const result = assemble(bank, { format: 2, content: 3, visual: 3 });
     expect(result.seated).toHaveLength(8);
     expect(result.seated.every((r) => r.tag === 'Content - Exact' || r.tag === 'Format/File' || r.tag.startsWith('Visual'))).toBe(true);
+  });
+
+  it('rewrites name.extension claims to descriptor language before seating', () => {
+    const result = assemble(
+      [
+        {
+          seedId: 's1',
+          claimKey: 'ratio',
+          statement: 'The q3-regional-deck.pptx uses a 16:9 page size.',
+          tag: 'Format/File',
+          family: 'format',
+          notes: '',
+        },
+      ],
+      { format: 1, content: 0, visual: 0 },
+    );
+    expect(result.seated[0]?.statement).toBe('The delivered presentation uses a 16:9 page size.');
   });
 
   it('seats the strongest row from a seed when the family has one seat', () => {
