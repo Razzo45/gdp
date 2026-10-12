@@ -67,6 +67,7 @@ export function workStateOf(row: {
   if (row.stage === 'stability') return 'stability';
   if (row.stage === 'review') return 'in_review';
   if (row.stage === 'rubric' && row.reviewStatus === 'changes_requested') return 'review_returned';
+  if (row.stage === 'rubric' && !row.rubricAssigneeId) return 'unassigned';
   if (row.stage === 'rubric') return 'preparing';
   return 'preparing';
 }

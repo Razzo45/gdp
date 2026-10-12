@@ -6,7 +6,7 @@ import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
 import { correctTag, familyOfStatement, familyOfTag, familyQuotas, guessTag, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
-import { submittedCatalogStatusIds } from '@/domain/catalogListState';
+import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
 import { normalisedWeights, scoreSeats } from '@/domain/weights';
@@ -313,14 +313,33 @@ describe('legacy snapshot import', () => {
       reviewStatus: 'changes_requested',
     });
     expect(inferLegacyPipeline({ ...base, catalogStatusId: work, reviewStatus: 'approved' }).stage).toBe('stability');
+    expect(catalogLooksInboundReady('K.Golden Output Approved')).toBe(true);
+    expect(catalogLooksInboundReady('E. Task and Golden Output Approved')).toBe(true);
+    expect(catalogLooksInboundReady('H2. Golden Output Ready for Review')).toBe(false);
     expect(inferLegacyPipeline({ ...base, catalogStatusId: work, assigned: false }).stage).toBe('rubric');
+    expect(
+      inferLegacyPipeline({
+        ...base,
+        catalogStatuses: [...catalogStatuses, { statusId: 'k-golden-approved', name: 'K.Golden Output Approved' }],
+        catalogStatusId: 'k-golden-approved',
+        assigned: false,
+      }).stage,
+    ).toBe('rubric');
+    expect(
+      inferLegacyPipeline({
+        ...base,
+        catalogStatuses: [...catalogStatuses, { statusId: 'e-approved', name: 'E. Task and Golden Output Approved' }],
+        catalogStatusId: 'e-approved',
+        assigned: false,
+      }).stage,
+    ).toBe('rubric');
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'g' }).stage).toBe('done');
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'p' }).stage).toBe('done');
     expect([...submittedCatalogStatusIds({ workStatusId: work, handoffStatusId: handoff, statuses: catalogStatuses, transitions: catalogTransitions })]).toEqual(['handoff-status', 'g', 'p']);
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'h2', catalogStatusName: 'H2. Golden Output Ready for Review', reviewStatus: 'pending' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ ...base, catalogStatusId: 'off' }).stage).toBe('parked');
     expect(inferLegacyPipeline({ handoffStatus: 'bounced' }).stage).toBe('handoff');
-    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('preparing');
+    expect(workStateOf({ stage: 'rubric', rubricAssigneeId: null, reviewStatus: null })).toBe('unassigned');
     expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: null })).toBe('preparing');
     expect(workStateOf({ stage: 'rubric', rubricAssigneeId: 'x', reviewStatus: 'changes_requested' })).toBe('review_returned');
     expect(workStateOf({ stage: 'review', rubricAssigneeId: 'x', reviewStatus: 'pending' })).toBe('in_review');

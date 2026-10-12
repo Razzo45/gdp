@@ -1,7 +1,8 @@
 /**
  * Live GDP board classifier, ported from legacy `classifyCatalogListState`.
- * Work status is the configured work stage, or a status reachable forward
- * from handoff. Names are never used to decide a lane.
+ * Work status is the configured work stage, a watched inbound id, or the
+ * two Catalog titles we take as ready-to-assign: K.Golden Output Approved
+ * and E. Task and Golden Output Approved. Other names do not decide a lane.
  */
 export const CATALOG_LIST_STATES = [
   'unassigned',
@@ -19,6 +20,8 @@ export interface CatalogStateInput {
   statusId: string | null;
   workStatusId?: string;
   handoffStatusId?: string;
+  /** Extra Catalog statuses this project watches as inbound work (ready to assign). */
+  inboundStatusIds?: readonly string[] | null;
   statuses: unknown;
   transitions: unknown;
   reviewStatus?: string | null;
@@ -44,6 +47,11 @@ const normalized = (value: unknown): string => (typeof value === 'string' ? valu
 const forward = (trigger: unknown) => ['next', 'approve', 'submit', 'resubmit', 'assign'].includes(normalized(trigger));
 const returned = (trigger: unknown) =>
   ['revise', 'reject', 'revise-to-expert', 'revise-to-creator', 'send-to-rubric', 'send-to-rubrics'].includes(normalized(trigger));
+
+/** K.Golden Output Approved (GDP EVAL) and E. Task and Golden Output Approved (Combined). */
+export function catalogLooksInboundReady(name?: string | null): boolean {
+  return /^[ke]\.?\s*(task and )?golden output approved$/i.test((name ?? '').replace(/\s+/g, ' ').trim());
+}
 
 /** Statuses reachable forward from handoff — live Submitted, including later client-visible steps. */
 export function submittedCatalogStatusIds(input: Pick<CatalogStateInput, 'workStatusId' | 'handoffStatusId' | 'statuses' | 'transitions'>): Set<string> {
@@ -81,6 +89,14 @@ export function classifyCatalogListState(input: CatalogStateInput): CatalogListS
   const status = normalized(input.statusId);
   const work = normalized(input.workStatusId);
   const handoff = normalized(input.handoffStatusId);
+  const inboundNamed = (Array.isArray(input.statuses) ? input.statuses : [])
+    .map(object)
+    .filter((entry) => catalogLooksInboundReady(typeof entry['name'] === 'string' ? entry['name'] : null))
+    .map((entry) => normalized(entry['statusId']))
+    .filter(Boolean);
+  const inbound = new Set(
+    [work, ...inboundNamed, ...(input.inboundStatusIds ?? []).map(normalized)].filter((id) => id && id !== handoff),
+  );
   const known = new Set(
     (Array.isArray(input.statuses) ? input.statuses : []).map((entry) => normalized(object(entry)['statusId'])).filter(Boolean),
   );
@@ -152,7 +168,8 @@ export function classifyCatalogListState(input: CatalogStateInput): CatalogListS
     input.projectWorkflowVerified === true &&
     prework.has(status) &&
     !returnDestinations.has(status);
-  if ((clash && !continuedWork) || ((effectiveStatus !== work || status !== work) && !retainedLocalWork)) return 'unknown';
+  const onInbound = inbound.has(effectiveStatus) && inbound.has(status || effectiveStatus);
+  if ((clash && !continuedWork) || (!onInbound && !retainedLocalWork)) return 'unknown';
   if (input.reviewStatus === 'changes_requested') return 'review_return';
   if (input.reviewStatus === 'pending') return 'review';
   if (input.reviewStatus === 'approved') return (clash || retainedLocalWork) && !evidence?.reviewCurrent ? 'unknown' : 'approved';

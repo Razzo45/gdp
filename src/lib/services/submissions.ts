@@ -9,6 +9,7 @@ import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
+import { pipelineFromListState } from '@/domain/catalogListState';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
 import { readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
@@ -60,7 +61,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
         })
         .returning();
       await recordEvent(tx, created!.id, actorId, 'landed', { statusId: read.statusId, projectId: read.projectId });
-      return created!;
+      return noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, created!), actorId, hint?.returnNote);
     }
     const changed = existing.sourceFingerprint !== fp;
     const statusMoved = existing.statusId !== read.statusId;
@@ -77,8 +78,27 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
       .where(eq(submissions.id, existing.id))
       .returning();
     if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
-    return noteCatalogReturnIfNeeded(tx, updated!, actorId, hint?.returnNote);
+    return noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote);
   });
+}
+
+/** Parked + Catalog on a watched inbound status (K / E) is ready to assign. */
+async function landParkedIfInbound(database: DbOrTx, submission: Submission): Promise<Submission> {
+  if (submission.stage !== 'parked') return submission;
+  const watched = await watchedProjectFor(database, submission.projectId);
+  const { lane } = catalogReturnFromSync({
+    statusId: submission.statusId,
+    source: submission.source as { submission?: unknown; project?: unknown },
+    watched,
+  });
+  const next = pipelineFromListState(lane, submission.reviewStatus);
+  if (next.stage === 'parked') return submission;
+  const [updated] = await database
+    .update(submissions)
+    .set({ stage: next.stage, reviewStatus: next.reviewStatus, handoffStatus: next.handoffStatus })
+    .where(eq(submissions.id, submission.id))
+    .returning();
+  return updated!;
 }
 
 /** Queue a PM reconciliation when Catalog sent a submitted task back. Does not change stage. */
@@ -144,11 +164,23 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   const q = filter.q?.trim();
   if (q) conditions.push(or(ilike(submissions.title, `%${q}%`), ilike(submissions.catalogSubmissionId, `%${q}%`)));
   if (filter.workState === 'unassigned') {
-    conditions.push(sql`false`);
+    conditions.push(
+      and(
+        eq(submissions.stage, 'rubric'),
+        isNull(submissions.rubricAssigneeId),
+        sql`${submissions.reviewStatus} is distinct from 'changes_requested'`,
+        sql`${submissions.handoffStatus} is distinct from 'bounced'`,
+      ),
+    );
   }
   if (filter.workState === 'preparing') {
     conditions.push(
-      and(eq(submissions.stage, 'rubric'), sql`${submissions.reviewStatus} is distinct from 'changes_requested'`, sql`${submissions.handoffStatus} is distinct from 'bounced'`),
+      and(
+        eq(submissions.stage, 'rubric'),
+        isNotNull(submissions.rubricAssigneeId),
+        sql`${submissions.reviewStatus} is distinct from 'changes_requested'`,
+        sql`${submissions.handoffStatus} is distinct from 'bounced'`,
+      ),
     );
   }
   if (filter.workState === 'in_review') conditions.push(eq(submissions.stage, 'review'));

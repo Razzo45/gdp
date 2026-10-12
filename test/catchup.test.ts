@@ -28,6 +28,25 @@ describe('catchupExistingValues', () => {
       reviewerId: null,
     });
   });
+
+  it('unparks a parked Railway row when Catalog is on a watched inbound status', () => {
+    const existing = {
+      stage: 'parked' as const,
+      reviewStatus: null,
+      handoffStatus: null,
+      rubricAssigneeId: null,
+      reviewerId: null,
+    };
+    const incoming = {
+      stage: 'rubric' as const,
+      reviewStatus: null,
+      handoffStatus: null,
+      rubricAssigneeId: null,
+      reviewerId: null,
+      statusId: 'k-golden-approved',
+    };
+    expect(catchupExistingValues(existing, incoming)).toEqual(incoming);
+  });
 });
 
 describe('canReplaceWatches', () => {

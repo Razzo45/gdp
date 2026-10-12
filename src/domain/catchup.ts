@@ -14,6 +14,13 @@ export type CatchupPipeline = {
  * Catchup is read-live / write-Railway. It must not park or reassign work we already own.
  */
 export function catchupExistingValues<T extends CatchupPipeline>(existing: CatchupPipeline, incoming: T): T {
+  if (existing.stage === 'parked') {
+    return {
+      ...incoming,
+      rubricAssigneeId: existing.rubricAssigneeId,
+      reviewerId: existing.reviewerId,
+    };
+  }
   return {
     ...incoming,
     stage: existing.stage,
