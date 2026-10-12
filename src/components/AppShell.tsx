@@ -84,18 +84,22 @@ export function AppShell({
 
   const railToggle = (
     <button
-      className="hidden h-28 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-[11px] font-semibold text-muted hover:bg-wash hover:text-ink lg:flex"
+      className={
+        collapsed
+          ? 'hidden h-28 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-[11px] font-semibold text-muted hover:bg-wash hover:text-ink lg:flex'
+          : 'nav-link hidden w-full text-muted lg:flex'
+      }
       type="button"
       aria-expanded={!collapsed}
       aria-controls="app-nav"
       onClick={() => setRail(!collapsed)}
     >
-      <span className="[writing-mode:vertical-rl] rotate-180 tracking-[0.16em]">{collapsed ? 'Open' : 'Collapse'}</span>
+      {collapsed ? <span className="[writing-mode:vertical-rl] rotate-180 tracking-[0.16em]">Open</span> : 'Collapse'}
     </button>
   );
 
   const logout = (compact: boolean) => (
-    <form action="/auth/signout" method="post" className={`border-t border-line ${compact ? 'p-2' : 'p-3'}`}>
+    <form action="/auth/signout" method="post" className={compact ? 'p-2' : 'p-3'}>
       <button
         className={compact ? 'flex h-10 w-full items-center justify-center rounded-lg text-muted hover:bg-wash hover:text-ink' : 'nav-link w-full text-muted'}
         type="submit"
@@ -133,7 +137,7 @@ export function AppShell({
               <BrandMark compact />
             </div>
             <div className="hidden min-h-0 flex-1 items-center justify-center lg:flex">{railToggle}</div>
-            <div className="hidden lg:block">{logout(true)}</div>
+            <div className="hidden border-t border-line lg:block">{logout(true)}</div>
             <div className="flex h-full flex-col lg:hidden">
               <div className="border-b border-line px-4 py-5">
                 <BrandMark />
@@ -144,7 +148,7 @@ export function AppShell({
                 <div className="truncate text-[11px] text-quiet">{roles}</div>
               </div>
               {linksNav}
-              <div className="mt-auto">{logout(false)}</div>
+              <div className="mt-auto border-t border-line">{logout(false)}</div>
             </div>
           </>
         ) : (
@@ -158,8 +162,10 @@ export function AppShell({
               <div className="truncate text-[11px] text-quiet">{roles}</div>
             </div>
             {linksNav}
-            <div className="flex min-h-0 flex-1 items-center justify-center">{railToggle}</div>
-            {logout(false)}
+            <div className="mt-auto border-t border-line">
+              <div className="hidden p-3 pb-0 lg:block">{railToggle}</div>
+              {logout(false)}
+            </div>
           </>
         )}
       </aside>
