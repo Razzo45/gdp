@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 export function PageHeader({
-  kicker = 'Wirestock · GDP',
+  kicker = 'GDP Wirestock',
   title,
   children,
   actions,

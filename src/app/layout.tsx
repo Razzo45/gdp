@@ -11,7 +11,10 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: 'GDP — Golden Data Program',
+  title: {
+    default: 'GDP Wirestock',
+    template: '%s · GDP Wirestock',
+  },
   description: 'Rubrics, golden autorating, human AI evaluation and stability runs.',
 };
 

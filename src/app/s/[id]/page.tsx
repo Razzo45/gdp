@@ -6,7 +6,7 @@ import { sharePack } from '@/lib/services/share';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'GDP Evaluation',
+  title: 'View task',
   robots: { index: false, follow: false },
 };
 

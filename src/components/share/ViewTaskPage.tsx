@@ -11,7 +11,7 @@ export function ViewTaskPage({ pack, token }: { pack: SharePack; token: string }
   return (
     <div className="h-dvh overflow-y-auto bg-paper text-ink">
       <article className="mx-auto max-w-3xl px-5 py-10 sm:px-8 sm:py-14">
-        <p className="text-sm text-muted">GDP Evaluation</p>
+        <p className="text-sm text-muted">GDP Wirestock</p>
         <h1 className="mt-2 max-w-xl text-pretty text-2xl font-semibold tracking-tight">{pack.title || 'Task'}</h1>
 
         <Section title="Task" required>

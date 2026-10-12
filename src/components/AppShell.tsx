@@ -38,8 +38,7 @@ export function AppShell({
     <>
       <div className="border-b border-line px-4 py-5">
         <BrandMark />
-        <div className="page-kicker mt-4">Wirestock</div>
-        <div className="mt-1 text-sm font-semibold tracking-[-0.025em]">GDP Evaluation</div>
+        <div className="mt-4 text-sm font-semibold tracking-[-0.025em]">GDP Wirestock</div>
         <div className="mt-3 truncate text-xs text-muted" title={email}>
           {name}
         </div>
@@ -86,7 +85,7 @@ export function AppShell({
           Menu
         </button>
         <BrandMark />
-        <div className="min-w-0 truncate text-sm font-semibold tracking-[-0.025em]">GDP</div>
+        <div className="min-w-0 truncate text-sm font-semibold tracking-[-0.025em]">GDP Wirestock</div>
         <div className="ml-auto">
           <ThemeToggle />
         </div>

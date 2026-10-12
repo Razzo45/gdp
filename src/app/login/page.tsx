@@ -31,8 +31,7 @@ export default async function LoginPage() {
       </div>
       <div className="m-auto w-full max-w-md">
         <BrandMark />
-        <p className="page-kicker mt-5">Wirestock</p>
-        <h1 className="page-title mt-1">Golden Data Program</h1>
+        <h1 className="page-title mt-5">GDP Wirestock</h1>
         <p className="mb-6 mt-1 text-sm text-muted">
           {shared
             ? 'Local development mode — pick a seeded user.'

@@ -46,7 +46,7 @@ export function ProjectsAdmin({ initial }: { initial: WatchedProjectView[] }) {
   return (
     <div className="space-y-4">
       <div>
-        <p className="page-kicker">Wirestock · GDP</p>
+        <p className="page-kicker">GDP Wirestock</p>
         <h1 className="page-title mt-1">Integrations</h1>
         <p className="mt-1 text-sm text-muted">Data Catalog projects this platform watches, and the work / handoff statuses for import and push.</p>
       </div>

@@ -62,7 +62,7 @@ export function UsersAdmin({ initial, selfId }: { initial: UserRow[]; selfId: st
   return (
     <div className="space-y-4">
       <div>
-        <p className="page-kicker">Wirestock · GDP</p>
+        <p className="page-kicker">GDP Wirestock</p>
         <h1 className="page-title mt-1">Users</h1>
         <p className="mt-1 text-sm text-muted">Add the people who will submit and review work.</p>
       </div>
