@@ -54,6 +54,12 @@ export function isStaleHold(iso: string | null | undefined, now = Date.now()): b
   return hours !== null && hours >= STALE_HOLD_HOURS;
 }
 
+/** Delivered seats are done — age does not make them stale on the PM hold board. */
+export function seatIsStale(row: { claimedAt: string | null | undefined; stage: string }, now = Date.now()): boolean {
+  if (row.stage === 'done') return false;
+  return isStaleHold(row.claimedAt, now);
+}
+
 export function workStateOf(row: {
   stage: Stage;
   rubricAssigneeId: string | null;

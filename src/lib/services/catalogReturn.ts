@@ -7,6 +7,7 @@ import { parseCatalogReturn, type PendingCatalogReturn } from '@/domain/catalogR
 import { isController, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden } from './errors';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
+import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import { getSubmission, recordEvent } from './submissions';
 
 export type { PendingCatalogReturn };
@@ -68,6 +69,7 @@ export async function listPendingCatalogReturns(actor: Actor): Promise<PendingCa
         id: row.id,
         catalogSubmissionId: row.catalogSubmissionId,
         title: row.title,
+        heroDeliverable: heroDeliverableFromSource(row.source),
         stage: row.stage,
         statusId: row.statusId,
         catalogReturn,

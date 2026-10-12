@@ -4,7 +4,6 @@ import { BoardFreshness } from '@/components/BoardFreshness';
 import { ClaimTask } from '@/components/ClaimTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
-import { shortTaskDescriptor } from '@/components/format';
 import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
@@ -100,7 +99,7 @@ async function PmDashboard({ actor }: { actor: Actor }) {
                 <tr key={row.id} className="hover:bg-wash">
                   <td className="px-5 py-3">
                     <Link href={`/submissions/${row.id}`} className="hover:underline">
-                      <TaskLabel catalogId={row.catalogSubmissionId} title={row.title} size="compact" />
+                      <TaskLabel catalogId={row.catalogSubmissionId} hero={row.heroDeliverable} size="compact" />
                     </Link>
                   </td>
                   <td className="px-5 py-3">
@@ -203,13 +202,8 @@ function ClaimQueue({
         return (
           <li key={s.id} className="flex items-center justify-between gap-3 py-3">
             <div className="min-w-0">
-              <p className="text-sm font-medium leading-5 text-ink">
-                {shortTaskDescriptor(s.title) || (s.stage === 'review' ? 'Review task' : 'Rubric task')}
-              </p>
-              <p className="mt-0.5 text-xs text-muted">
-                {s.projectName}
-                {s.heroDeliverable ? ` · ${s.heroDeliverable}` : ''}
-              </p>
+              <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} size="compact" />
+              <p className="mt-0.5 text-xs text-muted">{s.projectName}</p>
             </div>
             {seat ? <ClaimTask submissionId={s.id} seat={seat} /> : null}
           </li>
@@ -232,7 +226,7 @@ function SeatList({
         <li key={s.id} className="relative flex items-center gap-3 py-3">
           <WorkStatusPill state={s.workState} size="board" />
           <Link href={`/submissions/${s.id}`} className="min-w-0 flex-1 after:absolute after:inset-0 hover:underline">
-            <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
+            <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} size="compact" />
             <span className="mt-0.5 block text-xs font-normal text-muted">
               {s.projectName} · {s.rubricAssigneeId === actorId ? 'rubric seat' : 'review seat'} · claimed{' '}
               <TimeAgo iso={s.rubricAssigneeId === actorId ? s.rubricClaimedAt : s.reviewClaimedAt} />

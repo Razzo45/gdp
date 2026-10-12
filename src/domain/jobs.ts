@@ -1,6 +1,22 @@
 /** One-statement (or few-seat) Golden reassess — the fast lane. */
 export const STATEMENT_LANE_MAX = 8;
 
+/** Video/audio (any size) or a 100 MB+ file — staging plus grade pings are long. */
+export const HEAVY_FILE_BYTES = 100 * 1024 * 1024;
+/** Other users keep the remaining worker slots while these run. */
+export const HEAVY_RUNNING_MAX = 2;
+
+export function isHeavyMedia(file: { mime?: string; name?: string; size?: number }): boolean {
+  const mime = (file.mime ?? '').toLowerCase();
+  const name = file.name ?? '';
+  if (/^(video|audio)\//.test(mime) || /\.(mp4|mov|m4v|webm|avi|mkv|mp3|wav|m4a)$/i.test(name)) return true;
+  return (file.size ?? 0) >= HEAVY_FILE_BYTES;
+}
+
+export function isHeavyJobPayload(payload: Record<string, unknown> | null | undefined): boolean {
+  return payload?.['heavy'] === true;
+}
+
 export function statementIdsOf(payload: Record<string, unknown> | null | undefined): string[] {
   const ids = payload?.['statementIds'];
   return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];

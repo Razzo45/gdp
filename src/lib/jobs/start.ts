@@ -2,6 +2,7 @@ import 'server-only';
 
 import { db } from '@/db/client';
 import type { Job } from '@/db/schema';
+import { isHeavyMedia } from '@/domain/jobs';
 import { countFamilies, MAX_ROUGH_CHARS, quotaSpread, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
@@ -10,8 +11,12 @@ import { listAiOutputs } from '@/lib/services/files';
 import { submittedCalibration } from '@/lib/services/review';
 import { currentRubric, ensureCurrentRubric, statementsOf } from '@/lib/services/rubric';
 import { stabilityView } from '@/lib/services/stability';
-import { getSubmission, recordEvent } from '@/lib/services/submissions';
+import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
+
+function heavyFlag(files: { mime?: string; name?: string; size?: number }[]): { heavy?: true } {
+  return files.some((file) => isHeavyMedia(file)) ? { heavy: true } : {};
+}
 
 /** User-facing entry points that put work on the queue, with the seat checks. */
 
@@ -45,7 +50,16 @@ export async function startRubricGeneration(actor: Actor, submissionId: string, 
       if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task. Claim or ask a PM to assign it.');
       if (submission.stage !== 'rubric') throw conflict(`The rubric is locked while the task is in ${submission.stage}.`);
       const rubric = await ensureCurrentRubric(tx, submissionId, actor.id);
-      const job = await enqueue(tx, { kind: 'rubric_generate', submissionId, rubricId: rubric.id, requestId: input.requestId, payload: { source, target }, createdBy: actor.id, deadlineMs: 45 * 60_000 });
+      const sourceFiles = readSource(submission);
+      const job = await enqueue(tx, {
+        kind: 'rubric_generate',
+        submissionId,
+        rubricId: rubric.id,
+        requestId: input.requestId,
+        payload: { source, target, ...heavyFlag([...(sourceFiles?.inputFiles ?? []), ...(sourceFiles?.goldenFiles ?? [])]) },
+        createdBy: actor.id,
+        deadlineMs: 45 * 60_000,
+      });
       await recordEvent(tx, submissionId, actor.id, 'rubric_generation_started', { jobId: job.id, sourceChars: source.length, target });
       return job;
     }),
@@ -65,7 +79,16 @@ export async function startGoldenAutorate(actor: Actor, submissionId: string, in
       if (!spread.ready) throw conflict(`Seat the rubric at 5 Format, 15 Content, 30 Visual first. ${spread.warning}`);
       requireGemini();
       const ids = input.statementIds?.filter((id) => statements.some((s) => s.id === id));
-      const job = await enqueue(tx, { kind: 'golden_autorate', submissionId, rubricId: rubric.id, requestId: input.requestId, payload: ids?.length ? { statementIds: ids } : {}, createdBy: actor.id, deadlineMs: 60 * 60_000 });
+      const files = readSource(submission);
+      const job = await enqueue(tx, {
+        kind: 'golden_autorate',
+        submissionId,
+        rubricId: rubric.id,
+        requestId: input.requestId,
+        payload: { ...(ids?.length ? { statementIds: ids } : {}), ...heavyFlag([...(files?.goldenFiles ?? []), ...(files?.inputFiles ?? [])]) },
+        createdBy: actor.id,
+        deadlineMs: 60 * 60_000,
+      });
       await recordEvent(tx, submissionId, actor.id, 'golden_autorate_started', { jobId: job.id, statements: ids?.length ?? statements.length });
       return job;
     }),
@@ -80,16 +103,18 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
       if (!canRunStability(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
       const rubric = await currentRubric(tx, submissionId);
       if (!rubric) throw conflict('There is no rubric.');
-      if ((await listAiOutputs(tx, submissionId)).length === 0) throw conflict('No AI output files are attached.');
+      const outputs = await listAiOutputs(tx, submissionId);
+      if (outputs.length === 0) throw conflict('No AI output files are attached.');
       const current = await stabilityView(tx, rubric.id);
       if (current.accepted) throw conflict('This Stability result is accepted. Running it again would replace the handoff scores.');
       const official = Boolean(await submittedCalibration(tx, rubric.id));
+      const inputs = readSource(submission)?.inputFiles ?? [];
       const job = await enqueue(tx, {
         kind: 'stability_run',
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { groupId: crypto.randomUUID(), calibrationGateActive: official },
+        payload: { groupId: crypto.randomUUID(), calibrationGateActive: official, ...heavyFlag([...outputs, ...inputs]) },
         createdBy: actor.id,
         deadlineMs: 2 * 60 * 60_000,
       });

@@ -90,7 +90,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               <th className="px-4 py-3">Task</th>
               <th className="px-4 py-3">Work status</th>
               <th className="px-4 py-3">Assigned to</th>
-              <th className="px-4 py-3">Last interaction</th>
+              <th className="px-4 py-3">{workState === 'submitted' ? 'Evidence' : 'Last interaction'}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -110,7 +110,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               <tr key={s.id} className="relative hover:bg-wash">
                 <td className="px-4 py-3.5 align-middle">
                   <Link href={`/submissions/${s.id}`} className="after:absolute after:inset-0 hover:underline">
-                    <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} />
+                    <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} />
                   </Link>
                 </td>
                 <td className="px-4 py-3.5 align-middle">
@@ -120,7 +120,16 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                   {assignee ? <span className="text-sm font-semibold leading-[22px]">{assignee}</span> : <span className="text-quiet">—</span>}
                 </td>
                 <td className="px-4 py-3.5 align-middle text-xs leading-[18px] text-muted">
-                  <TimeAgo iso={s.lastSeenAt} />
+                  {workState === 'submitted' ? (
+                    <a
+                      className="btn btn-ghost btn-sm relative z-10"
+                      href={`/api/submissions/${s.id}/rubric/evidence`}
+                    >
+                      Evidence JSON
+                    </a>
+                  ) : (
+                    <TimeAgo iso={s.lastSeenAt} />
+                  )}
                 </td>
               </tr>
               );

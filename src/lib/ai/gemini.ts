@@ -505,25 +505,29 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
   const admit = { lane: 'files', requestClass: ctx.requestClass, ownerId: ctx.ownerId, signal: ctx.signal };
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const uri = await admitted(admit, async () => {
+      const uploaded = await admitted(admit, async () => {
         const started = Date.now();
         const blob = new Blob([Buffer.from(input.bytes)], { type: input.mime });
-        let file = await ai().files.upload({ file: blob, config: { mimeType: input.mime, displayName: input.name.slice(0, 120) } });
-        const deadline = Date.now() + 20 * 60_000;
-        while (file.state === FileState.PROCESSING && Date.now() < deadline) {
-          await sleep(2_000, ctx.signal);
-          try {
-            file = await ai().files.get({ name: file.name! });
-          } catch {
-            /* status blip — keep polling the same handle, do not re-upload */
-          }
-        }
-        if (file.state !== FileState.ACTIVE || !file.uri) {
-          throw new GeminiError('transport', `Gemini could not process ${input.name} (${file.state ?? 'unknown state'}).`);
-        }
+        const file = await ai().files.upload({ file: blob, config: { mimeType: input.mime, displayName: input.name.slice(0, 120) } });
         gate.onSuccess('files', Date.now() - started);
-        return file.uri;
+        return file;
       });
+      // PROCESSING can take minutes on a 1 GB+ video. Do not hold the files
+      // lane closed — other users still need to upload.
+      let file = uploaded;
+      const deadline = Date.now() + 20 * 60_000;
+      while (file.state === FileState.PROCESSING && Date.now() < deadline) {
+        await sleep(2_000, ctx.signal);
+        try {
+          file = await ai().files.get({ name: file.name! });
+        } catch {
+          /* status blip — keep polling the same handle, do not re-upload */
+        }
+      }
+      if (file.state !== FileState.ACTIVE || !file.uri) {
+        throw new GeminiError('transport', `Gemini could not process ${input.name} (${file.state ?? 'unknown state'}).`);
+      }
+      const uri = file.uri;
       await database
         .insert(geminiFiles)
         .values({ sha256: input.sha256, uri, mime: input.mime, size: input.bytes.byteLength, expiresAt: new Date(Date.now() + FILE_TTL_MS).toISOString() })

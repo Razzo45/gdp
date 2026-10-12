@@ -7,6 +7,7 @@ import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
 import { jobsForSubmission } from '@/lib/jobs/queue';
 import { listAiOutputs } from './files';
@@ -25,7 +26,7 @@ import { getVisibleSubmission, readSource } from './submissions';
 export interface SubmissionView {
   submission: Pick<Submission, 'id' | 'catalogSubmissionId' | 'projectId' | 'statusId' | 'title' | 'stage' | 'landedAt' | 'lastSeenAt' | 'upstreamChangedAt' | 'lastClaimedAt' | 'rubricAssigneeId' | 'rubricClaimedAt' | 'reviewerId' | 'reviewClaimedAt' | 'reviewStatus' | 'handoffStatus' | 'pushedAt' | 'revision'>;
   people: Record<string, { name: string; email: string }>;
-  brief: { projectName: string; statusName: string | null; author: string | null; fields: CatalogField[]; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
+  brief: { projectName: string; statusName: string | null; author: string | null; heroDeliverable: string; fields: CatalogField[]; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
   rubric: { id: string; version: number; revision: number; seeds: string[]; generation: Record<string, unknown>; statements: RubricStatement[]; quotas: Record<string, number>; target: number } | null;
   golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string; model: string | null }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
   aiOutputs: AiOutputFile[];
@@ -118,6 +119,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       projectName: source?.projectName ?? '',
       statusName: source?.statusName ?? null,
       author: source?.author ?? null,
+      heroDeliverable: heroDeliverableFromSource(submission.source),
       fields: source?.fields ?? [],
       inputFiles: (source?.inputFiles ?? []).map(stripUrls),
       goldenFiles: lens === 'reviewer' ? [] : (source?.goldenFiles ?? []).map(stripUrls),

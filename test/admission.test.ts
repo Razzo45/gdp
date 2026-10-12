@@ -88,6 +88,57 @@ describe('AdaptiveAdmission', () => {
     expect(started).toEqual(['A', 'B', 'C', 'A', 'A']);
   });
 
+  it('admits ten owners across a tight target without dropping any', async () => {
+    const { admission } = harness({ initial: 4, floor: 1, ceiling: 4, ownerCeiling: 4 });
+    const started: string[] = [];
+    const hold = gate();
+    const jobs = Array.from({ length: 10 }, (_, i) =>
+      admission.use(async () => {
+        started.push(`u${i}`);
+        await hold.done;
+      }, { lane: 'm', requestClass: 'background', ownerId: `task:u${i}` }),
+    );
+    await flush();
+    expect(started).toHaveLength(4);
+    expect(new Set(started).size).toBe(4);
+    expect(admission.snapshot().queued).toBe(6);
+    hold.release();
+    await Promise.all(jobs);
+    expect(new Set(started).size).toBe(10);
+  });
+
+  it('hands freed slots to the other owner once a second job is waiting', async () => {
+    const { admission } = harness({ initial: 8, floor: 1, ceiling: 8, ownerCeiling: 8 });
+    const started: string[] = [];
+    const gatesA = Array.from({ length: 16 }, () => gate());
+    const aJobs = gatesA.map((g) =>
+      admission.use(async () => {
+        started.push('A');
+        await g.done;
+      }, { lane: 'm', requestClass: 'background', ownerId: 'task:video' }),
+    );
+    await flush();
+    expect(started).toHaveLength(8);
+    const holdB = gate();
+    const bJobs = Array.from({ length: 4 }, () =>
+      admission.use(async () => {
+        started.push('B');
+        await holdB.done;
+      }, { lane: 'm', requestClass: 'background', ownerId: 'task:cards' }),
+    );
+    await flush();
+    expect(started.filter((owner) => owner === 'B')).toHaveLength(0);
+    for (let i = 0; i < 4; i += 1) {
+      gatesA[i]!.release();
+      await flush();
+    }
+    expect(started.filter((owner) => owner === 'A')).toHaveLength(8);
+    expect(started.filter((owner) => owner === 'B')).toHaveLength(4);
+    for (const g of gatesA) g.release();
+    holdB.release();
+    await Promise.all([...aJobs, ...bJobs]);
+  });
+
   it('lets a single owner fill the whole target when nobody is on the UI', async () => {
     const { admission } = harness({ initial: 8, floor: 2, ceiling: 8, ownerCeiling: 8 });
     const g = gate();

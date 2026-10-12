@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canReuseStagedUri, catalogIdentityMatch, conflictingJob, isStatementLane, statementIdsOf } from '@/domain/jobs';
+import { canReuseStagedUri, catalogIdentityMatch, conflictingJob, isHeavyJobPayload, isHeavyMedia, isStatementLane, statementIdsOf } from '@/domain/jobs';
 
 describe('statement lane', () => {
   it('treats 1–8 statement ids as the fast lane', () => {
@@ -18,6 +18,18 @@ describe('statement lane', () => {
     expect(conflictingJob('golden_autorate', { statementIds: ['a'] }, [{ kind: 'golden_autorate', payload: { statementIds: ['a'] } }])).toBeTruthy();
     expect(conflictingJob('golden_autorate', { statementIds: ['a'] }, [{ kind: 'golden_autorate', payload: {} }])).toBeTruthy();
     expect(conflictingJob('golden_autorate', {}, [{ kind: 'golden_autorate', payload: { statementIds: ['a'] } }])).toBeTruthy();
+  });
+});
+
+describe('heavy media jobs', () => {
+  it('treats video, audio, and 100 MB+ files as heavy, not a small image', () => {
+    expect(isHeavyMedia({ mime: 'video/mp4', name: 'golden.mp4', size: 12_000 })).toBe(true);
+    expect(isHeavyMedia({ mime: 'audio/mpeg', name: 'voice.mp3' })).toBe(true);
+    expect(isHeavyMedia({ mime: '', name: 'take.mov' })).toBe(true);
+    expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 100 * 1024 * 1024 })).toBe(true);
+    expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 50 * 1024 * 1024 })).toBe(false);
+    expect(isHeavyJobPayload({ heavy: true })).toBe(true);
+    expect(isHeavyJobPayload({})).toBe(false);
   });
 });
 

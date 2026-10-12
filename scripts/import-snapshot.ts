@@ -195,12 +195,15 @@ function plannedProjects() {
   return projects;
 }
 
-function latestReviewStatus(internalId: string): LegacyReviewStatus | null {
-  const rows = [...load('public.wirestock_reviews_v1.json'), ...load('public.wirestock_submission_reviews.json')]
+function latestReviewRow(internalId: string): Record<string, unknown> | undefined {
+  return [...load('public.wirestock_reviews_v1.json'), ...load('public.wirestock_submission_reviews.json')]
     .filter(isRecord)
     .filter((row) => str(row, 'submission_id') === internalId)
-    .sort((a, b) => str(b, 'updated_at', 'decision_at', 'created_at').localeCompare(str(a, 'updated_at', 'decision_at', 'created_at')));
-  const status = str(rows[0] ?? {}, 'status').toLowerCase();
+    .sort((a, b) => str(b, 'updated_at', 'decision_at', 'created_at').localeCompare(str(a, 'updated_at', 'decision_at', 'created_at')))[0];
+}
+
+function latestReviewStatus(internalId: string): LegacyReviewStatus | null {
+  const status = str(latestReviewRow(internalId) ?? {}, 'status').toLowerCase();
   if (status === 'pending' || status === 'approved' || status === 'changes_requested') return status;
   return null;
 }
@@ -237,6 +240,10 @@ function plannedTasks() {
       const who = str(raw, 'assignee_id');
       if (seat) assigned = true;
       if (seat && who) seats[seat] = who;
+    }
+    if (!seats.review) {
+      const fromReview = str(latestReviewRow(row.id) ?? {}, 'reviewer_assignee_id', 'decision_by', 'reviewer_id');
+      if (fromReview) seats.review = fromReview;
     }
     const watch = watches.get(row.project_id);
     const project = isRecord(row.project) ? row.project : {};

@@ -23,6 +23,7 @@ export interface PendingCatalogReturn {
   id: string;
   catalogSubmissionId: string;
   title: string;
+  heroDeliverable: string;
   stage: string;
   statusId: string | null;
   catalogReturn: CatalogReturnRecord;

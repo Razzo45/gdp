@@ -14,9 +14,10 @@
  *                 Retry-After (or a capped backoff) has elapsed.
  *   lanes         One target per model; lanes never exceed the shared target.
  *                 Files API traffic is a separate lane with its own budget.
- *   owners        Round-robin across owners; FIFO inside an owner. The
- *                 per-owner ceiling defaults to the global ceiling so the
- *                 single queued user can saturate the lane.
+ *   owners        Round-robin across owners; FIFO inside an owner. One
+ *                 owner may fill the target. When a second owner is
+ *                 waiting, each is capped at ceil(target / owners) so a
+ *                 huge-video job cannot keep the lane.
  *   interactive   A slot is reserved for a waiting interactive request so a
  *                 button never sits behind a batch. If nobody is waiting on
  *                 the UI, background fills every slot.
@@ -289,9 +290,15 @@ export class AdaptiveAdmission {
     return value;
   }
 
+  private ownerLimit(): number {
+    const owners = new Set<string>([...this.activeByOwner.keys(), ...this.waiting.map((w) => w.owner)]);
+    if (owners.size <= 1) return this.cfg.ownerCeiling;
+    return Math.max(1, Math.min(this.cfg.ownerCeiling, Math.ceil(this.target / owners.size)));
+  }
+
   private canEnter(lane: string, requestClass: RequestClass, owner: string): boolean {
     const now = this.now();
-    if (lane !== FILES && (this.activeByOwner.get(owner) ?? 0) >= this.cfg.ownerCeiling) return false;
+    if (lane !== FILES && (this.activeByOwner.get(owner) ?? 0) >= this.ownerLimit()) return false;
     const laneActive = this.activeByLane.get(lane) ?? 0;
     if (lane === FILES) return laneActive < this.laneTarget(lane) && now >= this.filesCooldownUntil;
     if (now < this.cooldownUntil) return false;

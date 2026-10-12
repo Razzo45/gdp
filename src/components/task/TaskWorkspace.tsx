@@ -143,7 +143,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
               {s.handoffStatus && <span className="badge badge-muted">{s.handoffStatus.replaceAll('_', ' ')}</span>}
               {s.reviewStatus === 'changes_requested' && s.stage === 'rubric' && <span className="badge badge-warn">changes requested</span>}
             </div>
-            <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} heading />
+            <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} heading />
             <p className="mt-0.5 text-xs text-muted">
               {view.brief.projectName || s.projectId}
               {view.brief.statusName ? ` · ${view.brief.statusName}` : ''}
@@ -193,7 +193,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
         onClick={() => toggleHeader(true)}
       >
         <StageBadge stage={s.stage} />
-        <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
+        <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} size="compact" />
         <ScoreStrip
           view={view}
           golden={view.can.seeScoreGolden}

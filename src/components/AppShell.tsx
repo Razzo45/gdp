@@ -117,7 +117,7 @@ export function AppShell({
           Menu
         </button>
         <BrandMark />
-        <div className="min-w-0 truncate text-sm font-semibold tracking-[-0.025em]">GDP Wirestock</div>
+        <div className="min-w-0 truncate text-xl font-semibold leading-6 tracking-[-0.035em]">GDP Wirestock</div>
         <div className="ml-auto">
           <ThemeToggle />
         </div>
@@ -128,8 +128,8 @@ export function AppShell({
       <aside
         id="app-nav"
         className={`fixed inset-y-0 left-0 z-40 flex max-w-[85vw] flex-col border-r border-line bg-surface transition-[width,transform] duration-200 lg:static lg:z-0 lg:max-w-none lg:translate-x-0 ${
-          collapsed ? 'lg:w-16' : 'lg:w-60'
-        } w-60 ${menu ? 'translate-x-0' : '-translate-x-full'}`}
+          collapsed ? 'lg:w-16' : 'lg:w-72'
+        } w-72 ${menu ? 'translate-x-0' : '-translate-x-full'}`}
       >
         {collapsed ? (
           <>
@@ -139,28 +139,14 @@ export function AppShell({
             <div className="hidden min-h-0 flex-1 items-center justify-center lg:flex">{railToggle}</div>
             <div className="hidden border-t border-line lg:block">{logout(true)}</div>
             <div className="flex h-full flex-col lg:hidden">
-              <div className="border-b border-line px-4 py-5">
-                <BrandMark />
-                <div className="mt-4 text-sm font-semibold tracking-[-0.025em]">GDP Wirestock</div>
-                <div className="mt-3 truncate text-xs text-muted" title={email}>
-                  {name}
-                </div>
-                <div className="truncate text-[11px] text-quiet">{roles}</div>
-              </div>
+              <NavIdentity name={name} email={email} roles={roles} />
               {linksNav}
               <div className="mt-auto border-t border-line">{logout(false)}</div>
             </div>
           </>
         ) : (
           <>
-            <div className="border-b border-line px-4 py-5">
-              <BrandMark />
-              <div className="mt-4 text-sm font-semibold tracking-[-0.025em]">GDP Wirestock</div>
-              <div className="mt-3 truncate text-xs text-muted" title={email}>
-                {name}
-              </div>
-              <div className="truncate text-[11px] text-quiet">{roles}</div>
-            </div>
+            <NavIdentity name={name} email={email} roles={roles} />
             {linksNav}
             <div className="mt-auto border-t border-line">
               <div className="hidden p-3 pb-0 lg:block">{railToggle}</div>
@@ -176,6 +162,19 @@ export function AppShell({
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </main>
+    </div>
+  );
+}
+
+function NavIdentity({ name, email, roles }: { name: string; email: string; roles: string }) {
+  return (
+    <div className="border-b border-line px-4 py-5">
+      <BrandMark />
+      <div className="mt-4 text-[2.1875rem] font-semibold leading-[1.05] tracking-[-0.04em]">GDP Wirestock</div>
+      <div className="mt-4 text-[1.375rem] font-semibold leading-7 tracking-[-0.03em]" title={email}>
+        Hi {name}
+      </div>
+      <div className="mt-1 text-sm font-medium leading-5 text-muted">{roles}</div>
     </div>
   );
 }

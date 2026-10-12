@@ -7,7 +7,7 @@ import { StageBadge } from '@/components/StageBadge';
 import { TimeAgo } from '@/components/TimeAgo';
 import { TaskLabel } from '@/components/TaskLabel';
 import { formatDate } from '@/components/format';
-import { isStaleHold, STALE_HOLD_HOURS } from '@/domain/workState';
+import { seatIsStale, STALE_HOLD_HOURS } from '@/domain/workState';
 import { currentActor } from '@/lib/auth/identity';
 import { isController } from '@/lib/auth/permissions';
 import { claimsOverview } from '@/lib/services/submissions';
@@ -32,14 +32,14 @@ export default async function ClaimsPage() {
     })
     .sort((a, b) => Date.parse(a.oldest ?? '') - Date.parse(b.oldest ?? ''));
   const idle = people.filter((p) => p.rubricSeats.length + p.reviewSeats.length === 0 && p.roles.length > 0);
-  const staleCount = holding.reduce((n, p) => n + p.seats.filter((s) => isStaleHold(s.claimedAt, now)).length, 0);
+  const staleCount = holding.reduce((n, p) => n + p.seats.filter((s) => seatIsStale(s, now)).length, 0);
 
   return (
     <Page>
     <BoardFreshness />
     <div className="space-y-5">
       <PageHeader title="Who holds what">
-        Oldest seats first. A seat held {STALE_HOLD_HOURS} hours or more is stale.
+        Oldest seats first. A seat held {STALE_HOLD_HOURS} hours or more is stale. Delivered seats are not.
         {staleCount > 0 ? ` ${staleCount} stale now.` : ''}
       </PageHeader>
       {holding.length === 0 && <p className="card text-sm text-muted">Nobody holds a task right now.</p>}
@@ -66,13 +66,13 @@ export default async function ClaimsPage() {
             </thead>
             <tbody className="divide-y divide-line">
               {p.seats.map((s) => {
-                const stale = isStaleHold(s.claimedAt, now);
+                const stale = seatIsStale(s, now);
                 return (
                 <tr key={`${s.seat}-${s.submissionId}`}>
                   <td className="py-1.5 pr-3 capitalize">{s.seat}</td>
                   <td className="py-1.5 pr-3">
                     <Link href={`/submissions/${s.submissionId}`} className="hover:underline">
-                      <TaskLabel catalogId={s.catalogSubmissionId} title={s.title} size="compact" />
+                      <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} size="compact" />
                     </Link>
                   </td>
                   <td className="py-1.5 pr-3">

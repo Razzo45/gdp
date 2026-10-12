@@ -41,7 +41,7 @@ export function CatalogReturnQueue({ items }: { items: PendingCatalogReturn[] })
             <li key={item.id} className="flex flex-wrap items-start gap-3 py-3 first:pt-0 last:pb-0">
               <div className="min-w-48 flex-1">
                 <Link href={`/submissions/${item.id}`} className="hover:underline">
-                  <TaskLabel catalogId={item.catalogSubmissionId} title={item.title} />
+                  <TaskLabel catalogId={item.catalogSubmissionId} hero={item.heroDeliverable} />
                 </Link>
                 <p className="mt-1 text-xs leading-[18px] text-muted">
                   {item.catalogReturn.statusName ?? 'Catalog status'}

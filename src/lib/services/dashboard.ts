@@ -26,6 +26,7 @@ export interface StuckTask {
   id: string;
   catalogSubmissionId: string;
   title: string;
+  heroDeliverable: string;
   workState: WorkState;
   workLabel: string;
   holderId: string | null;
@@ -116,6 +117,7 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
       id: row.id,
       catalogSubmissionId: row.catalogSubmissionId,
       title: row.title,
+      heroDeliverable: row.heroDeliverable,
       workState: row.workState,
       workLabel: WORK_STATE_LABEL[row.workState],
       holderId: holder.id,

@@ -17,7 +17,7 @@ import {
   submissions,
 } from '@/db/schema';
 import { sha256, statementHash } from '@/domain/fingerprint';
-import { isLiveHumanNote } from '@/domain/golden';
+import { isImportableAutorateSource, isLiveHumanNote } from '@/domain/golden';
 import { keepCatalogId } from '@/domain/cutoverKeep';
 import { factoryStatementsFromLegacy, latestLegacyRun, legacyStabilityHostId, mapLegacySeatIds, normalizeClaim, remapEvidence, remapVerdicts, seedsFromLegacy, stabilityGroupsFromAutorate, type LegacyStabilityImportGroup } from '@/domain/legacyImport';
 import { installFactoryVersion } from '@/lib/services/rubric';
@@ -229,7 +229,18 @@ async function main() {
   }
 
   for (const item of plan) {
-    if (stabilityOnly || !item.internal || !item.rubric || item.statements.length === 0 || item.seats.size === 0) continue;
+    if (stabilityOnly) continue;
+    if (item.rubric && !fillMissing && (!item.internal || item.seats.size === 0)) {
+      // Live has no remapable eval — drop Railway play, keep the rubric.
+      await database.delete(goldenRatings).where(eq(goldenRatings.rubricId, item.rubric.id));
+      await database.delete(calibrations).where(eq(calibrations.rubricId, item.rubric.id));
+      await database.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, item.rubric.id));
+      await database.delete(stabilityPasses).where(eq(stabilityPasses.rubricId, item.rubric.id));
+      await database.delete(reviewFeedback).where(eq(reviewFeedback.submissionId, item.sub.id));
+      await database.update(submissions).set({ reviewRubricId: null }).where(eq(submissions.id, item.sub.id));
+      continue;
+    }
+    if (!item.internal || !item.rubric || item.statements.length === 0 || item.seats.size === 0) continue;
     const { sub, internal, rubric, statements, seats } = item;
 
     const qFor = latest(
@@ -324,7 +335,7 @@ async function main() {
         const aiRows = statements
           .filter((statement) => {
             const legacy = [...seats.entries()].find(([, id]) => id === statement.id)?.[0];
-            return statement.id in verdicts && (!legacy || /autorate|ai|golden/i.test(String(sources[legacy] ?? 'autorate_golden')));
+            return statement.id in verdicts && (!legacy || isImportableAutorateSource(String(sources[legacy] ?? 'autorate_golden')));
           })
           .map((statement) => ({
             rubricId: rubric.id,
@@ -405,7 +416,11 @@ async function main() {
     }
 
     for (const group of keepStab ? [] : stabFor) {
-      const groupId = str(group, 'group_id') || crypto.randomUUID();
+      const rawGroupId = str(group, 'group_id') || crypto.randomUUID();
+      const groupId = asGroupId(rawGroupId);
+      // unique (group_id, pass_index) is global — drop play rows on superseded rubrics.
+      await database.delete(stabilityAcceptances).where(eq(stabilityAcceptances.groupId, groupId));
+      await database.delete(stabilityPasses).where(eq(stabilityPasses.groupId, groupId));
       const passes = Array.isArray(group['runs']) ? (group['runs'] as Record<string, unknown>[]) : [];
       for (const pass of passes) {
         const ordinal = Number(pass['ordinal'] ?? pass['passIndex'] ?? 0) || 1;
@@ -424,7 +439,7 @@ async function main() {
           basis: {
             rubricRevision: rubric.revision,
             ...basisFiles,
-            legacyGroupId: groupId,
+            legacyGroupId: rawGroupId,
             provenance: fromAutorate.length ? 'legacy-autorate-runs' : 'legacy-snapshot',
             parentGroupId: 'parent_group_id' in group ? group.parent_group_id : null,
           },
@@ -549,7 +564,7 @@ async function main() {
         fileShas.push(existing.sha256);
       }
     }
-    const groupId = str(group, 'group_id') || crypto.randomUUID();
+    const groupId = asGroupId(str(group, 'group_id') || crypto.randomUUID());
     const already = (await database.select({ id: stabilityPasses.id }).from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId)).limit(1))[0];
     if (already) continue;
     const passes = Array.isArray(group['runs']) ? (group['runs'] as Record<string, unknown>[]) : [];

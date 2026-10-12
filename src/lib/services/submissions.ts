@@ -359,8 +359,8 @@ export interface ClaimsOverviewRow {
   name: string;
   email: string;
   roles: string[];
-  rubricSeats: { submissionId: string; catalogSubmissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
-  reviewSeats: { submissionId: string; catalogSubmissionId: string; title: string; stage: string; claimedAt: string | null; landedAt: string }[];
+  rubricSeats: { submissionId: string; catalogSubmissionId: string; title: string; heroDeliverable: string; stage: string; claimedAt: string | null; landedAt: string }[];
+  reviewSeats: { submissionId: string; catalogSubmissionId: string; title: string; heroDeliverable: string; stage: string; claimedAt: string | null; landedAt: string }[];
 }
 
 /** Who holds what, for PMs. */
@@ -383,10 +383,10 @@ export async function claimsOverview(actor: Actor): Promise<ClaimsOverviewRow[]>
     roles: roles.get(p.id) ?? [],
     rubricSeats: held
       .filter((s) => s.rubricAssigneeId === p.id)
-      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, stage: s.stage, claimedAt: s.rubricClaimedAt, landedAt: s.landedAt })),
+      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, heroDeliverable: heroDeliverableFromSource(s.source), stage: s.stage, claimedAt: s.rubricClaimedAt, landedAt: s.landedAt })),
     reviewSeats: held
       .filter((s) => s.reviewerId === p.id)
-      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, stage: s.stage, claimedAt: s.reviewClaimedAt, landedAt: s.landedAt })),
+      .map((s) => ({ submissionId: s.id, catalogSubmissionId: s.catalogSubmissionId, title: s.title, heroDeliverable: heroDeliverableFromSource(s.source), stage: s.stage, claimedAt: s.reviewClaimedAt, landedAt: s.landedAt })),
   }));
 }
 

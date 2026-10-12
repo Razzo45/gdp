@@ -1,19 +1,19 @@
-import { shortCatalogId, shortTaskDescriptor } from './format';
+import { shortCatalogId } from './format';
 
-/** Catalog short id on top, one-line descriptor under it. */
+/** Catalog short id on top, hero deliverable under it. */
 export function TaskLabel({
   catalogId,
-  title,
+  hero,
   heading = false,
   size = 'board',
 }: {
   catalogId: string;
-  title?: string | null;
+  hero?: string | null;
   heading?: boolean;
   size?: 'board' | 'compact';
 }) {
   const id = shortCatalogId(catalogId);
-  const descriptor = shortTaskDescriptor(title);
+  const descriptor = hero?.replace(/\s+/g, ' ').trim() ?? '';
   if (heading) {
     return (
       <>

@@ -533,6 +533,60 @@ describe('job queue', () => {
     expect(await expireOverdue()).toBe(0);
   });
 
+  it('gives ten concurrent workers ten distinct jobs via SKIP LOCKED', async () => {
+    const created = [];
+    for (const row of await Promise.all(Array.from({ length: 10 }, () => makeSubmission(db)))) {
+      created.push(
+        await enqueue(db, {
+          kind: 'golden_autorate',
+          submissionId: row.id,
+          rubricId: null,
+          requestId: crypto.randomUUID(),
+          payload: {},
+          createdBy: creator.id,
+        }),
+      );
+    }
+    const claimed = await Promise.all(Array.from({ length: 10 }, () => claimNext(['golden_autorate'])));
+    const ids = claimed.map((row) => row?.job.id);
+    expect(ids.every((id): id is string => Boolean(id))).toBe(true);
+    expect(new Set(ids).size).toBe(10);
+    expect(new Set(ids)).toEqual(new Set(created.map((row) => row.id)));
+    expect(await claimNext(['golden_autorate'])).toBeNull();
+  });
+
+  it('keeps a third heavy video job queued so light work can still claim', async () => {
+    const rows = await Promise.all(Array.from({ length: 4 }, () => makeSubmission(db)));
+    const light = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[0]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const heavies = [];
+    for (const row of rows.slice(1)) {
+      heavies.push(
+        await enqueue(db, {
+          kind: 'golden_autorate',
+          submissionId: row.id,
+          rubricId: null,
+          requestId: crypto.randomUUID(),
+          payload: { heavy: true },
+          createdBy: creator.id,
+        }),
+      );
+    }
+    const first = await claimNext(['golden_autorate']);
+    const second = await claimNext(['golden_autorate']);
+    const third = await claimNext(['golden_autorate']);
+    const fourth = await claimNext(['golden_autorate']);
+    const claimed = [first, second, third].map((row) => row?.job.id);
+    expect(claimed).toEqual([light.id, heavies[0]!.id, heavies[1]!.id]);
+    expect(fourth).toBeNull();
+  });
+
   it('fails a crashed running job that has used every attempt so it stops blocking the task', async () => {
     const s = await makeSubmission(db);
     const job = await enqueue(db, {
