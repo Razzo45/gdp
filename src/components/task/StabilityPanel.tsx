@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS, STABILITY_PASSES } from '@/domain/gates';
+import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS, STABILITY_PASSES, stabilityRerunAllowed } from '@/domain/gates';
 import { api, uuid } from '../client';
 import { formatDate, pct } from '../format';
 import { Pill } from '../StageBadge';
@@ -23,7 +23,8 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const liveTotal = live.total ?? STABILITY_PASSES;
   const official = Boolean(view.stability?.calibrationGateActive);
   const canRun = view.can.runStability;
-  const canAccept = official && canRun && view.submission.stage === 'stability';
+  const canStart = canRun && stabilityRerunAllowed({ acceptedAt: stability?.acceptedAt ?? null });
+  const canAccept = official && canStart && view.submission.stage === 'stability';
 
   async function act(path: string, body: Record<string, unknown>, ok: string) {
     setBusy(true);
@@ -46,7 +47,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const locked =
     !canRun && !view.can.holdsRubricSeat
       ? 'Claim the rubric seat, or ask a PM to assign it, to run Stability.'
-      : canRun && view.aiOutputs.length === 0
+      : canStart && view.aiOutputs.length === 0
         ? 'Attach the AI output first.'
         : null;
 
@@ -62,7 +63,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)}
           {stability?.acceptedAt && <Pill tone="ok">accepted {formatDate(stability.acceptedAt)}</Pill>}
-          {canRun && (
+          {canStart && (
             canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt ? (
               <button
                 className="btn btn-primary"
@@ -146,7 +147,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         </ul>
       )}
 
-      {(canRun || locked) && (
+      {(canStart || locked) && (
         <div className="flex flex-col items-start gap-2">
           {locked ? <p className="text-sm text-muted">{locked}</p> : null}
           <div className="flex flex-wrap gap-2">
@@ -160,7 +161,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
                 Run again
               </button>
             )}
-            {official && passes.length > 0 && (
+            {official && passes.length > 0 && !stability?.acceptedAt && (
               <button className="btn btn-ghost" disabled={busy} type="button" onClick={() => act(`/api/submissions/${view.submission.id}/stability/reopen`, { reason: 'Rewriting flipped seats after stability.' }, 'The rubric is open again.')}>
                 Reopen rubric
               </button>

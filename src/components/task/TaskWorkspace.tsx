@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } from '@/domain/freshness';
+import { reviewerReturnNote } from '@/domain/review';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
@@ -12,6 +13,7 @@ import { StageBadge } from '../StageBadge';
 import { ScoreStrip } from '../ScoreStrip';
 import { TaskLabel } from '../TaskLabel';
 import { Toast } from '../Toast';
+import { Modal } from '../ui/Modal';
 import { BriefPanel } from './BriefPanel';
 import { EventsPanel } from './EventsPanel';
 import { HandoffPanel } from './HandoffPanel';
@@ -118,6 +120,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   }, [busy, initial.submission.id, loadView]);
 
   const s = view.submission;
+  const returnNote = reviewerReturnNote({ stage: s.stage, feedback: view.review.feedback });
   const panel: PanelProps = { view, actorId, refresh, notify };
 
   if (!ready) {
@@ -128,8 +131,11 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
 
+      {returnNote && !headerOpen ? <ReviewReturnBanner message={returnNote.message} /> : null}
+
       {headerOpen ? (
       <header className="card shrink-0 space-y-3">
+        {returnNote ? <ReviewReturnBanner flush message={returnNote.message} /> : null}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -233,14 +239,32 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   );
 }
 
+function ReviewReturnBanner({ message, flush = false }: { message: string; flush?: boolean }) {
+  return (
+    <aside
+      className={
+        flush
+          ? '-mx-5 -mt-5 rounded-t-[1.4rem] border-b-2 border-warn bg-warn-soft px-5 py-4'
+          : 'shrink-0 rounded-3xl border-2 border-warn bg-warn-soft px-5 py-4'
+      }
+      role="status"
+    >
+      <p className="text-sm font-bold text-warn">Reviewer sent this back</p>
+      <p className="mt-1 text-xl font-semibold leading-snug text-ink">{message}</p>
+    </aside>
+  );
+}
+
 function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'refresh' | 'notify'>) {
   const [busy, setBusy] = useState(false);
+  const [confirmPush, setConfirmPush] = useState(false);
   const s = view.submission;
   const spread = quotaSpread(countFamilies(view.rubric?.statements ?? []));
   const canSend = view.can.editRubric && view.golden?.gate.ok && view.aiOutputs.length > 0 && spread.ready;
   const showSend = view.can.editRubric && s.stage === 'rubric';
+  const showPush = view.can.push;
 
-  if (!showSend) return null;
+  if (!showSend && !showPush) return null;
 
   async function send() {
     setBusy(true);
@@ -250,6 +274,20 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
       await refresh();
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not send to review.', 'bad');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function push() {
+    setBusy(true);
+    try {
+      const result = await api<{ rubricItems: number; moves: string[] }>(`/api/submissions/${s.id}/handoff/push`, { method: 'POST' });
+      setConfirmPush(false);
+      notify(`Submitted to the Data Catalog. ${result.rubricItems} rubric rows · ${result.moves.length} workflow move(s).`);
+      await refresh();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Push failed.', 'bad');
     } finally {
       setBusy(false);
     }
@@ -273,6 +311,24 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
           </button>
           {blocked && <p className="text-right text-xs text-muted">{blocked}</p>}
         </>
+      )}
+      {showPush && (
+        <button className="btn btn-primary" disabled={busy} type="button" onClick={() => setConfirmPush(true)}>
+          Submit to Data Program
+        </button>
+      )}
+      {confirmPush && (
+        <Modal title="Submit to Data Program" onClose={() => setConfirmPush(false)}>
+          <p className="text-sm text-muted">Write the rubric and performance summary into the Catalog and move the submission to the handoff status. This cannot be undone here.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button className="btn btn-primary" disabled={busy} type="button" onClick={() => void push()}>
+              {busy ? 'Submitting…' : 'Submit to Data Program'}
+            </button>
+            <button className="btn" type="button" onClick={() => setConfirmPush(false)}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

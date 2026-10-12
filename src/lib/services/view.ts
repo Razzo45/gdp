@@ -4,7 +4,7 @@ import { desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { jobs, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
-import type { GoldenGate, HandoffGates, StabilityGate, Verdict } from '@/domain/gates';
+import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
@@ -178,7 +178,15 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       control: isController(actor),
       claimRubric: submission.rubricAssigneeId === null && (isController(actor) || actor.roles.has('rubric_creator')),
       claimReview: submission.reviewerId === null && submission.stage === 'review' && canReview(actor),
-      push: (holdsRubricSeat(actor, submission) || isController(actor)) && submission.handoffStatus === 'final_review_pass' && !submission.pushedAt,
+      push:
+        (holdsRubricSeat(actor, submission) || isController(actor)) &&
+        canSubmitToDataPlatform({
+          golden: handoff.gates.golden,
+          calibration: handoff.gates.calibration,
+          stability: stability?.gate.ok === true,
+          handoffStatus: submission.handoffStatus,
+          pushedAt: submission.pushedAt,
+        }),
       seeHistory: lens === 'controller',
       seeJobsLog: lens === 'controller',
       seeRunProgress: lens === 'rubric' || lens === 'controller',
@@ -186,7 +194,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       seeRubricEditor: lens === 'controller' || lens === 'rubric',
       seeGoldenFiles: lens !== 'reviewer',
       seeStability: lens !== 'reviewer',
-      seeHandoff: lens !== 'reviewer',
+      seeHandoff: lens === 'controller',
       seeAiUpload: lens !== 'reviewer',
       seeScoreGolden: lens !== 'reviewer',
       seeScoreStability: lens !== 'reviewer',

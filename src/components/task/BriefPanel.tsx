@@ -78,8 +78,8 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
   );
 
   return (
-    <section className="card space-y-3">
-      <div className="flex items-center gap-2">
+    <section className="card">
+      <div className="flex items-center gap-2 pb-3">
         <h2 className="font-semibold">Task brief</h2>
         {!reviewer && (
           <button className="btn btn-ghost btn-sm ml-auto" onClick={sync} disabled={busy} type="button">
@@ -94,28 +94,28 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
         </button>
       </div>
       {open && (
-        <dl className="space-y-3 text-sm">
-          {visibleFields.length === 0 && <dd className="text-muted">The Catalog payload has no readable fields.</dd>}
+        <dl className="divide-y divide-line border-t border-line text-sm">
+          {visibleFields.length === 0 && <dd className="py-4 text-muted">The Catalog payload has no readable fields.</dd>}
           {visibleFields.map((f) => (
-            <div key={f.key}>
+            <div key={f.key} className="py-4">
               <dt className="text-base font-bold">{f.label}</dt>
-              <dd className="mt-1 whitespace-pre-wrap break-words leading-relaxed">{f.text}</dd>
+              <dd className="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{f.text}</dd>
             </div>
           ))}
         </dl>
       )}
 
       {view.can.seeGoldenFiles && (
-        <div>
+        <div className="border-t border-line py-4">
           <h3 className="mb-1 text-base font-bold">Golden files</h3>
           <FilePreviewList files={view.brief.goldenFiles} hrefFor={(f) => `/api/submissions/${s.id}/files/${f.id}`} empty="No explicit Golden files were provided." />
         </div>
       )}
-      <div>
+      <div className="border-t border-line py-4">
         <h3 className="mb-1 text-base font-bold">Input files</h3>
         <FilePreviewList files={view.brief.inputFiles} hrefFor={(f) => `/api/submissions/${s.id}/files/${f.id}`} empty="No input files." />
       </div>
-      <div id="ai-output-files">
+      <div className="border-t border-line pt-4" id="ai-output-files">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <h3 className="text-base font-bold">AI output files ({view.aiOutputs.length})</h3>
           {uploadsAllowed && (

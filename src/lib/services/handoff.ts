@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissions, type Rubric, type RubricStatement, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { handoffGates, handoffTransitionGate, type HandoffGates, type HandoffTarget } from '@/domain/gates';
+import { canSubmitToDataPlatform, handoffGates, handoffTransitionGate, type HandoffGates, type HandoffTarget } from '@/domain/gates';
 import { holdsRubricSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { fetchSubmission, saveSubmissionValues, transitionSubmission } from '@/lib/catalog/client';
 import { catalogRubricItems, catalogTaskPerformance, catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
@@ -143,7 +143,6 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   const database = db();
   const submission = await getSubmission(database, submissionId);
   if (!(holdsRubricSeat(actor, submission) || isController(actor))) throw forbidden('You may not push this task.');
-  if (submission.handoffStatus !== 'final_review_pass') throw conflict('The task must reach "final review pass" before it is pushed.');
   if (submission.pushedAt) throw conflict('This task was already pushed.');
   if (isLivePushLease(submission.pushReceipt)) throw conflict('A push is already in progress for this task.');
 
@@ -157,7 +156,17 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     watchedProjectFor(database, submission.projectId),
   ]);
   const view = await handoffView(database, submission, { rubric, statements, golden, calibration, stability });
-  if (!(view.gates.golden && view.gates.calibration && view.gates.stability)) throw conflict(view.gates.reasons.join(' '));
+  if (
+    !canSubmitToDataPlatform({
+      golden: view.gates.golden,
+      calibration: view.gates.calibration,
+      stability: stability.gate?.ok === true,
+      handoffStatus: submission.handoffStatus,
+      pushedAt: submission.pushedAt,
+    })
+  ) {
+    throw conflict(view.gates.reasons[0] ?? 'Golden, the human AI score, and Stability must all pass before this task is submitted.');
+  }
   if (!watched || !watched.handoffStatusId) throw conflict('This project has no handoff status configured. Ask a PM to set it under Settings → Projects.');
 
   const recoveredEarly = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);

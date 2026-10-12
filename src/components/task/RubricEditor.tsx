@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RubricStatement } from '@/db/schema';
 import { parseBank, type BankCandidate } from '@/domain/bank';
-import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS } from '@/domain/gates';
+import { EVIDENCE_MIN_CHARS } from '@/domain/gates';
 import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
@@ -370,13 +370,6 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
               );
             })()}
           </ul>
-        </div>
-      )}
-
-      {view.review.feedback[0]?.decision === 'changes_requested' && view.submission.stage === 'rubric' && (
-        <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
-          <strong>Reviewer requested changes</strong>
-          {view.review.submittedPercent !== null && <> (AI scored {view.review.submittedPercent.toFixed(1)}%; band is {CALIBRATION_MIN_PERCENT}–{CALIBRATION_MAX_PERCENT}%)</>}: {view.review.feedback[0].feedback}
         </div>
       )}
 

@@ -9,6 +9,7 @@ import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/error
 import { listAiOutputs } from '@/lib/services/files';
 import { submittedCalibration } from '@/lib/services/review';
 import { currentRubric, ensureCurrentRubric, statementsOf } from '@/lib/services/rubric';
+import { stabilityView } from '@/lib/services/stability';
 import { getSubmission, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
 
@@ -80,6 +81,8 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
       const rubric = await currentRubric(tx, submissionId);
       if (!rubric) throw conflict('There is no rubric.');
       if ((await listAiOutputs(tx, submissionId)).length === 0) throw conflict('No AI output files are attached.');
+      const current = await stabilityView(tx, rubric.id);
+      if (current.accepted) throw conflict('This Stability result is accepted. Running it again would replace the handoff scores.');
       const official = Boolean(await submittedCalibration(tx, rubric.id));
       const job = await enqueue(tx, {
         kind: 'stability_run',

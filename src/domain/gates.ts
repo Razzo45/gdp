@@ -176,6 +176,24 @@ export function canConfirmStabilityPassFrom(status: string | null): boolean {
   return status === null || status === 'ready_for_review' || status === 'bounced';
 }
 
+/** After accept, another run would replace the handoff scores. Reopen before then. */
+export function stabilityRerunAllowed(input: { acceptedAt: string | null }): boolean {
+  return input.acceptedAt == null;
+}
+
+/** The score strip already stands in for handoff. Submit is available once every gate is closed. */
+export function canSubmitToDataPlatform(input: {
+  golden: boolean;
+  calibration: boolean;
+  stability: boolean;
+  handoffStatus: string | null;
+  pushedAt: string | null;
+}): boolean {
+  if (input.pushedAt) return false;
+  if (!(input.golden && input.calibration && input.stability)) return false;
+  return input.handoffStatus === 'stability_pass' || input.handoffStatus === 'final_review_pass';
+}
+
 export function handoffTransitionGate(target: HandoffTarget, gates: HandoffGates): { ok: true } | { ok: false; error: string } {
   if (target === 'bounced') return { ok: true };
   if (target === 'ready_for_review' && !gates.golden) {

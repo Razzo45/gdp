@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { calibrationInBand, canConfirmStabilityPassFrom, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate } from '@/domain/gates';
-import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
+import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed } from '@/domain/gates';
+import { reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
 const all = (v: boolean) => Object.fromEntries(ids.map((id) => [id, v]));
@@ -36,6 +36,14 @@ describe('review grades', () => {
     expect(reviewApprovalScore({ latestCompletePercent: 25, submittedPercent: 75 })).toBe(25);
     expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: 40 })).toBe(40);
     expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: null })).toBeNull();
+  });
+
+  it('surfaces the reviewer note only while the rubric is back with the creator', () => {
+    const returned = [{ decision: 'changes_requested', feedback: '  tighten the visual seats.  ' }];
+    expect(reviewerReturnNote({ stage: 'rubric', feedback: returned })).toEqual({ message: 'tighten the visual seats.' });
+    expect(reviewerReturnNote({ stage: 'review', feedback: returned })).toBeNull();
+    expect(reviewerReturnNote({ stage: 'rubric', feedback: [{ decision: 'approved', feedback: 'ok' }] })).toBeNull();
+    expect(reviewerReturnNote({ stage: 'rubric', feedback: [] })).toBeNull();
   });
 });
 
@@ -132,5 +140,19 @@ describe('handoff', () => {
     expect(canConfirmStabilityPassFrom('bounced')).toBe(true);
     expect(canConfirmStabilityPassFrom('stability_pass')).toBe(false);
     expect(canConfirmStabilityPassFrom('final_review_pass')).toBe(false);
+  });
+
+  it('does not offer another Stability run after the accepted result', () => {
+    expect(stabilityRerunAllowed({ acceptedAt: null })).toBe(true);
+    expect(stabilityRerunAllowed({ acceptedAt: '2026-10-12T20:55:00.000Z' })).toBe(false);
+  });
+
+  it('lets the rubric seat submit once every gate is closed and the task is on handoff', () => {
+    const gates = { golden: true, calibration: true, stability: true };
+    expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'stability_pass', pushedAt: null })).toBe(true);
+    expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'final_review_pass', pushedAt: null })).toBe(true);
+    expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'stability_pass', pushedAt: '2026-10-12T00:00:00.000Z' })).toBe(false);
+    expect(canSubmitToDataPlatform({ ...gates, golden: false, handoffStatus: 'stability_pass', pushedAt: null })).toBe(false);
+    expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'ready_for_review', pushedAt: null })).toBe(false);
   });
 });
