@@ -72,12 +72,16 @@ const workerVars = {
   GEMINI_INCREASE_AFTER: '${{gdp.GEMINI_INCREASE_AFTER}}',
   GEMINI_FILES_CONCURRENCY: '${{gdp.GEMINI_FILES_CONCURRENCY}}',
   GEMINI_MOCK: '${{gdp.GEMINI_MOCK}}',
+  WIRESTOCK_API_BASE_URL: '${{gdp.WIRESTOCK_API_BASE_URL}}',
+  WIRESTOCK_API_TOKEN: '${{gdp.WIRESTOCK_API_TOKEN}}',
 };
 
 const catchupVars = {
   ...shared,
   SERVICE_KIND: 'catchup',
   RUN_WORKER: '0',
+  WIRESTOCK_API_BASE_URL: '${{gdp.WIRESTOCK_API_BASE_URL}}',
+  WIRESTOCK_API_TOKEN: '${{gdp.WIRESTOCK_API_TOKEN}}',
 };
 
 const worker = ensureService('worker');

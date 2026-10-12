@@ -5,8 +5,8 @@ import { useEffect, useRef } from 'react';
 import { BOARD_REFRESH_MS, BOARD_STALE_MS } from '@/domain/freshness';
 
 /**
- * Reloads a server-rendered board every few minutes, and again when you
- * come back to a stale tab. Used on the admin / PM surfaces.
+ * Reloads a server-rendered board once a minute while the tab is visible,
+ * and again when you come back to a stale tab. Used on admin / PM surfaces.
  */
 export function BoardFreshness() {
   const router = useRouter();

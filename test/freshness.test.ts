@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { jobProgressView, statusFromView, statusKey } from '@/domain/freshness';
+import { BOARD_REFRESH_MS, jobProgressView, statusFromView, statusKey } from '@/domain/freshness';
 
 const base = {
   stage: 'rubric',
@@ -10,6 +10,13 @@ const base = {
   revision: 1,
   jobs: [{ id: 'j1', status: 'running' }],
 };
+
+describe('board refresh', () => {
+  it('stays in a conservative band so an open board cannot lock the database', () => {
+    expect(BOARD_REFRESH_MS).toBeGreaterThanOrEqual(60_000);
+    expect(BOARD_REFRESH_MS).toBeLessThanOrEqual(3 * 60_000);
+  });
+});
 
 describe('statusKey', () => {
   it('is stable for the same pulse', () => {

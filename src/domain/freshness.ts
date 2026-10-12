@@ -3,15 +3,16 @@
  *
  * Task panels do not tick. A cheap pulse watches stage, seats, job
  * status, and job progress; the full view reloads when one of those changes.
- * Admin / PM boards (dashboard, submissions, Who holds what) refresh on
- * a long interval — minutes, not seconds.
+ * Admin / PM boards (dashboard, submissions, Who holds what) refresh once
+ * a minute while the tab is visible. That is enough to show a pickup without
+ * the old app's chatty polling.
  */
 
 /** While a job is live, ask whether its status or progress changed. */
 export const TASK_STATUS_PULSE_MS = 1_000;
 
 /** Dashboard, submissions list, and Who holds what. */
-export const BOARD_REFRESH_MS = 7 * 60_000;
+export const BOARD_REFRESH_MS = 60_000;
 
 /** Coming back to a board tab older than this triggers a refresh. */
 export const BOARD_STALE_MS = 5 * 60_000;
