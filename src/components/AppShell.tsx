@@ -117,7 +117,7 @@ export function AppShell({
           Menu
         </button>
         <BrandMark />
-        <div className="min-w-0 truncate text-xl font-semibold leading-6 tracking-[-0.035em]">GDP Wirestock</div>
+        <div className="min-w-0 truncate text-base font-semibold leading-5 tracking-[-0.03em]">GDP Wirestock</div>
         <div className="ml-auto">
           <ThemeToggle />
         </div>
@@ -128,8 +128,8 @@ export function AppShell({
       <aside
         id="app-nav"
         className={`fixed inset-y-0 left-0 z-40 flex max-w-[85vw] flex-col border-r border-line bg-surface transition-[width,transform] duration-200 lg:static lg:z-0 lg:max-w-none lg:translate-x-0 ${
-          collapsed ? 'lg:w-16' : 'lg:w-72'
-        } w-72 ${menu ? 'translate-x-0' : '-translate-x-full'}`}
+          collapsed ? 'lg:w-16' : 'lg:w-60'
+        } w-60 ${menu ? 'translate-x-0' : '-translate-x-full'}`}
       >
         {collapsed ? (
           <>
@@ -168,13 +168,13 @@ export function AppShell({
 
 function NavIdentity({ name, email, roles }: { name: string; email: string; roles: string }) {
   return (
-    <div className="border-b border-line px-4 py-5">
+    <div className="border-b border-line px-4 py-4">
       <BrandMark />
-      <div className="mt-4 text-[2.1875rem] font-semibold leading-[1.05] tracking-[-0.04em]">GDP Wirestock</div>
-      <div className="mt-4 text-[1.375rem] font-semibold leading-7 tracking-[-0.03em]" title={email}>
+      <div className="mt-3 text-lg font-semibold leading-6 tracking-[-0.03em]">GDP Wirestock</div>
+      <div className="mt-2 text-[15px] font-medium leading-5 tracking-[-0.015em]" title={email}>
         Hi {name}
       </div>
-      <div className="mt-1 text-sm font-medium leading-5 text-muted">{roles}</div>
+      <div className="mt-0.5 text-xs leading-4 text-muted">{roles}</div>
     </div>
   );
 }
