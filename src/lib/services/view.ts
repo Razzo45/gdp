@@ -183,7 +183,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
         canSubmitToDataPlatform({
           golden: handoff.gates.golden,
           calibration: handoff.gates.calibration,
-          stability: stability?.gate.ok === true,
+          stability: stability?.gate?.ok === true,
           handoffStatus: submission.handoffStatus,
           pushedAt: submission.pushedAt,
         }),
