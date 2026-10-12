@@ -91,8 +91,8 @@ export function OfficeViewer({ href, ext, className = '' }: { href: string; ext:
   const showNav = ext === 'pptx' || ext === 'docx';
 
   return (
-    <div className={`flex flex-col bg-white text-zinc-900 ${className}`}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2 text-sm">
+    <div className={`flex min-h-[32rem] flex-col bg-white text-zinc-900 ${className}`}>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 px-3 py-2 text-sm">
         <span className="text-zinc-600">{status === 'loading' ? 'Loading file…' : label}</span>
         {showNav && status === 'ready' && (
           <span className="ml-auto flex gap-1">
@@ -114,7 +114,7 @@ export function OfficeViewer({ href, ext, className = '' }: { href: string; ext:
         )}
       </div>
       {status === 'error' && <p className="px-3 py-6 text-sm text-red-700">{error}</p>}
-      <div ref={host} className={ext === 'xlsx' ? 'min-h-[32rem] w-full' : 'hidden'} />
+      <div ref={host} className={ext === 'xlsx' ? 'min-h-0 w-full flex-1' : 'hidden'} />
       <canvas ref={canvas} className={ext === 'xlsx' ? 'hidden' : 'block w-full bg-white'} />
     </div>
   );

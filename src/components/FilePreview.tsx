@@ -73,6 +73,14 @@ function officeExt(file: PreviewFile): OfficeExt | null {
   return ext === 'pptx' || ext === 'docx' || ext === 'xlsx' || ext === 'csv' ? ext : null;
 }
 
+export function filePreviewActions(input: { canPreview: boolean; hasInlinePreview: boolean; previewOpen: boolean }) {
+  return {
+    showDownload: true,
+    showPreviewToggle: input.canPreview && !input.hasInlinePreview,
+    showOpenWindow: input.canPreview && (input.hasInlinePreview || input.previewOpen),
+  };
+}
+
 export function FilePreview({ file, href }: { file: PreviewFile; href: string }) {
   const kind = kindOf(file);
   const name = displayName(file);
@@ -82,6 +90,7 @@ export function FilePreview({ file, href }: { file: PreviewFile; href: string })
   const [open, setOpen] = useState(false);
   const [thumbFailed, setThumbFailed] = useState(false);
   const showThumb = !thumbFailed && (kind === 'image' || kind === 'video');
+  const actions = filePreviewActions({ canPreview: Boolean(viewer || native), hasInlinePreview: showThumb, previewOpen: open });
 
   function popOut() {
     if (viewer) {
@@ -95,27 +104,31 @@ export function FilePreview({ file, href }: { file: PreviewFile; href: string })
   return (
     <div className="overflow-hidden rounded-xl border border-line">
       {showThumb && (
-        <button className="block w-full bg-wash text-left" type="button" onClick={popOut} aria-label={`Preview ${name}`}>
+        <button className="block w-full bg-wash text-left" type="button" onClick={popOut} aria-label={`Open ${name}`}>
           <img src={withParam(href, 'thumb')} alt="" className="h-44 w-full object-contain" onError={() => setThumbFailed(true)} />
         </button>
       )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm">
-        <a className="min-w-0 shrink font-medium break-all hover:underline" href={withParam(href, 'download')} target="_blank" rel="noreferrer">
-          {name}
-        </a>
+        <span className="min-w-0 shrink font-medium break-all">{name}</span>
         {file.role && <span className={`badge shrink-0 ${roleBadge(file.role)}`}>{file.role}</span>}
         <span className="badge badge-muted shrink-0">{typeLabel}</span>
-        {(viewer || native) && (
-          <button className="btn btn-sm ml-auto" type="button" onClick={() => setOpen((v) => !v)}>
-            {open ? 'Hide preview' : 'Preview'}
-          </button>
-        )}
-        {open && (viewer || native) && (
-          <button className="btn btn-sm" type="button" onClick={popOut}>
-            Open window
-          </button>
-        )}
-        {!viewer && !native && <span className="ml-auto shrink-0 text-[11px] text-muted">Download only</span>}
+        <span className="ml-auto flex flex-wrap items-center gap-1">
+          {actions.showDownload && (
+            <a className="btn btn-sm" href={withParam(href, 'download')} target="_blank" rel="noreferrer">
+              Download
+            </a>
+          )}
+          {actions.showPreviewToggle && (
+            <button className="btn btn-sm" type="button" onClick={() => setOpen((v) => !v)}>
+              {open ? 'Hide preview' : 'Preview'}
+            </button>
+          )}
+          {actions.showOpenWindow && (
+            <button className="btn btn-sm" type="button" onClick={popOut}>
+              Open window
+            </button>
+          )}
+        </span>
       </div>
       {open && viewer && <OfficeViewer href={href} ext={viewer} className="border-t border-line" />}
       {open && kind === 'pdf' && <iframe title={name} src={href} className="h-[36rem] w-full border-t border-line bg-white" />}

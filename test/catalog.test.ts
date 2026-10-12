@@ -70,6 +70,24 @@ describe('readCatalogSubmission', () => {
     expect(read.title).toMatch(/^Build a 12-slide deck/);
   });
 
+  it('treats a Catalog view URL as the download address', () => {
+    const read = readCatalogSubmission(
+      {
+        ...submission,
+        files: [
+          {
+            projectSubmissionFileId: '11111111-2222-3333-4444-555555555555',
+            extension: 'png',
+            originalFileName: 'ui-checkin',
+            urls: { view: 'https://s3/ui-checkin.png' },
+          },
+        ],
+      },
+      project,
+    )!;
+    expect(read.inputFiles[0]?.downloadUrl).toBe('https://s3/ui-checkin.png');
+  });
+
   it('tolerates sparse payloads and rejects non-objects', () => {
     expect(readCatalogSubmission({}, null)).not.toBeNull();
     expect(readCatalogSubmission('nope', null)).toBeNull();

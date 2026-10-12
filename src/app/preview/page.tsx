@@ -21,8 +21,8 @@ function PreviewBody() {
           </a>
         )}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {!src || !kind ? <p className="p-6 text-sm text-zinc-600">Nothing to preview.</p> : <OfficeViewer href={src} ext={kind} />}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {!src || !kind ? <p className="p-6 text-sm text-zinc-600">Nothing to preview.</p> : <OfficeViewer className="h-full min-h-0" href={src} ext={kind} />}
       </div>
     </div>
   );

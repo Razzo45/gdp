@@ -1,11 +1,12 @@
 import { json, route } from '@/lib/api';
 import { MAX_FILE_BYTES } from '@/lib/ai/media';
+import { DIRECT_AI_UPLOAD_BYTES } from '@/domain/aiUpload';
 import { addAiOutput } from '@/lib/services/files';
 
-/** Small-file fallback. Anything over 8 MB must use the signed PUT (upload-url). */
+/** Small-file fallback. Larger files must use the signed PUT (upload-url). */
 export const POST = route({}, async ({ actor, params, request }) => {
   const claimed = Number(request.headers.get('content-length') ?? '0');
-  if (Number.isFinite(claimed) && claimed > 8 * 1024 * 1024) {
+  if (Number.isFinite(claimed) && claimed > DIRECT_AI_UPLOAD_BYTES) {
     return json({ error: 'This file is too large to send through the app. Reload and use the signed upload.' }, 413);
   }
   if (Number.isFinite(claimed) && claimed > MAX_FILE_BYTES + 64 * 1024) return json({ error: `Files above ${Math.round(MAX_FILE_BYTES / 1_048_576)} MB cannot be graded.` }, 413);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { prefersDirectAiUpload } from '@/domain/aiUpload';
 import { FilePreview, FilePreviewList } from '../FilePreview';
 import { api } from '../client';
 import type { PanelProps } from './TaskWorkspace';
@@ -19,6 +20,13 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
     setBusy(true);
     try {
       for (const file of Array.from(files)) {
+        if (prefersDirectAiUpload(file.size)) {
+          setProgress(`Uploading ${file.name}…`);
+          const form = new FormData();
+          form.append('file', file);
+          await api(`/api/submissions/${s.id}/ai-outputs`, { form });
+          continue;
+        }
         setProgress(`Preparing ${file.name}…`);
         const ticket = await api<{ path: string; uploadUrl: string; headers: Record<string, string>; token: string; expires: number }>(
           `/api/submissions/${s.id}/ai-outputs/upload-url`,

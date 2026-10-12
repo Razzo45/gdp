@@ -126,10 +126,18 @@ function legacySupabaseGuess(storagePath: string): string | null {
   return `wirestock-ai/${match[1]}`;
 }
 
+const CORS_ORIGINS = [
+  'https://gdp.wirestock.io',
+  'https://gdp-production-83d5.up.railway.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
 async function main() {
   const apply = process.argv.includes('--apply');
+  const corsOnly = process.argv.includes('--cors-only');
   const { client, bucket } = bucketClient();
-  if (apply) {
+  if (apply || corsOnly) {
     await client.send(
       new PutBucketCorsCommand({
         Bucket: bucket,
@@ -138,7 +146,7 @@ async function main() {
             {
               AllowedHeaders: ['*'],
               AllowedMethods: ['GET', 'PUT', 'HEAD'],
-              AllowedOrigins: ['https://gdp-production-83d5.up.railway.app', 'http://localhost:3000'],
+              AllowedOrigins: CORS_ORIGINS,
               ExposeHeaders: ['ETag', 'Content-Length'],
               MaxAgeSeconds: 3000,
             },
@@ -147,6 +155,7 @@ async function main() {
       }),
     );
     console.log('cors ok');
+    if (corsOnly) return;
   }
 
   const sql = postgres(railwayUrl(), { max: 1, prepare: false, ssl: 'require', connection: { application_name: 'gdp-hydrate-ai' } });

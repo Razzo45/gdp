@@ -6,7 +6,12 @@
 import { z } from 'zod';
 import type { CatalogField, CatalogFile, CatalogStatus, CatalogSubmission, CatalogTransition } from './types';
 
-const Urls = z.object({ download: z.string().optional(), thumbnail: z.string().optional(), preview: z.string().optional() });
+const Urls = z.object({
+  download: z.string().optional(),
+  view: z.string().optional(),
+  thumbnail: z.string().optional(),
+  preview: z.string().optional(),
+});
 const Media = z.object({
   type: z.string().optional(),
   extension: z.string().optional(),
@@ -144,7 +149,7 @@ function readFiles(body: z.infer<typeof SubmissionPayload>): CatalogFile[] {
       name,
       extension,
       mime: mimeForExtension(extension),
-      downloadUrl: entry.urls?.download ?? null,
+      downloadUrl: entry.urls?.download ?? entry.urls?.view ?? null,
       previewUrl: entry.urls?.preview ?? null,
       thumbnailUrl: entry.urls?.thumbnail ?? null,
     });
@@ -159,7 +164,7 @@ function readFiles(body: z.infer<typeof SubmissionPayload>): CatalogFile[] {
       name,
       extension,
       mime: mimeForExtension(extension),
-      downloadUrl: entry.urls?.download ?? null,
+      downloadUrl: entry.urls?.download ?? entry.urls?.view ?? null,
       previewUrl: entry.urls?.preview ?? null,
       thumbnailUrl: entry.urls?.thumbnail ?? null,
     });
