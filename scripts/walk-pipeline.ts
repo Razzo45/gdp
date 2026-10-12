@@ -38,7 +38,7 @@ async function main() {
   if (view.submission?.stage === 'rubric') {
     const gen = await (await api(`/api/submissions/${SUB}/rubric/generate`, {
       method: 'POST',
-      body: JSON.stringify({ requestId: crypto.randomUUID(), seedMode: 'rough', source: NOTES, target: 40 }),
+      body: JSON.stringify({ requestId: crypto.randomUUID(), source: NOTES, target: 40 }),
     })).json();
     console.log('generate', gen);
     await waitJob(api, gen.jobId, 'rubric_generate');

@@ -106,10 +106,9 @@ class StageLog {
 export async function runRubricGenerate(ctx: JobContext): Promise<Record<string, unknown>> {
   const { job } = ctx;
   const submission = await getSubmission(db(), job.submissionId);
-  const payload = job.payload as { seeds?: string[]; source?: string; seedMode?: 'rough' | 'expert'; target?: number };
-  const seedMode = payload.seedMode ?? (payload.seeds?.length ? 'expert' : 'rough');
+  const payload = job.payload as { source?: string; target?: number };
   const notes = (payload.source ?? '').trim();
-  const seeds: Seed[] = seedMode === 'rough' ? [] : (payload.seeds ?? []).map((s, i) => ({ id: `seed-${i + 1}`, theme: s.slice(0, 80), statement: s }));
+  const seeds: Seed[] = [];
   const { prompt, context } = taskContextOf(submission);
   const log = new StageLog(ctx);
 
@@ -125,7 +124,7 @@ export async function runRubricGenerate(ctx: JobContext): Promise<Record<string,
     seeds,
     prompt,
     taskContext: context,
-    notes: seedMode === 'rough' ? notes : undefined,
+    notes,
     inputs: prepared,
     deliverables,
     target: payload.target,

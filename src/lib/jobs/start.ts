@@ -2,7 +2,7 @@ import 'server-only';
 
 import { db } from '@/db/client';
 import type { Job } from '@/db/schema';
-import { MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
+import { MAX_ROUGH_CHARS, RUBRIC_MIN, RUBRIC_TARGET } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
 import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/errors';
@@ -32,16 +32,10 @@ async function wrap<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function startRubricGeneration(actor: Actor, submissionId: string, input: { seeds?: string[]; source?: string; seedMode?: 'rough' | 'expert'; target?: number; requestId: string }): Promise<Job> {
+export async function startRubricGeneration(actor: Actor, submissionId: string, input: { source?: string; target?: number; requestId: string }): Promise<Job> {
   requireGemini();
-  const givenSeeds = (input.seeds ?? []).map((s) => s.trim()).filter(Boolean);
-  const looksLikeNotes = !input.seedMode && givenSeeds.some((s) => s.length > MAX_SEED_CHARS);
-  const source = (input.source ?? '').trim() || (looksLikeNotes ? givenSeeds.join('\n\n') : '');
-  const seedMode = input.seedMode ?? (source ? 'rough' : givenSeeds.length ? 'expert' : 'rough');
-  const seeds = seedMode === 'rough' ? [] : givenSeeds;
-  if (seedMode === 'rough' && source.length > MAX_ROUGH_CHARS) throw invalid(`Keep rough notes under ${MAX_ROUGH_CHARS} characters.`);
-  if (seeds.some((s) => s.length > MAX_SEED_CHARS)) throw invalid(`Keep each expert seed under ${MAX_SEED_CHARS} characters.`);
-  if (seeds.length > MAX_SEEDS) throw invalid(`At most ${MAX_SEEDS} expert seeds.`);
+  const source = (input.source ?? '').trim();
+  if (source.length > MAX_ROUGH_CHARS) throw invalid(`Keep rough notes under ${MAX_ROUGH_CHARS} characters.`);
   const target = input.target ?? RUBRIC_TARGET;
   if (target < RUBRIC_MIN || target > 60) throw invalid(`Target must be between ${RUBRIC_MIN} and 60 statements.`);
   return wrap(() =>
@@ -50,8 +44,8 @@ export async function startRubricGeneration(actor: Actor, submissionId: string, 
       if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task. Claim or ask a PM to assign it.');
       if (submission.stage !== 'rubric') throw conflict(`The rubric is locked while the task is in ${submission.stage}.`);
       const rubric = await ensureCurrentRubric(tx, submissionId, actor.id);
-      const job = await enqueue(tx, { kind: 'rubric_generate', submissionId, rubricId: rubric.id, requestId: input.requestId, payload: { seedMode, source, seeds, target }, createdBy: actor.id, deadlineMs: 45 * 60_000 });
-      await recordEvent(tx, submissionId, actor.id, 'rubric_generation_started', { jobId: job.id, seedMode, seeds: seeds.length, sourceChars: source.length, target });
+      const job = await enqueue(tx, { kind: 'rubric_generate', submissionId, rubricId: rubric.id, requestId: input.requestId, payload: { source, target }, createdBy: actor.id, deadlineMs: 45 * 60_000 });
+      await recordEvent(tx, submissionId, actor.id, 'rubric_generation_started', { jobId: job.id, sourceChars: source.length, target });
       return job;
     }),
   );

@@ -9,7 +9,7 @@ import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, MAX_SEED_CHARS, MAX_SEEDS, RUBRIC_TARGET, correctTag, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { FAMILY_LABELS, MAX_ROUGH_CHARS, RUBRIC_TARGET, correctTag, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
@@ -55,18 +55,8 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [deleted, setDeleted] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'conflict' | 'error'>('idle');
-  const [seedMode, setSeedMode] = useState<'rough' | 'expert'>('rough');
   const [seeds, setSeeds] = useState(rubric?.seeds.join('\n') ?? '');
-  const seedList = useMemo(() => seeds.split('\n').map((s) => s.trim()).filter(Boolean), [seeds]);
-  const seedProblem = useMemo(() => {
-    if (seedMode === 'rough') {
-      if (seeds.length > MAX_ROUGH_CHARS) return `Notes are longer than ${MAX_ROUGH_CHARS} characters.`;
-      return null;
-    }
-    if (seedList.length > MAX_SEEDS) return `${seedList.length} seeds; the maximum is ${MAX_SEEDS}.`;
-    const long = seedList.findIndex((s) => s.length > MAX_SEED_CHARS);
-    return long >= 0 ? `Seed ${long + 1} is longer than ${MAX_SEED_CHARS} characters. Switch to Rough notes or split the line.` : null;
-  }, [seedMode, seedList, seeds.length]);
+  const seedProblem = seeds.length > MAX_ROUGH_CHARS ? `Notes are longer than ${MAX_ROUGH_CHARS} characters.` : null;
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [proposal, setProposal] = useState<Proposal | null>(null);
@@ -265,40 +255,20 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
       {editable && (
         <div className="space-y-2 rounded-xl border border-line p-3">
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-start gap-2">
-              <input type="radio" checked={seedMode === 'rough'} onChange={() => setSeedMode('rough')} />
-              <span>
-                <strong>Rough notes</strong>
-                <span className="block text-xs text-muted">Every distinct check becomes a seed. Those expand into a bank; the best rows are seated.</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2">
-              <input type="radio" checked={seedMode === 'expert'} onChange={() => setSeedMode('expert')} />
-              <span>
-                <strong>Expert statements</strong>
-                <span className="block text-xs text-muted">One statement per non-empty line; no Gemini seed transform.</span>
-              </span>
-            </label>
-          </div>
           <textarea
             className="input min-h-28 font-mono text-xs"
             value={seeds}
             onChange={(e) => setSeeds(e.target.value)}
             maxLength={50_000}
-            placeholder={seedMode === 'rough' ? 'Paste the criteria…' : 'One grading statement per line…'}
+            placeholder="Paste the criteria…"
           />
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
             <span>{seeds.length} / {MAX_ROUGH_CHARS} characters</span>
             <span className={seedProblem ? 'text-bad' : ''}>
               {seedProblem ??
-                (seedMode === 'rough'
-                  ? seeds.trim()
-                    ? 'Each check becomes a seed, the bank is ranked, then the strongest rows are seated.'
-                    : 'Empty notes: the model proposes every distinct check from the brief.'
-                  : seedList.length === 0
-                    ? 'No seeds: the model will propose them.'
-                    : `${seedList.length} / ${MAX_SEEDS} seeds`)}
+                (seeds.trim()
+                  ? 'Each check becomes a seed, the bank is ranked, then the strongest rows are seated.'
+                  : 'Empty notes: the model proposes every distinct check from the brief.')}
             </span>
             <span className="ml-auto">{Number(quotas.format) + Number(quotas.content) + Number(quotas.visual)} statements · {quotas.format} Format · {quotas.content} Content · {quotas.visual} Visual</span>
           </div>
@@ -323,10 +293,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                 notify(seedProblem, 'bad');
                 return;
               }
-              const body =
-                seedMode === 'rough'
-                  ? { requestId: uuid(), seedMode: 'rough', source: seeds, target: rubric?.target ?? 50 }
-                  : { requestId: uuid(), seedMode: 'expert', seeds: seedList, target: rubric?.target ?? 50 };
+              const body = { requestId: uuid(), source: seeds, target: rubric?.target ?? 50 };
               void run('generate', `/api/submissions/${view.submission.id}/rubric/generate`, body, 'Generation queued. Watch the progress card.');
             }}
           >

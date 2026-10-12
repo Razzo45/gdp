@@ -110,7 +110,7 @@ function isTypefaceClaim(q: string): boolean {
 export const RUBRIC_TARGET = 50;
 export const RUBRIC_MIN = 40;
 
-/** Upper bound on operator-supplied expert seeds per generation (one enhancer call each). */
+/** Upper bound on seeds extracted from notes (one enhancer call each). */
 export const MAX_SEEDS = 100;
 export const MAX_SEED_CHARS = 600;
 /** Pasted notes / question lists. Every distinct check becomes a seed (capped at MAX_SEEDS). */
