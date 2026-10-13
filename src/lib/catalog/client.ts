@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { z } from 'zod';
+import { parseProjectSubmissionList, type ListedCatalogSubmission } from '@/domain/catalogInbound';
 import { env } from '@/lib/env';
 import { catalogUploadFilename } from './export';
 import { ProjectPayload, SubmissionPayload } from './read';
@@ -54,6 +55,27 @@ export async function fetchProject(projectId: string): Promise<{ ok: true; proje
   const raw: unknown = await response.json().catch(() => null);
   if (!ProjectPayload.safeParse(raw).success) return { ok: false, status: 502, error: 'The Catalog returned an unexpected project payload.' };
   return { ok: true, project: raw };
+}
+
+export async function listProjectSubmissions(projectId: string, page = 1): Promise<{ ok: true; submissions: ListedCatalogSubmission[]; page: number; totalPages: number } | CatalogError> {
+  const query = new URLSearchParams({ projectId, page: String(page) });
+  const response = await request(`/project-submissions?${query}`);
+  if (isError(response)) return response;
+  if (!response.ok) return refusal(response, 'project');
+  const parsed = parseProjectSubmissionList(await response.json().catch(() => null));
+  return { ok: true, ...parsed };
+}
+
+export async function listAllProjectSubmissions(projectId: string): Promise<{ ok: true; submissions: ListedCatalogSubmission[] } | CatalogError> {
+  const first = await listProjectSubmissions(projectId, 1);
+  if (!first.ok) return first;
+  const submissions = [...first.submissions];
+  for (let page = 2; page <= first.totalPages; page += 1) {
+    const next = await listProjectSubmissions(projectId, page);
+    if (!next.ok) return next;
+    submissions.push(...next.submissions);
+  }
+  return { ok: true, submissions };
 }
 
 export async function fetchSubmission(id: string): Promise<{ ok: true; submission: Record<string, unknown>; project: unknown; projectId: string } | CatalogError> {

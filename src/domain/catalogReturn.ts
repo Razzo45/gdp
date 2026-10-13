@@ -1,11 +1,12 @@
+import { catalogLaneReopensSubmitted } from './catalogInbound';
 import { classifyCatalogListState, type CatalogListState } from './catalogListState';
 
 /**
- * Catalog sent a submitted task back. GDP does not reopen the pipeline
- * until a PM accepts the return.
+ * Catalog sent a submitted task back. Sync applies that onto Platform
+ * returned; Accept/dismiss remain for leftover pending queue rows.
  */
 
-export type CatalogReturnOutcome = 'pending' | 'dismissed';
+export type CatalogReturnOutcome = 'pending' | 'dismissed' | 'applied';
 
 export interface CatalogReturnDetail {
   statusId: string;
@@ -40,15 +41,19 @@ export function shouldEnqueueCatalogReturn(input: {
   catalogLane: CatalogListState;
   catalogStatusId: string | null;
   existing: CatalogReturnRecord | null;
+  /** Catalog status we last stored. Required when the lane is only inbound pickup. */
+  previousStatusId?: string | null;
 }): boolean {
   if (!localIsSubmitted(input)) return false;
-  if (input.catalogLane !== 'platform_return') return false;
+  if (!catalogLaneReopensSubmitted(input.catalogLane)) return false;
   const statusId = input.catalogStatusId?.trim() ?? '';
   if (!statusId) return false;
-  if (input.existing?.statusId === statusId && (input.existing.outcome === 'pending' || input.existing.outcome === 'dismissed')) {
+  if (input.existing?.statusId === statusId && (input.existing.outcome === 'pending' || input.existing.outcome === 'dismissed' || input.existing.outcome === 'applied')) {
     return false;
   }
-  return true;
+  if (input.catalogLane === 'platform_return') return true;
+  const previous = input.previousStatusId?.trim() ?? '';
+  return Boolean(previous && previous !== statusId);
 }
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -84,7 +89,7 @@ function triggerOf(entry: Record<string, unknown>): string | null {
 export function parseCatalogReturn(value: unknown): CatalogReturnRecord | null {
   const row = object(value);
   const statusId = asText(row['statusId']);
-  const outcome = row['outcome'] === 'pending' || row['outcome'] === 'dismissed' ? row['outcome'] : null;
+  const outcome = row['outcome'] === 'pending' || row['outcome'] === 'dismissed' || row['outcome'] === 'applied' ? row['outcome'] : null;
   if (!statusId || !outcome) return null;
   return {
     statusId,

@@ -17,11 +17,11 @@ mutation WireServices($workerId: String!, $catchupId: String!, $environmentId: S
     serviceId: $catchupId
     environmentId: $environmentId
     input: {
-      startCommand: "./start.sh catchup"
+      startCommand: "echo catchup-paused"
       builder: DOCKERFILE
       dockerfilePath: "Dockerfile"
       region: "europe-west4-drams3a"
-      cronSchedule: "0 6 * * *"
+      cronSchedule: null
       restartPolicyType: NEVER
     }
   )

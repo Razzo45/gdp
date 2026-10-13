@@ -24,6 +24,10 @@ case "$kind" in
     exec npx tsx --conditions=react-server scripts/migrate.ts
     ;;
   catchup)
+    if [ "${CATCHUP_SYNC:-0}" != "1" ]; then
+      echo "catchup is off. Live Supabase is not read."
+      exit 0
+    fi
     exec npx tsx --conditions=react-server scripts/sync-live.ts --apply --board-only --no-catalog
     ;;
   *)

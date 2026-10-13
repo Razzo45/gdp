@@ -79,7 +79,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
       .where(eq(submissions.id, existing.id))
       .returning();
     if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
-    return { previous: existing, next: await noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote) };
+    return { previous: existing, next: await noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote, existing.statusId) };
   });
   scheduleWorkStatusSheet(result.previous, result.next);
   return result.next;
@@ -104,8 +104,8 @@ async function landParkedIfInbound(database: DbOrTx, submission: Submission): Pr
   return updated!;
 }
 
-/** Queue a PM reconciliation when Catalog sent a submitted task back. Does not change stage. */
-export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Submission, actorId: string | null, returnNote?: string | null): Promise<Submission> {
+/** Catalog sent a submitted task back — reopen it on Platform returned and keep the why-note. */
+export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Submission, actorId: string | null, returnNote?: string | null, previousStatusId?: string | null): Promise<Submission> {
   const watched = await watchedProjectFor(database, submission.projectId);
   const { lane, detail } = catalogReturnFromSync({
     statusId: submission.statusId,
@@ -121,13 +121,29 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
       catalogLane: lane,
       catalogStatusId: submission.statusId,
       existing,
+      previousStatusId,
     })
   ) {
     return submission;
   }
-  const catalogReturn = { ...detail, outcome: 'pending' as const };
-  const [updated] = await database.update(submissions).set({ catalogReturn }).where(eq(submissions.id, submission.id)).returning();
-  await recordEvent(database, submission.id, actorId, 'catalog_return_pending', detail);
+  const catalogReturn = { ...detail, outcome: 'applied' as const };
+  const [updated] = await database
+    .update(submissions)
+    .set({
+      stage: 'rubric',
+      handoffStatus: 'bounced',
+      pushedAt: null,
+      catalogReturn,
+    })
+    .where(eq(submissions.id, submission.id))
+    .returning();
+  await recordEvent(database, submission.id, actorId, 'catalog_returned', {
+    ...detail,
+    previousPushedAt: submission.pushedAt,
+    previousReceipt: submission.pushReceipt,
+    rubricAssigneeId: submission.rubricAssigneeId,
+    reviewerId: submission.reviewerId,
+  });
   return updated!;
 }
 
@@ -154,6 +170,8 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
   heroDeliverable: string;
   /** True when this row is only a claim slot — catalog id stays hidden. */
   blinded: boolean;
+  /** Why-text when Catalog sent this task back. */
+  catalogReturnNote: string | null;
 }
 
 const { source: _omittedSource, ...submissionListColumns } = getTableColumns(submissions);
@@ -248,6 +266,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
       projectName: projectDisplayName(watch),
       heroDeliverable: heroDeliverableFromSource(r.source),
       blinded,
+      catalogReturnNote: blinded ? null : (parseCatalogReturn(r.submission.catalogReturn)?.note ?? null),
     };
   });
 }

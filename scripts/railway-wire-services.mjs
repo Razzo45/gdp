@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 /**
  * Creates worker + catchup next to gdp and points them at Postgres / the
  * bucket / gdp secrets via Railway references. Never prints values.
+ * Catchup stays paused (no cron) unless CATCHUP_SYNC=1.
  */
 
 function run(args, input) {

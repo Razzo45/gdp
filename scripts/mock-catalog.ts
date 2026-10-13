@@ -111,6 +111,19 @@ const server = createServer(async (req, res) => {
   try {
     if (method === 'GET' && parts[0] === 'state') return send(res, 200, { status: Object.fromEntries(state.status), saved: Object.fromEntries(state.saved), uploads: Object.fromEntries(state.uploads), log: state.log });
 
+    if (method === 'GET' && parts[0] === 'project-submissions' && !parts[1]) {
+      const projectId = url.searchParams.get('projectId');
+      if (projectId && projectId !== project.projectId) return send(res, 400, { title: 'Unknown project' });
+      const data = submissions.map((s) => ({
+        projectId: project.projectId,
+        projectSubmissionId: s.id,
+        workflowState: { statusId: state.status.get(s.id) ?? WORK_STATUS },
+        transitionLog: [],
+        updatedAt: new Date().toISOString(),
+      }));
+      return send(res, 200, { data, metadata: { pagination: { total: data.length, count: data.length, perPage: 100, page: 1, totalPages: 1, links: null } } });
+    }
+
     if (method === 'GET' && parts[0] === 'projects' && parts[1]) {
       return decodeURIComponent(parts[1]) === project.projectId ? send(res, 200, project) : send(res, 404, { error: 'no such project' });
     }

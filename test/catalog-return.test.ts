@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { submissionEvents, watchedProjects } from '@/db/schema';
+import { submissionEvents, submissions, watchedProjects } from '@/db/schema';
 import { classifyCatalogListState } from '@/domain/catalogListState';
 import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { workStateOf } from '@/domain/workState';
@@ -36,11 +36,13 @@ describe('shouldEnqueueCatalogReturn', () => {
   it('does not enqueue unless we already submitted and Catalog shows a return', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null })).toBe(false);
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogLane: 'submitted' })).toBe(false);
+    expect(shouldEnqueueCatalogReturn({ ...returned, catalogLane: 'unassigned', previousStatusId: HANDOFF })).toBe(true);
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogStatusId: '' })).toBe(false);
   });
 
-  it('does not enqueue the same Catalog status twice, whether pending or dismissed', () => {
+  it('does not enqueue the same Catalog status twice, whether pending, applied, or dismissed', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'pending' } })).toBe(false);
+    expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'applied' } })).toBe(false);
     expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'dismissed' } })).toBe(false);
   });
 
@@ -199,27 +201,44 @@ describe('Catalog return reconciliation', () => {
     });
   }
 
-  it('enqueues a pending return without flipping stage or seats', async () => {
+  it('lands a Catalog return on Platform returned, keeps seats, and stores the why-note', async () => {
     const row = await submittedReturn();
     const noted = await noteCatalogReturnIfNeeded(db, row, null);
-    expect(noted.stage).toBe('done');
-    expect(noted.handoffStatus).toBe('client_visible');
-    expect(noted.pushedAt).toBe(row.pushedAt);
+    expect(noted.stage).toBe('rubric');
+    expect(noted.handoffStatus).toBe('bounced');
+    expect(noted.pushedAt).toBeNull();
     expect(noted.rubricAssigneeId).toBe(creator.id);
     expect(noted.reviewerId).toBe(reviewer.id);
+    expect(workStateOf(noted)).toBe('platform_returned');
     expect(noted.catalogReturn).toEqual({
       statusId: WORK,
       statusName: 'In progress',
       trigger: 'revise',
       note: 'Tighten the fleet hours table.',
-      outcome: 'pending',
+      outcome: 'applied',
     });
     const again = await noteCatalogReturnIfNeeded(db, noted, null);
     expect(again.catalogReturn).toEqual(noted.catalogReturn);
-    const pending = await listPendingCatalogReturns(pm);
-    expect(pending.map((item) => item.id)).toContain(row.id);
+    expect((await listPendingCatalogReturns(pm)).map((item) => item.id)).not.toContain(row.id);
+    const listed = await listSubmissions(pm, { workState: 'platform_returned' });
+    expect(listed.map((item) => item.id)).toContain(row.id);
+    expect(listed.find((item) => item.id === row.id)?.catalogReturnNote).toBe('Tighten the fleet hours table.');
     const events = await db.select().from(submissionEvents).where(eq(submissionEvents.submissionId, row.id));
-    expect(events.filter((event) => event.action === 'catalog_return_pending')).toHaveLength(1);
+    expect(events.filter((event) => event.action === 'catalog_returned')).toHaveLength(1);
+  });
+
+  it('reopens a submitted task that Catalog put back on inbound pickup without a revise trigger', async () => {
+    const row = await makeSubmission(db, {
+      stage: 'done',
+      handoffStatus: 'client_visible',
+      statusId: WORK,
+      source: { submission: { workflowState: { statusId: WORK } }, project: { workflow: WORKFLOW } },
+      pushedAt: '2026-10-11T12:00:00.000Z',
+      rubricAssigneeId: creator.id,
+    });
+    const noted = await noteCatalogReturnIfNeeded(db, row, null, null, HANDOFF);
+    expect(workStateOf(noted)).toBe('platform_returned');
+    expect(noted.catalogReturn).toMatchObject({ statusId: WORK, outcome: 'applied' });
   });
 
   it('does not enqueue while the task is still in the GDP pipeline', async () => {
@@ -231,7 +250,9 @@ describe('Catalog return reconciliation', () => {
 
   it('accepts a return onto rubric / Platform returned, clears the push lock, and keeps seats', async () => {
     const row = await submittedReturn();
-    await noteCatalogReturnIfNeeded(db, row, null);
+    await db.update(submissions).set({
+      catalogReturn: { statusId: WORK, statusName: 'In progress', trigger: 'revise', note: 'Tighten the fleet hours table.', outcome: 'pending' },
+    }).where(eq(submissions.id, row.id));
     await expectStatus(acceptCatalogReturn(creator, row.id), 403);
     const accepted = await acceptCatalogReturn(pm, row.id);
     expect(accepted.stage).toBe('rubric');
@@ -251,7 +272,9 @@ describe('Catalog return reconciliation', () => {
 
   it('dismisses a return and leaves the task submitted', async () => {
     const row = await submittedReturn();
-    await noteCatalogReturnIfNeeded(db, row, null);
+    await db.update(submissions).set({
+      catalogReturn: { statusId: WORK, statusName: 'In progress', trigger: 'revise', note: 'Tighten the fleet hours table.', outcome: 'pending' },
+    }).where(eq(submissions.id, row.id));
     const dismissed = await dismissCatalogReturn(pm, row.id);
     expect(dismissed.stage).toBe('done');
     expect(dismissed.handoffStatus).toBe('client_visible');
