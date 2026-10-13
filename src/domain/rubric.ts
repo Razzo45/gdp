@@ -69,6 +69,9 @@ export function guessTag(statement: string): RubricTag {
   }
   if (/\bprovided in the input files\b/.test(q) || /\breference landscape style\b/.test(q)) return 'Visual - Branding';
   if (/\bremain completely static\b/.test(q) && /\bconsecutive frames\b/.test(q)) return 'Visual - Consistency';
+  if (/\b(drop shadows?|gradient fills?|3d extrusion|bevels?|arial|background fills?|slide canvas|overlap or collide|numerical scales|slide number|solid fills?|playable audio|audio media object|fully legible|closing section|source note|competitive phrasing|winning language)\b/.test(q)) {
+    return 'Visual - Layout';
+  }
   if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) return 'Content - Exact';
   if (/\b(\d+|three|two|one)\b/.test(q) && /\b(posts?|mockups?|images?)\b/.test(q)) return 'Content - Quantitative';
   return 'Content - Semantics';
@@ -184,8 +187,10 @@ function isFormatClaim(q: string): boolean {
   if (/\bframes per second\b|\b\d+\s*fps\b/.test(q)) return true;
   if (/\b\d{3,5}\s*[x×]\s*\d{3,5}\s*pixels?\b/.test(q)) return true;
   if (/\baspect ratio\b/.test(q) && !/\b(logo|icon|lockup|wordmark|graphic|mark)\b/.test(q)) return true;
-  if (new RegExp(`\\b(\\d+|${WORD_COUNT})[-\\s]+(slides?|pages?|sheets?)\\b`).test(q)) return true;
-  if (/\b(slide|page|sheet)\s+(count|total)\b/.test(q)) return true;
+  if (new RegExp(`\\b(exactly |contains? |total of )?(\\d+|${WORD_COUNT})[-\\s]+(slides?|pages?|sheets?)\\b`).test(q) && /\b(exactly|contains?|between|total)\b/.test(q)) return true;
+  if (/\bbetween\s+\d+\s+and\s+\d+\b/.test(q) && /\b(slides?|pages?|sheets?)\b/.test(q)) return true;
+  if (/\b(slide|page|sheet)\s+(count|total)\b|\btotal slides\b/.test(q)) return true;
+  if (/\b(corruption|repair warnings?)\b/.test(q)) return true;
   if (/\b(files?|images?)\b/.test(q) && /\bincluded\b/.test(q) && /\b(output|export|deliverable)\b/.test(q)) return true;
   if (/\brec\.?709\b/.test(q) || /\bcolor space encoding\b/.test(q)) return true;
   if (/\b(runtime|duration)\b/.test(q) && /\b\d+:\d+|\b\d+\s*seconds?\b|\b\d+\s*frames?\b/.test(q)) return true;
