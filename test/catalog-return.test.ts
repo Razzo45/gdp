@@ -2,12 +2,20 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { submissionEvents, submissions, watchedProjects } from '@/db/schema';
 import { classifyCatalogListState } from '@/domain/catalogListState';
-import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
+import {
+  catalogNoteFromPayload,
+  catalogReturnFromSync,
+  lastRubricHolder,
+  parseCatalogReturn,
+  platformReturnNote,
+  shouldEnqueueCatalogReturn,
+} from '@/domain/catalogReturn';
 import { workStateOf } from '@/domain/workState';
 import type { Actor } from '@/lib/auth/permissions';
 import { ServiceError } from '@/lib/services/errors';
 import { acceptCatalogReturn, dismissCatalogReturn, listPendingCatalogReturns } from '@/lib/services/catalogReturn';
 import { listSubmissions, noteCatalogReturnIfNeeded } from '@/lib/services/submissions';
+import { submissionView } from '@/lib/services/view';
 import { makeSubmission, makeUser, testDb } from './helpers/db';
 import type { Db } from '@/db/types';
 
@@ -33,11 +41,15 @@ describe('shouldEnqueueCatalogReturn', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'handoff', handoffStatus: 'client_visible' })).toBe(true);
   });
 
-  it('does not enqueue unless we already submitted and Catalog shows a return', () => {
-    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null })).toBe(false);
+  it('does not enqueue unless Catalog shows a return onto a status we watch', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogLane: 'submitted' })).toBe(false);
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogLane: 'unassigned', previousStatusId: HANDOFF })).toBe(true);
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogStatusId: '' })).toBe(false);
+  });
+
+  it('applies when a known parked or preparing task is sent back to E', () => {
+    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'parked', handoffStatus: null })).toBe(true);
+    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null })).toBe(true);
   });
 
   it('does not enqueue the same Catalog status twice, whether pending, applied, or dismissed', () => {
@@ -104,6 +116,29 @@ describe('catalogReturnFromSync', () => {
     expect(result.detail.note).toBe('The hours table still uses last quarter’s figures.');
   });
 
+  it('reads Catalog transition notes[] as the revision note', () => {
+    const result = catalogReturnFromSync({
+      statusId: WORK,
+      watched: { workStatusId: WORK, handoffStatusId: HANDOFF, project: { workflow: { statuses, transitions } } },
+      source: {
+        submission: {
+          transitionLog: [
+            {
+              fromStatus: HANDOFF,
+              toStatus: WORK,
+              trigger: 'send-to-rubric',
+              timestamp: '2026-10-13T12:00:00.000Z',
+              notes: [{ noteId: 'n1', text: 'Fleet hours still use last quarter.' }],
+            },
+          ],
+        },
+      },
+    });
+    expect(result.lane).toBe('platform_return');
+    expect(result.detail.note).toBe('Fleet hours still use last quarter.');
+    expect(catalogNoteFromPayload({ notes: [{ text: 'Use the new appendix.' }] })).toBe('Use the new appendix.');
+  });
+
   it('reads a nested payload note.text and ignores the required-note flag', () => {
     const result = catalogReturnFromSync({
       statusId: WORK,
@@ -116,6 +151,38 @@ describe('catalogReturnFromSync', () => {
       },
     });
     expect(result.detail.note).toBe('Send back — missing the source appendix.');
+  });
+});
+
+describe('lastRubricHolder', () => {
+  it('keeps the current seat, otherwise restores the last person who held it', () => {
+    const holder = 'holder-1';
+    expect(lastRubricHolder({ currentId: holder, events: [] })).toBe(holder);
+    expect(
+      lastRubricHolder({
+        currentId: null,
+        events: [
+          { action: 'rubric_assigned', actorId: 'pm', detail: { userId: null }, createdAt: '2026-10-13T12:00:00.000Z' },
+          { action: 'rubric_claimed', actorId: holder, detail: {}, createdAt: '2026-10-13T11:00:00.000Z' },
+        ],
+      }),
+    ).toBe(holder);
+    expect(
+      lastRubricHolder({
+        currentId: null,
+        events: [{ action: 'rubric_released', actorId: 'pm', detail: { previousHolder: holder }, createdAt: '2026-10-13T12:00:00.000Z' }],
+      }),
+    ).toBe(holder);
+  });
+});
+
+describe('platformReturnNote', () => {
+  it('is the Catalog why-note while the task is Platform returned', () => {
+    expect(platformReturnNote({ handoffStatus: 'bounced', note: 'Tighten the fleet hours table.' })).toEqual({
+      message: 'Tighten the fleet hours table.',
+    });
+    expect(platformReturnNote({ handoffStatus: 'client_visible', note: 'Tighten the fleet hours table.' })).toBeNull();
+    expect(platformReturnNote({ handoffStatus: 'bounced', note: '  ' })).toBeNull();
   });
 });
 
@@ -223,6 +290,11 @@ describe('Catalog return reconciliation', () => {
     const listed = await listSubmissions(pm, { workState: 'platform_returned' });
     expect(listed.map((item) => item.id)).toContain(row.id);
     expect(listed.find((item) => item.id === row.id)?.catalogReturnNote).toBe('Tighten the fleet hours table.');
+    const view = await submissionView(pm, row.id);
+    expect(view.catalogReturnNote).toBe('Tighten the fleet hours table.');
+    expect(platformReturnNote({ handoffStatus: view.submission.handoffStatus, note: view.catalogReturnNote })).toEqual({
+      message: 'Tighten the fleet hours table.',
+    });
     const events = await db.select().from(submissionEvents).where(eq(submissionEvents.submissionId, row.id));
     expect(events.filter((event) => event.action === 'catalog_returned')).toHaveLength(1);
   });
@@ -241,11 +313,28 @@ describe('Catalog return reconciliation', () => {
     expect(noted.catalogReturn).toMatchObject({ statusId: WORK, outcome: 'applied' });
   });
 
-  it('does not enqueue while the task is still in the GDP pipeline', async () => {
-    const row = await makeSubmission(db, { stage: 'rubric', statusId: WORK, source: returnedSource });
-    const noted = await noteCatalogReturnIfNeeded(db, row, pm.id);
-    expect(noted.catalogReturn).toBeNull();
-    expect((await listPendingCatalogReturns(pm)).map((item) => item.id)).not.toContain(row.id);
+  it('reopens a known parked task sent back to E, restores the last holder, and keeps the note', async () => {
+    const row = await makeSubmission(db, {
+      stage: 'parked',
+      statusId: WORK,
+      source: returnedSource,
+      rubricAssigneeId: null,
+    });
+    await db.insert(submissionEvents).values({
+      submissionId: row.id,
+      actorId: creator.id,
+      action: 'rubric_claimed',
+      detail: {},
+    });
+    const noted = await noteCatalogReturnIfNeeded(db, row, null, null, HANDOFF);
+    expect(workStateOf(noted)).toBe('platform_returned');
+    expect(noted.rubricAssigneeId).toBe(creator.id);
+    expect(noted.catalogReturn).toMatchObject({
+      note: 'Tighten the fleet hours table.',
+      outcome: 'applied',
+    });
+    const listed = await listSubmissions(pm, { workState: 'platform_returned' });
+    expect(listed.find((item) => item.id === row.id)?.catalogReturnNote).toBe('Tighten the fleet hours table.');
   });
 
   it('accepts a return onto rubric / Platform returned, clears the push lock, and keeps seats', async () => {

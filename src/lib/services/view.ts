@@ -7,6 +7,7 @@ import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { parseCatalogReturn } from '@/domain/catalogReturn';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
 import { jobsForSubmission } from '@/lib/jobs/queue';
@@ -35,6 +36,7 @@ export interface SubmissionView {
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
   events: Pick<SubmissionEvent, 'id' | 'actorId' | 'action' | 'detail' | 'createdAt'>[];
+  catalogReturnNote: string | null;
   can: {
     lens: TaskLens;
     editRubric: boolean;
@@ -170,6 +172,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       attempts: j.attempts,
     })),
     events: lens === 'controller' ? events.map((e) => ({ id: e.id, actorId: e.actorId, action: e.action, detail: e.detail, createdAt: e.createdAt })) : [],
+    catalogReturnNote: parseCatalogReturn(submission.catalogReturn)?.note ?? null,
     can: {
       lens,
       editRubric: holdsRubricSeat(actor, submission) && submission.stage === 'rubric',

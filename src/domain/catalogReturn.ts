@@ -34,6 +34,35 @@ export function localIsSubmitted(input: { stage: string; handoffStatus: string |
   return input.stage === 'done' || input.handoffStatus === 'client_visible';
 }
 
+/** Last person on the rubric seat. Team-pool assigns are skipped so a return can restore them. */
+export function lastRubricHolder(input: {
+  currentId: string | null;
+  events: readonly { action: string; actorId: string | null; detail: unknown; createdAt?: string }[];
+}): string | null {
+  if (input.currentId?.trim()) return input.currentId;
+  const events = input.events.toSorted((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  for (const event of events) {
+    if (event.action === 'rubric_assigned') {
+      const userId = asText(object(event.detail)['userId']);
+      if (userId) return userId;
+      continue;
+    }
+    if (event.action === 'rubric_claimed' && event.actorId) return event.actorId;
+    if (event.action === 'rubric_released') {
+      const previous = asText(object(event.detail)['previousHolder']);
+      if (previous) return previous;
+    }
+  }
+  return null;
+}
+
+/** Catalog why-text on Platform returned — shown on the task, not only the board list. */
+export function platformReturnNote(input: { handoffStatus: string | null; note: string | null | undefined }): { message: string } | null {
+  if (input.handoffStatus !== 'bounced') return null;
+  const message = input.note?.trim() ?? '';
+  return message ? { message } : null;
+}
+
 /** True when this sync should write (or replace) a pending PM queue item. */
 export function shouldEnqueueCatalogReturn(input: {
   stage: string;
@@ -44,7 +73,6 @@ export function shouldEnqueueCatalogReturn(input: {
   /** Catalog status we last stored. Required when the lane is only inbound pickup. */
   previousStatusId?: string | null;
 }): boolean {
-  if (!localIsSubmitted(input)) return false;
   if (!catalogLaneReopensSubmitted(input.catalogLane)) return false;
   const statusId = input.catalogStatusId?.trim() ?? '';
   if (!statusId) return false;
@@ -72,6 +100,13 @@ function noteOf(entry: Record<string, unknown>): string | null {
     const nested = object(entry[key]);
     const text = asText(nested['text']) ?? asText(nested['value']) ?? asText(nested['comment']) ?? asText(nested['note']);
     if (text) return text;
+  }
+  const notes = entry['notes'];
+  if (Array.isArray(notes)) {
+    for (const item of notes) {
+      const text = asText(item) ?? asText(object(item)['text']) ?? asText(object(item)['value']);
+      if (text) return text;
+    }
   }
   return null;
 }

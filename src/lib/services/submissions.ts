@@ -8,7 +8,7 @@ import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
-import { catalogReturnFromSync, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
+import { catalogReturnFromSync, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
@@ -126,6 +126,9 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
   ) {
     return submission;
   }
+  const events = await database.select().from(submissionEvents).where(eq(submissionEvents.submissionId, submission.id));
+  const holder = lastRubricHolder({ currentId: submission.rubricAssigneeId, events });
+  const now = new Date().toISOString();
   const catalogReturn = { ...detail, outcome: 'applied' as const };
   const [updated] = await database
     .update(submissions)
@@ -134,6 +137,7 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
       handoffStatus: 'bounced',
       pushedAt: null,
       catalogReturn,
+      ...(holder && holder !== submission.rubricAssigneeId ? { rubricAssigneeId: holder, rubricClaimedAt: now, lastClaimedAt: now } : {}),
     })
     .where(eq(submissions.id, submission.id))
     .returning();
@@ -141,7 +145,7 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
     ...detail,
     previousPushedAt: submission.pushedAt,
     previousReceipt: submission.pushReceipt,
-    rubricAssigneeId: submission.rubricAssigneeId,
+    rubricAssigneeId: holder ?? submission.rubricAssigneeId,
     reviewerId: submission.reviewerId,
   });
   return updated!;

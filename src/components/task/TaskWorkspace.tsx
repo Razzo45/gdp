@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } from '@/domain/freshness';
+import { platformReturnNote } from '@/domain/catalogReturn';
 import { reviewerReturnNote } from '@/domain/review';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import type { SubmissionView } from '@/lib/services/view';
@@ -120,7 +121,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   }, [busy, initial.submission.id, loadView]);
 
   const s = view.submission;
-  const returnNote = reviewerReturnNote({ stage: s.stage, feedback: view.review.feedback });
+  const catalogNote = platformReturnNote({ handoffStatus: s.handoffStatus, note: view.catalogReturnNote });
+  const returnNote = catalogNote ?? reviewerReturnNote({ stage: s.stage, feedback: view.review.feedback });
+  const returnTitle = catalogNote ? 'Catalog sent this back' : 'Reviewer sent this back';
   const panel: PanelProps = { view, actorId, refresh, notify };
 
   if (!ready) {
@@ -131,11 +134,11 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
 
-      {returnNote && !headerOpen ? <ReviewReturnBanner message={returnNote.message} /> : null}
+      {returnNote && !headerOpen ? <ReviewReturnBanner title={returnTitle} message={returnNote.message} /> : null}
 
       {headerOpen ? (
       <header className="card shrink-0 space-y-3">
-        {returnNote ? <ReviewReturnBanner flush message={returnNote.message} /> : null}
+        {returnNote ? <ReviewReturnBanner flush title={returnTitle} message={returnNote.message} /> : null}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -239,7 +242,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   );
 }
 
-function ReviewReturnBanner({ message, flush = false }: { message: string; flush?: boolean }) {
+function ReviewReturnBanner({ title, message, flush = false }: { title: string; message: string; flush?: boolean }) {
   return (
     <aside
       className={
@@ -249,7 +252,7 @@ function ReviewReturnBanner({ message, flush = false }: { message: string; flush
       }
       role="status"
     >
-      <p className="text-sm font-bold text-warn">Reviewer sent this back</p>
+      <p className="text-sm font-bold text-warn">{title}</p>
       <p className="mt-1 text-xl font-semibold leading-snug text-ink">{message}</p>
     </aside>
   );

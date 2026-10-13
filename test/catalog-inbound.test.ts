@@ -42,6 +42,23 @@ describe('boardWatchStatusIds', () => {
     expect(watch.has(HANDOFF)).toBe(false);
     expect(watch.has(FINAL)).toBe(false);
   });
+
+  it('watches send-to-rubric back to E and revise-to-creator onto C from Final Review', () => {
+    const watch = boardWatchStatusIds({
+      workStatusId: WORK,
+      handoffStatusId: HANDOFF,
+      inboundStatusIds: [WORK],
+      statuses,
+      transitions: [
+        ...transitions,
+        { from: FINAL, to: WORK, trigger: 'send-to-rubric' },
+        { from: FINAL, to: REVISED, trigger: 'revise-to-creator' },
+      ],
+    });
+    expect(watch.has(WORK)).toBe(true);
+    expect(watch.has(REVISED)).toBe(true);
+    expect(watch.has(FINAL)).toBe(false);
+  });
 });
 
 describe('catalogIdsToPull', () => {
