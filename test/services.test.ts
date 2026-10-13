@@ -10,6 +10,7 @@ import { decideReview, saveCalibration, sendToReview } from '@/lib/services/revi
 import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
 import { startGoldenAutorate } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
+import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
 import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, releaseSeat } from '@/lib/services/submissions';
 import { makeSubmission, makeUser, seatedRubricInputs, testDb, yesAnswers } from './helpers/db';
@@ -361,6 +362,25 @@ describe('rubric quota seats', () => {
     const versions = await db.select().from(rubrics).where(eq(rubrics.submissionId, s.id));
     expect(versions.filter((row) => row.isCurrent)).toHaveLength(1);
     expect(Math.max(...versions.map((row) => row.version))).toBe(2);
+  });
+
+  it('keeps a pasted Visual seat that also reads as Format, matching the modal 5 / 15 / 30 count', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const rows = seatedRubricInputs();
+    rows[rows.length - 1] = {
+      tag: 'Visual - Layout',
+      statement: 'The five connected carousel images remain readable at 1080 x 1350 px.',
+      notes: '',
+      scope: 'output',
+      inputFileIds: [],
+      outputFile: null,
+    };
+    expect(quotaSpread(countFamilies(rows)).ready).toBe(true);
+    const replaced = await replaceRubricFromPaste(creator, s.id, { revision: 0, rows });
+    expect(replaced.imported).toBe(50);
+    expect(countFamilies(replaced.statements)).toEqual({ format: 5, content: 15, visual: 30 });
+    expect(replaced.statements.some((row) => row.statement.includes('carousel images') && row.family === 'visual')).toBe(true);
   });
 
   it('refuses Golden autorate until the 5 / 15 / 30 spread is seated', async () => {

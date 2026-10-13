@@ -8,10 +8,10 @@ import type { DbOrTx } from '@/db/types';
 import { statementHash } from '@/domain/fingerprint';
 import { isLiveHumanNote } from '@/domain/golden';
 import { goldenGate, type GoldenGate, type Verdict } from '@/domain/gates';
-import { describeNamedFiles } from '@/domain/fileLanguage';
 import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
-import { lintStatement, nearDuplicate, toAffirmativeStatement, type LintResult } from '@/domain/lint';
+import { lintStatement, nearDuplicate, type LintResult } from '@/domain/lint';
 import { applyInferredScope } from '@/domain/fileScope';
+import { preparePastedSeats } from '@/domain/import';
 import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import type { FactoryStatement } from '@/lib/engines/rubricFactory';
@@ -418,11 +418,7 @@ export async function replaceRubricFromPaste(
 ): Promise<SaveResult & { imported: number }> {
   if (input.rows.length === 0) throw invalid('Paste at least one statement.');
   if (input.rows.length > 200) throw invalid('Import at most 200 statements at a time.');
-  const prepared = input.rows.map((row) => {
-    const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
-    const tag = correctTag(statement, row.tag);
-    return { statement, tag, family: familyOfTag(tag) };
-  });
+  const prepared = preparePastedSeats(input.rows);
   if (prepared.some((row) => row.statement.length < 8 || row.statement.length > 600)) {
     throw invalid('Every statement must be between 8 and 600 characters.');
   }

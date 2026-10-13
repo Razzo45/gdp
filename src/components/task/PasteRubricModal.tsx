@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { parsePasteLines } from '@/domain/import';
+import { parsePasteLines, pastedSeatDisagreements, preparePastedSeats } from '@/domain/import';
 import { countFamilies, FAMILY_LABELS, quotaSpread, RUBRIC_TAGS, type RubricTag } from '@/domain/rubric';
 import { Modal } from '../ui/Modal';
 
@@ -35,8 +35,10 @@ export function PasteRubricModal({
 
   const tagged = rows.filter((row): row is { statement: string; tag: RubricTag } => row.tag !== '');
   const untagged = rows.length - tagged.length;
-  const seated = useMemo(() => countFamilies(tagged), [tagged]);
+  const prepared = useMemo(() => preparePastedSeats(tagged), [tagged]);
+  const seated = useMemo(() => countFamilies(prepared), [prepared]);
   const spread = useMemo(() => quotaSpread(seated), [seated]);
+  const disagreements = useMemo(() => pastedSeatDisagreements(tagged), [tagged]);
   const ready = rows.length > 0 && untagged === 0 && spread.ready;
 
   return (
@@ -63,6 +65,14 @@ export function PasteRubricModal({
               {untagged > 0 ? `${untagged} statement${untagged === 1 ? '' : 's'} still need a tag. ` : ''}
               {spread.warning}
             </p>
+          )}
+          {ready && disagreements > 0 && (
+            <p className="text-xs text-muted">
+              {disagreements} seat{disagreements === 1 ? '' : 's'} keep the tag you chose even though the wording also reads as another family.
+            </p>
+          )}
+          {ready && disagreements === 0 && (
+            <p className="text-xs text-muted">5 Format, 15 Content, 30 Visual — ready to replace.</p>
           )}
           <div className="max-h-64 space-y-2 overflow-y-auto">
             {rows.map((row, index) => (

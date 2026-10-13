@@ -1,5 +1,6 @@
+import { describeNamedFiles } from './fileLanguage';
 import { toAffirmativeStatement } from './lint';
-import { correctTag, RUBRIC_TAGS, type RubricTag } from './rubric';
+import { correctTag, familyOfTag, guessTag, isRubricTag, RUBRIC_TAGS, type Family, type RubricTag } from './rubric';
 
 /**
  * Parses pasted text into statements. One per line; an optional leading
@@ -37,6 +38,23 @@ export function parsePasteLines(text: string): { rows: { statement: string; sugg
     rows.push({ statement, suggestedTag });
   }
   return { rows, skipped };
+}
+
+/**
+ * Manual paste seating. The creator's tag wins — guessTag may still call
+ * the same wording Format (px, 16:9, carousel) but Replace must not steal
+ * a Visual/Content seat the modal already counted.
+ */
+export function preparePastedSeats(rows: readonly { tag: RubricTag; statement: string }[]): { statement: string; tag: RubricTag; family: Family }[] {
+  return rows.map((row) => {
+    const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
+    const tag = isRubricTag(row.tag) ? row.tag : correctTag(statement);
+    return { statement, tag, family: familyOfTag(tag) };
+  });
+}
+
+export function pastedSeatDisagreements(rows: readonly { tag: RubricTag; statement: string }[]): number {
+  return preparePastedSeats(rows).filter((row) => familyOfTag(guessTag(row.statement)) !== row.family).length;
 }
 
 export function parseImport(text: string): { rows: { tag: RubricTag; statement: string }[]; skipped: string[] } {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseImport, parsePasteLines } from '@/domain/import';
+import { parseImport, parsePasteLines, preparePastedSeats } from '@/domain/import';
+import { countFamilies, quotaSpread } from '@/domain/rubric';
 
 describe('parseImport', () => {
   it('turns numbered questions into affirmative statements and honours a tag prefix', () => {
@@ -20,6 +21,18 @@ s003: Every slide has one clear headline
 
   it('skips empty lines and too-short leftovers', () => {
     expect(parseImport('\n\n  \nHi\n').rows).toEqual([]);
+  });
+});
+
+describe('preparePastedSeats', () => {
+  it('keeps a chosen Visual tag when the wording also reads as Format', () => {
+    const rows = preparePastedSeats([
+      { tag: 'Visual - Layout', statement: 'The five connected carousel images remain readable at 1080 x 1350 px.' },
+      { tag: 'Format/File', statement: 'The delivered presentation uses a 16:9 page size.' },
+    ]);
+    expect(rows[0]).toMatchObject({ tag: 'Visual - Layout', family: 'visual' });
+    expect(rows[1]).toMatchObject({ tag: 'Format/File', family: 'format' });
+    expect(quotaSpread(countFamilies(rows)).extra.format).toBe(0);
   });
 });
 
