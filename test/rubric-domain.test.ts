@@ -157,6 +157,14 @@ describe('rubric tags and quotas', () => {
     for (const statement of statements) counts[familyOfTag(guessTag(statement))] += 1;
     expect(counts).toEqual({ format: 5, content: 15, visual: 30 });
   });
+
+  it('seats Ali\'s meteor plate rubric as 5 Format, 15 Content, 30 Visual', () => {
+    const statements = JSON.parse(readFileSync(new URL('./fixtures/ba0e8353-statements.json', import.meta.url), 'utf8')) as string[];
+    expect(statements).toHaveLength(50);
+    const counts = { format: 0, content: 0, visual: 0 };
+    for (const statement of statements) counts[familyOfTag(guessTag(statement))] += 1;
+    expect(counts).toEqual({ format: 5, content: 15, visual: 30 });
+  });
   it('splits 50 as 5/15/30 and sums to the target', () => {
     expect(familyQuotas(50)).toEqual({ format: 5, content: 15, visual: 30 });
     for (const n of [40, 47, 60]) {

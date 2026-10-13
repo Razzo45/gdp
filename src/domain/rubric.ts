@@ -63,7 +63,12 @@ export function guessTag(statement: string): RubricTag {
   if (isTypefaceClaim(q) || /\b(hex|#|logo|crest|lockup|brand(?:ing)?|palette|color|colour|font style|font size|typography|wordmark|typefaces?|fonts?|visual design)\b/.test(q)) return 'Visual - Branding';
   if (/\b(hierarchy|header|subheader|titles?|subtitle|placement|layout|space|breathe|bleed|lower-thirds?|graphic cards?|camera movement|handheld|shaky-cam|drone shot|aerial|b-roll|medium shot|close-up|close up|opens with|places the shot|shots? of)\b/.test(q)) return 'Visual - Layout';
   if (/\b(consistent|similar across|same brand|connected|lip movements?|wardrobe|headshot|on-camera presenter|sunglasses|polo shirt)\b/.test(q)) return 'Visual - Consistency';
-  if (/\b(pixelat|legib|read on a mobile|morph artifacts?|melting faces?|facial distortion|conversational pace|visual footage|visual effects|visual treatment|visual detail|motion graphics|natural imagery|natural texture)\b/.test(q)) return 'Visual - Language & Readability';
+  if (/\b(pixelat|legib|read on a mobile|morph artifacts?|melting faces?|facial distortion|conversational pace|visual footage|visual effects|visual treatment|visual detail|visual motion|motion graphics|natural imagery|natural texture)\b/.test(q)) return 'Visual - Language & Readability';
+  if (/\b(matte|occlusion|keying|halos?|fringes?|chatter|buzzing|composite|foreground alpha|silhouettes?|spatial (?:drift|sliding)|cutout seams?|lens blur|optical (?:glow|focus)|rim lighting|film grain|image noise|desaturated|glow bloom|dense opacity|billowing|luminous highlight|highlight detail|impact flash|diffused outer edges)\b/.test(q)) {
+    return 'Visual - Language & Readability';
+  }
+  if (/\bprovided in the input files\b/.test(q) || /\breference landscape style\b/.test(q)) return 'Visual - Branding';
+  if (/\bremain completely static\b/.test(q) && /\bconsecutive frames\b/.test(q)) return 'Visual - Consistency';
   if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) return 'Content - Exact';
   if (/\b(\d+|three|two|one)\b/.test(q) && /\b(posts?|mockups?|images?)\b/.test(q)) return 'Content - Quantitative';
   return 'Content - Semantics';
@@ -183,7 +188,9 @@ function isFormatClaim(q: string): boolean {
   if (/\b(slide|page|sheet)\s+(count|total)\b/.test(q)) return true;
   if (/\b(files?|images?)\b/.test(q) && /\bincluded\b/.test(q) && /\b(output|export|deliverable)\b/.test(q)) return true;
   if (/\brec\.?709\b/.test(q) || /\bcolor space encoding\b/.test(q)) return true;
-  if (/\b(runtime|duration)\b/.test(q) && /\b\d+:\d+|\b\d+\s*seconds?\b/.test(q)) return true;
+  if (/\b(runtime|duration)\b/.test(q) && /\b\d+:\d+|\b\d+\s*seconds?\b|\b\d+\s*frames?\b/.test(q)) return true;
+  if (/\b(audio streams?|silent audio)\b/.test(q)) return true;
+  if (/\b(quicktime|\.mov\b|mov file|prores|4444)\b/.test(q)) return true;
   return false;
 }
 
