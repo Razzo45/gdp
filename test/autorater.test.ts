@@ -11,6 +11,14 @@ describe('autorater policy', () => {
     expect(AUTORATE_THINKING_BUDGET).not.toBe(0);
   });
 
+  it('does not treat an unverified or close-enough claim as Yes', () => {
+    expect(AUTORATER_SYSTEM).toMatch(/unverified|cannot verify/i);
+    expect(AUTORATER_SYSTEM).toMatch(/close-enough|probable Yes is a No|paraphrase is a No/i);
+    expect(AUTORATER_SYSTEM).toMatch(/letterbox|pillarbox/i);
+    expect(AUTORATER_SYSTEM).toMatch(/container|metadata/i);
+    expect(AUTORATER_SYSTEM).not.toMatch(/not a worst-case guess/i);
+  });
+
   it('does not treat a failed inventory as a clean file', () => {
     expect(inventoryPromptBlock([])).toBeNull();
     expect(inventoryPromptBlock(['logo is stretched'])).toMatch(/logo is stretched/);

@@ -84,9 +84,10 @@ Grade EVERY statement independently. Do not carry a Yes or a No from a
 neighbouring seat. For each, answer exactly Yes or No and give ONE SENTENCE of
 evidence citing the specific element of the attached files you used.
 
-Yes = the statement holds on the files. That requires you to locate the claim.
-No = the statement does not hold on the files.
-Never answer N/A. Every statement always applies.
+Yes = you located the claim on the files and confirmed it holds.
+No = the statement does not hold, OR you cannot verify it from the files.
+Never answer N/A. Every statement always applies. An unverified claim is No.
+A close-enough, partial, paraphrased or probable Yes is a No.
 
 Rules:
 - Answer only the claim in that statement. Do not fail extra faults the statement
@@ -99,18 +100,25 @@ Rules:
   Prefer what you see/hear over a text summary when they conflict. A slide still
   labelled "slide N" is that page of the deck.
 - For video/audio: only claim events, dialogue or specs evidenced in the clip.
+  If you did not hear the required words or see the required beat, answer No.
+  Exact wording: a paraphrase is a No.
 - Logical consistency is mandatory: the Yes/No MUST agree with the evidence sentence.
-- "rather than X" / "instead of X" / "free of X": the claim holds only when X is
-  absent and any required positive alternative is present. If the statement also
-  asserts a match, count, measurement or named property, verify that too.
+- "rather than X" / "instead of X" / "free of X" / "contains no X": Yes only after
+  you inspect the full deliverable and X is absent. If you cannot review the full
+  timeline, answer No. One instance of X is No.
 - If a statement requires a measurement (dimension, ratio, count, duration,
-  contrast), state the measured value in the evidence. FILE FACTS blocks are
-  authoritative for counts, sizes, aspect ratios, fonts and embedded media.
+  contrast, codec, colour space, loudness), state the measured value in the
+  evidence. Yes only when FILE FACTS or a visible on-screen readout give that
+  value. Do not infer H.264, Rec.709, peak levels or duration by eye.
+- Container / metadata 16:9 is not proof the picture fills the frame. Letterboxing,
+  pillarboxing, clipping and safe-area claims are judged from the picture, not
+  the file header.
 - Do not answer probabilistically. Do not invent canvas sizes, colours or contrast
   failures that contradict the attachment.
 - NAMING WHAT YOU PERCEIVE: do not assert labels the deliverable does not clearly
-  show. If unsure what an element is, describe it neutrally.
-- Judge what is actually there — not a clean ideal, not a worst-case guess.
+  show. If unsure what an element is, describe it neutrally and answer No if the
+  claim depends on that label.
+- Judge only what you can verify on the files. "Looks fine" is not Yes.
 - SUBMITTED INPUTS: when a statement requires fidelity to them, compare the
   deliverable to those refs. Overall impression is not a match.
 - VERIFICATION BURDEN: a correspondence claim may only be Yes after you locate
@@ -126,13 +134,15 @@ Rules:
   statement. An unavailable inventory is not proof the file is clean.
 - A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
   that file; answer No and say why.
-- FILE FACTS are authoritative for slide/page counts, aspect, fonts and
-  embedded-media presence.
+- FILE FACTS are authoritative for slide/page counts, packaged aspect, fonts and
+  embedded-media presence. They do not decide picture-level letterboxing, colour
+  look, or spoken content.
 - Embedded images attached after NO FULL-PAGE RENDER may support photograph/asset
   claims. For slide-level layout, spacing or typography you cannot see, the
   statement does not hold.
-- If the files do not show the claimed property, the statement does not hold.
-  Do not guess it in to make Yes. Do not invent a defect to make No.
+- If the files do not show the claimed property, or you cannot verify it, the
+  statement does not hold. Do not guess it in to make Yes. Do not invent a
+  defect to make No.
 
 Return JSON only: { "verdicts": [ { "id": "<seat id like s008>", "answer": "Yes" | "No", "evidence": "<one sentence>" } ] }
 Include every seat id exactly once. Refer to seats as Seat 8 in evidence, never as a UUID.`;
