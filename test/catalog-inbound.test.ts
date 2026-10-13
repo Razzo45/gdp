@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardWatchStatusIds, catalogIdsToPull, catalogLaneReopensSubmitted, parseProjectSubmissionList } from '@/domain/catalogInbound';
+import { boardWatchStatusIds, catalogIdsToPull, catalogLaneReopensSubmitted, inboundWatchStatusIds, parseProjectSubmissionList, returnWatchStatusIds } from '@/domain/catalogInbound';
 import { shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 
 const WORK = 'e-approved';
@@ -77,6 +77,38 @@ describe('catalogIdsToPull', () => {
         now,
       ),
     ).toEqual(['907edd44-new', 'a002e716-back']);
+  });
+
+  it('does not land unknown tasks that only sit on a Catalog return status', () => {
+    const now = Date.parse('2026-10-13T17:47:00.000Z');
+    const input = {
+      workStatusId: WORK,
+      handoffStatusId: HANDOFF,
+      inboundStatusIds: [WORK],
+      statuses: [...statuses, { statusId: 'i-revised', name: 'I. Golden Output Revised' }],
+      transitions: [...transitions, { from: FINAL, to: 'i-revised', trigger: 'revise' }],
+    };
+    const inbound = inboundWatchStatusIds(input);
+    const returns = returnWatchStatusIds(input);
+    expect(inbound.has(WORK)).toBe(true);
+    expect(returns.has(REVISED)).toBe(true);
+    expect(returns.has('i-revised')).toBe(true);
+    expect(inbound.has(REVISED)).toBe(false);
+    expect(
+      catalogIdsToPull(
+        [
+          { id: '1ac55ec9-new-c', statusId: REVISED, updatedAt: '2026-10-13T16:00:00.000Z' },
+          { id: '4b4c6f94-new-i', statusId: 'i-revised', updatedAt: '2026-10-13T16:00:00.000Z' },
+          { id: 'de1d2edf-new-e', statusId: WORK, updatedAt: '2026-10-13T16:00:00.000Z' },
+          { id: 'a002e716-back', statusId: REVISED, updatedAt: '2026-09-30T10:00:00.000Z' },
+        ],
+        inbound,
+        new Set(['a002e716-back']),
+        now,
+        24 * 60 * 60 * 1000,
+        returns,
+      ),
+    ).toEqual(['de1d2edf-new-e', 'a002e716-back']);
   });
 });
 

@@ -59,6 +59,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
           sourceFingerprint: fp,
           landedAt: now,
           lastSeenAt: now,
+          stage: 'parked',
         })
         .returning();
       await recordEvent(tx, created!.id, actorId, 'landed', { statusId: read.statusId, projectId: read.projectId });

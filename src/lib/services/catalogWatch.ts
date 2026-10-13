@@ -2,13 +2,14 @@ import 'server-only';
 
 import { db } from '@/db/client';
 import { submissions, watchedProjects } from '@/db/schema';
-import { boardWatchStatusIds, catalogIdsToPull } from '@/domain/catalogInbound';
+import { catalogIdsToPull, inboundWatchStatusIds, returnWatchStatusIds } from '@/domain/catalogInbound';
 import { catalogConfigured, listAllProjectSubmissions } from '@/lib/catalog/client';
 import { syncSubmission } from './submissions';
 
 /**
- * Pull Catalog rows on watched inbound / return statuses onto the board.
- * Webhooks should do this live; this sweep covers deliveries we never got.
+ * Pull new Catalog rows only on inbound-ready statuses (K / E / work).
+ * Known tasks are also refreshed when Catalog sends them back. Webhooks
+ * should do this live; this sweep covers deliveries we never got.
  */
 
 const object = (value: unknown): Record<string, unknown> =>
@@ -27,17 +28,14 @@ export async function reconcileWatchedCatalog(): Promise<{ pulled: number; faile
       continue;
     }
     const workflow = object(object(watch.project)['workflow']);
-    const ids = catalogIdsToPull(
-      listed.submissions,
-      boardWatchStatusIds({
-        workStatusId: watch.workStatusId,
-        handoffStatusId: watch.handoffStatusId,
-        inboundStatusIds: watch.statusIds,
-        statuses: workflow['statuses'],
-        transitions: workflow['transitions'],
-      }),
-      known,
-    );
+    const watchInput = {
+      workStatusId: watch.workStatusId,
+      handoffStatusId: watch.handoffStatusId,
+      inboundStatusIds: watch.statusIds,
+      statuses: workflow['statuses'],
+      transitions: workflow['transitions'],
+    };
+    const ids = catalogIdsToPull(listed.submissions, inboundWatchStatusIds(watchInput), known, Date.now(), 24 * 60 * 60 * 1000, returnWatchStatusIds(watchInput));
     for (const id of ids) {
       try {
         await syncSubmission(id, null);

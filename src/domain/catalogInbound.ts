@@ -18,7 +18,7 @@ export interface ListedCatalogSubmission {
   updatedAt?: string | null;
 }
 
-export function boardWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId' | 'handoffStatusId' | 'inboundStatusIds' | 'statuses' | 'transitions'>): Set<string> {
+export function inboundWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId' | 'handoffStatusId' | 'inboundStatusIds' | 'statuses'>): Set<string> {
   const work = normalized(input.workStatusId);
   const handoff = normalized(input.handoffStatusId);
   const statuses = Array.isArray(input.statuses) ? input.statuses.map(object) : [];
@@ -29,9 +29,12 @@ export function boardWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId
   const extra = (input.inboundStatusIds ?? [])
     .map(normalized)
     .filter((id) => id && (id === work || inboundNamed.includes(id)));
-  const inbound = new Set([work, ...inboundNamed, ...extra].filter((id) => id && id !== handoff));
+  return new Set([work, ...inboundNamed, ...extra].filter((id) => id && id !== handoff));
+}
+
+export function returnWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId' | 'handoffStatusId' | 'statuses' | 'transitions'>): Set<string> {
   const submitted = submittedCatalogStatusIds(input);
-  const watch = new Set(inbound);
+  const watch = new Set<string>();
   for (const edge of Array.isArray(input.transitions) ? input.transitions.map(object) : []) {
     const to = normalized(edge['to']);
     if (submitted.has(normalized(edge['from'])) && to && returned(edge['trigger'])) watch.add(to);
@@ -39,23 +42,31 @@ export function boardWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId
   return watch;
 }
 
+export function boardWatchStatusIds(input: Pick<CatalogStateInput, 'workStatusId' | 'handoffStatusId' | 'inboundStatusIds' | 'statuses' | 'transitions'>): Set<string> {
+  return new Set([...inboundWatchStatusIds(input), ...returnWatchStatusIds(input)]);
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function catalogIdsToPull(
   listed: readonly ListedCatalogSubmission[],
-  watchStatusIds: ReadonlySet<string>,
+  inboundStatusIds: ReadonlySet<string>,
   knownIds: ReadonlySet<string> = new Set(),
   now = Date.now(),
   newWithinMs = DAY_MS,
+  returnStatusIds: ReadonlySet<string> = new Set(),
 ): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const row of listed) {
     const id = row.id.trim();
     const status = normalized(row.statusId);
-    if (!id || seen.has(id) || !status || !watchStatusIds.has(status)) continue;
+    const inbound = inboundStatusIds.has(status);
+    const returning = returnStatusIds.has(status);
+    if (!id || seen.has(id) || !status || (!inbound && !returning)) continue;
     const known = knownIds.has(id);
     if (!known) {
+      if (!inbound) continue;
       const updated = row.updatedAt ? Date.parse(row.updatedAt) : Number.NaN;
       if (!Number.isFinite(updated) || now - updated > newWithinMs) continue;
     }
