@@ -84,19 +84,21 @@ async function main() {
       `;
 
       const droppedGoldAi = await tx`
-        with ranked_jobs as (
-          select rubric_id, coalesce(job_id, id) as run_id, max(created_at) as seen
+        with numbered as (
+          select
+            id,
+            row_number() over (
+              partition by rubric_id, statement_id,
+                case when error is not null or verdict is null then 'failed' else 'usable' end
+              order by created_at desc
+            ) as rn,
+            case when error is not null or verdict is null then 1 else ${KEEP} end as keep_n
           from app.golden_ratings
           where source = 'ai'
-          group by rubric_id, coalesce(job_id, id)
-        ),
-        numbered as (
-          select rubric_id, run_id, dense_rank() over (partition by rubric_id order by seen desc) as rn
-          from ranked_jobs
         )
         delete from app.golden_ratings g
         using numbered n
-        where g.source = 'ai' and g.rubric_id = n.rubric_id and coalesce(g.job_id, g.id) = n.run_id and n.rn > ${KEEP}
+        where g.id = n.id and n.rn > n.keep_n
         returning g.id
       `;
 

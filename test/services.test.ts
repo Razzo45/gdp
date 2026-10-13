@@ -7,7 +7,7 @@ import type { Actor } from '@/lib/auth/permissions';
 import { claimNext, complete, enqueue, expireOverdue, fail, heartbeat, JobConflict } from '@/lib/jobs/queue';
 import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
-import { KEEP } from '@/lib/services/retention';
+import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
 import { startGoldenAutorate } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
@@ -241,6 +241,47 @@ describe('rubric autosave with revision CAS', () => {
       ai: { verdict: true, evidence: 'Slide 1 title reads Acme Corp.', model: 'gemini-3.8-flash' },
     });
   });
+
+  it('keeps the last good Golden Yes when a later autorate only wrote Grading failed', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const saved = await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [{ tag: 'Content - Exact', statement: 'The deck names the client.', notes: '', scope: 'output', inputFileIds: [], outputFile: null }],
+      deletes: [],
+    });
+    const statement = saved.statements[0]!;
+    const rubric = (await currentRubric(db, s.id))!;
+    await db.insert(goldenRatings).values([
+      {
+        rubricId: rubric.id,
+        statementId: statement.id,
+        jobId: crypto.randomUUID(),
+        source: 'ai',
+        verdict: true,
+        evidence: 'Slide 1 title reads Acme Corp.',
+        basis: { statementHash: statementHash(statement) },
+        createdAt: '2026-10-13T16:40:00.000Z',
+      },
+      {
+        rubricId: rubric.id,
+        statementId: statement.id,
+        jobId: crypto.randomUUID(),
+        source: 'ai',
+        verdict: null,
+        evidence: '',
+        error: 'Grading failed.',
+        basis: { statementHash: statementHash(statement) },
+        createdAt: '2026-10-13T16:51:00.000Z',
+      },
+    ]);
+    const state = await goldenState(db, rubric.id, await statementsOf(db, rubric.id));
+    expect(state.verdicts[statement.id]).toBe(true);
+    expect(state.evidence[statement.id]).toBe('Slide 1 title reads Acme Corp.');
+    expect(state.sources[statement.id]).toBe('ai');
+    expect(state.errors[statement.id]).toBeUndefined();
+    expect(state.gate.ok).toBe(true);
+  });
 });
 
 describe('rubric quota seats', () => {
@@ -452,6 +493,97 @@ describe('retention', () => {
     expect(versions).toHaveLength(KEEP);
     expect(versions.filter((v) => v.isCurrent)).toHaveLength(1);
     expect(Math.max(...versions.map((v) => v.version))).toBe(4);
+  });
+
+  it('keeps Golden Yes and evidence on seats that were not in later one-seat reassesses', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const saved = await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [
+        { tag: 'Content - Exact', statement: 'The deck names the client on seat one.', notes: '', scope: 'output', inputFileIds: [], outputFile: null },
+        { tag: 'Content - Exact', statement: 'The deck names the product on seat two.', notes: '', scope: 'output', inputFileIds: [], outputFile: null },
+        { tag: 'Content - Exact', statement: 'The deck names the market on seat three.', notes: '', scope: 'output', inputFileIds: [], outputFile: null },
+        { tag: 'Content - Exact', statement: 'The deck names the offer on seat four.', notes: '', scope: 'output', inputFileIds: [], outputFile: null },
+      ],
+      deletes: [],
+    });
+    const statements = saved.statements;
+    const rubric = (await currentRubric(db, s.id))!;
+    const fullJob = crypto.randomUUID();
+    await db.insert(goldenRatings).values(
+      statements.map((st) => ({
+        rubricId: rubric.id,
+        statementId: st.id,
+        jobId: fullJob,
+        source: 'ai' as const,
+        verdict: true,
+        evidence: `Observed yes on ${st.statement.slice(0, 24)}.`,
+        basis: { statementHash: statementHash(st) },
+        createdAt: '2026-10-13T10:00:00.000Z',
+      })),
+    );
+    for (let i = 0; i < 3; i += 1) {
+      const st = statements[i]!;
+      await db.insert(goldenRatings).values({
+        rubricId: rubric.id,
+        statementId: st.id,
+        jobId: crypto.randomUUID(),
+        source: 'ai',
+        verdict: true,
+        evidence: `Reassessed yes on ${st.statement.slice(0, 24)}.`,
+        basis: { statementHash: statementHash(st) },
+        createdAt: `2026-10-13T11:0${i}:00.000Z`,
+      });
+    }
+
+    await pruneGoldenRatings(db, rubric.id);
+    const state = await goldenState(db, rubric.id, await statementsOf(db, rubric.id));
+    const untouched = statements[3]!;
+    expect(state.verdicts[untouched.id]).toBe(true);
+    expect(state.evidence[untouched.id]).toBe('Observed yes on The deck names the offer.');
+    expect(state.gate.ok).toBe(true);
+    expect(state.gate.unanswered).toBe(0);
+  });
+
+  it('does not let failed autorate rows evict the last good Golden Yes', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const saved = await saveStatements(creator, s.id, {
+      revision: 0,
+      upserts: [{ tag: 'Content - Exact', statement: 'The deck names the client.', notes: '', scope: 'output', inputFileIds: [], outputFile: null }],
+      deletes: [],
+    });
+    const statement = saved.statements[0]!;
+    const rubric = (await currentRubric(db, s.id))!;
+    await db.insert(goldenRatings).values({
+      rubricId: rubric.id,
+      statementId: statement.id,
+      jobId: crypto.randomUUID(),
+      source: 'ai',
+      verdict: true,
+      evidence: 'Slide 1 title reads Acme Corp.',
+      basis: { statementHash: statementHash(statement) },
+      createdAt: '2026-10-13T16:40:00.000Z',
+    });
+    for (let i = 0; i < 4; i += 1) {
+      await db.insert(goldenRatings).values({
+        rubricId: rubric.id,
+        statementId: statement.id,
+        jobId: crypto.randomUUID(),
+        source: 'ai',
+        verdict: null,
+        evidence: '',
+        error: 'Grading failed.',
+        basis: { statementHash: statementHash(statement) },
+        createdAt: `2026-10-13T16:5${i}:00.000Z`,
+      });
+    }
+    await pruneGoldenRatings(db, rubric.id);
+    const state = await goldenState(db, rubric.id, await statementsOf(db, rubric.id));
+    expect(state.verdicts[statement.id]).toBe(true);
+    expect(state.evidence[statement.id]).toBe('Slide 1 title reads Acme Corp.');
+    expect(state.gate.ok).toBe(true);
   });
 
   it('overwrites a calibration draft instead of appending', async () => {

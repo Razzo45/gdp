@@ -195,6 +195,7 @@ export interface GoldenState {
  * The AI rating counts only while the statement reads exactly as it did
  * when graded (`basis.statementHash`); edits make it stale. A human row
  * outranks AI only when it has a real observation — import stubs do not.
+ * A later failed/cancelled autorate does not hide an earlier Yes/No.
  */
 export async function goldenState(database: DbOrTx, rubricId: string, statements: RubricStatement[]): Promise<GoldenState> {
   const ratings = await database.select().from(goldenRatings).where(eq(goldenRatings.rubricId, rubricId)).orderBy(desc(goldenRatings.createdAt));
@@ -208,33 +209,37 @@ export async function goldenState(database: DbOrTx, rubricId: string, statements
     const hash = statementHash(statement);
     const own = ratings.filter((r) => r.statementId === statement.id);
     const human = own.find((r) => r.source === 'human');
-    const ai = own.find((r) => r.source === 'ai');
+    const usableAi = own.find((r) => {
+      if (r.source !== 'ai' || r.error) return false;
+      if ((r.basis as { statementHash?: string }).statementHash !== hash) return false;
+      return r.verdict === true || r.verdict === false;
+    });
+    const failedAi = own.find((r) => r.source === 'ai' && Boolean(r.error));
+    const staleAi = own.find((r) => r.source === 'ai' && !r.error && (r.basis as { statementHash?: string }).statementHash !== hash);
     const humanNote = (human?.evidence || human?.reason || '').trim();
     const liveHuman = Boolean(human && isLiveHumanNote(humanNote));
     audit[statement.id] = {
-      ...(ai && !ai.error ? { ai: { verdict: ai.verdict, evidence: ai.evidence, model: ai.model ?? null } } : {}),
+      ...(usableAi ? { ai: { verdict: usableAi.verdict, evidence: usableAi.evidence, model: usableAi.model ?? null } } : {}),
       ...(liveHuman ? { human: { verdict: human!.verdict, evidence: humanNote } } : {}),
     };
-    if (liveHuman && human && (!ai || human.createdAt >= ai.createdAt)) {
+    if (liveHuman && human && (!usableAi || human.createdAt >= usableAi.createdAt)) {
       verdicts[statement.id] = human.verdict;
       evidence[statement.id] = humanNote;
       sources[statement.id] = 'human';
       continue;
     }
-    if (ai) {
-      if ((ai.basis as { statementHash?: string }).statementHash !== hash) {
-        sources[statement.id] = 'stale';
-        continue;
-      }
-      if (ai.error) {
-        errors[statement.id] = ai.error;
-        sources[statement.id] = 'ai';
-        continue;
-      }
-      verdicts[statement.id] = ai.verdict;
-      evidence[statement.id] = ai.evidence;
+    if (usableAi) {
+      verdicts[statement.id] = usableAi.verdict;
+      evidence[statement.id] = usableAi.evidence;
       sources[statement.id] = 'ai';
+      continue;
     }
+    if (failedAi?.error) {
+      errors[statement.id] = failedAi.error;
+      sources[statement.id] = 'ai';
+      continue;
+    }
+    if (staleAi) sources[statement.id] = 'stale';
   }
   const gate = goldenGate({ answers: verdicts, errors, statementIds: statements.map((s) => s.id) });
   return { verdicts, evidence, errors, sources, audit, gate, ratings };

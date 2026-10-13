@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { calibrations, goldenRatings, jobs, reviewFeedback, rubrics, stabilityAcceptances, stabilityFlipNotes, stabilityPasses } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 
-/** Latest plus two previous runs. Older rows are deleted. */
+/** Latest plus two previous ratings per statement and source. Older rows are deleted. */
 export const KEEP = 3;
 
 export async function pruneRubricVersions(database: DbOrTx, submissionId: string): Promise<number> {
@@ -17,18 +17,20 @@ export async function pruneRubricVersions(database: DbOrTx, submissionId: string
 export async function pruneGoldenRatings(database: DbOrTx, rubricId: string): Promise<number> {
   const rows = await database.select().from(goldenRatings).where(eq(goldenRatings.rubricId, rubricId)).orderBy(desc(goldenRatings.createdAt));
   const keep = new Set<string>();
-  const aiJobs: string[] = [];
-  const humanByStatement = new Map<string, number>();
+  const seenByStatement = new Map<string, { usable: number; failed: number; human: number }>();
   for (const row of rows) {
-    if (row.source === 'ai') {
-      const job = row.jobId ?? row.id;
-      if (!aiJobs.includes(job)) aiJobs.push(job);
-      if (aiJobs.indexOf(job) < KEEP) keep.add(row.id);
+    const seen = seenByStatement.get(row.statementId) ?? { usable: 0, failed: 0, human: 0 };
+    if (row.source === 'human') {
+      if (seen.human < KEEP) keep.add(row.id);
+      seen.human += 1;
+    } else if (row.error || (row.verdict !== true && row.verdict !== false)) {
+      if (seen.failed < 1) keep.add(row.id);
+      seen.failed += 1;
     } else {
-      const seen = humanByStatement.get(row.statementId) ?? 0;
-      if (seen < KEEP) keep.add(row.id);
-      humanByStatement.set(row.statementId, seen + 1);
+      if (seen.usable < KEEP) keep.add(row.id);
+      seen.usable += 1;
     }
+    seenByStatement.set(row.statementId, seen);
   }
   const drop = rows.filter((r) => !keep.has(r.id)).map((r) => r.id);
   if (drop.length) await database.delete(goldenRatings).where(inArray(goldenRatings.id, drop));
