@@ -20,6 +20,12 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).not.toMatch(/not a worst-case guess/i);
   });
 
+  it('keeps seat ids in the JSON id field, not in the evidence sentence', () => {
+    expect(AUTORATER_SYSTEM).not.toMatch(/Refer to seats as Seat 8 in evidence/i);
+    expect(AUTORATER_SYSTEM).toMatch(/Put the seat id only in "id"/i);
+    expect(AUTORATER_SYSTEM).toMatch(/do not write Seat 8/i);
+  });
+
   it('does not treat a failed inventory as a clean file', () => {
     expect(inventoryPromptBlock([])).toBeNull();
     expect(inventoryPromptBlock(['logo is stretched'])).toMatch(/logo is stretched/);

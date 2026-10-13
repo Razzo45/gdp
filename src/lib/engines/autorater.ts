@@ -146,7 +146,7 @@ Rules:
   defect to make No.
 
 Return JSON only: { "verdicts": [ { "id": "<seat id like s008>", "answer": "Yes" | "No", "evidence": "<one sentence>" } ] }
-Include every seat id exactly once. Refer to seats as Seat 8 in evidence, never as a UUID.`;
+Include every seat id exactly once. Put the seat id only in "id". Evidence describes the deliverable only — do not write Seat 8, s008, or a UUID in the evidence sentence.`;
 
 export function inventoryPromptBlock(inventory: string[]): string | null {
   if (inventory.includes(INVENTORY_UNAVAILABLE)) {
@@ -198,7 +198,7 @@ function matchStatement(batch: GradeStatement[], verdictId: string): GradeStatem
 }
 
 function statementsBlock(statements: GradeStatement[]): string {
-  return `STATEMENTS TO GRADE (${statements.length}):\n${statements.map((s) => `[${promptId(s)}] ${s.seat ? `Seat ${s.seat} · ` : ''}(${s.tag}) ${s.statement}`).join('\n')}`;
+  return `STATEMENTS TO GRADE (${statements.length}):\n${statements.map((s) => `[${promptId(s)}] (${s.tag}) ${s.statement}`).join('\n')}`;
 }
 
 /** One inventory per distinct observation, reused across Stability passes. */
