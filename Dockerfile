@@ -20,9 +20,11 @@ RUN npm run build && npm prune --omit=dev && npm install tsx --omit=dev --no-sav
 FROM node:22-bookworm-slim AS runner
 # LibreOffice is part of this image (not a laptop install). Impress renders
 # PPTX → PDF; the app then stills each page for Golden / Stability.
+# ffmpeg ships ffprobe for video/audio FILE FACTS (duration, codec, Rec.709).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    ffmpeg \
     fonts-dejavu-core \
     fonts-liberation \
     fonts-noto-core \
@@ -30,13 +32,15 @@ RUN apt-get update \
     libreoffice-impress \
     libreoffice-writer \
   && rm -rf /var/lib/apt/lists/* \
-  && /usr/bin/soffice --version
+  && /usr/bin/soffice --version \
+  && /usr/bin/ffprobe -version
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
 ENV LIBREOFFICE_BIN=/usr/bin/soffice
+ENV FFPROBE_BIN=/usr/bin/ffprobe
 
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./

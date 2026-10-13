@@ -11,6 +11,7 @@ import { derivatives } from '@/db/schema';
 import { sha256 } from '@/domain/fingerprint';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
+import { describeFileFacts, describeFileFactsAsync } from './fileFacts';
 import { mediaPart, type MediaPart } from './gemini';
 import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
@@ -66,7 +67,7 @@ export function preparedFromUri(input: { id: string; name: string; mime: string;
     sha256: input.sha256,
     bytes: input.size,
     delivery: 'native',
-    parts: [{ kind: 'uri', mime: input.mime, data: input.uri, label }],
+    parts: [`${label}\n${describeFileFacts({ name: input.name, mime: input.mime, size: input.size })}`, { kind: 'uri', mime: input.mime, data: input.uri, label }],
   };
 }
 
@@ -109,17 +110,19 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
     return { ...base, delivery: 'unsupported', parts: [`${label}\nNOT ATTACHED: file is ${mb(file.bytes.byteLength)} MB, above the ${mb(MAX_FILE_BYTES)} MB grading limit.`] };
   }
 
+  const facts = await describeFileFactsAsync({ name: file.name, mime, size: file.bytes.byteLength, bytes: file.bytes });
+
   if (mime === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
     const text = Buffer.from(file.bytes).toString('utf8');
-    return { ...base, delivery: 'text_digest', parts: [`${label}\nSVG markup (not rasterised):\n${clip(text)}\n--- end ---`] };
+    return { ...base, delivery: 'text_digest', parts: [`${label}\n${facts}\nSVG markup (not rasterised):\n${clip(text)}\n--- end ---`] };
   }
 
   if (NATIVE_MIME.test(mime)) {
     if (mime.startsWith('text/')) {
       const text = Buffer.from(file.bytes).toString('utf8');
-      return { ...base, delivery: 'native', parts: [`${label}\n--- file text (${text.length} chars) ---\n${clip(text)}\n--- end ---`] };
+      return { ...base, delivery: 'native', parts: [`${label}\n${facts}\n--- file text (${text.length} chars) ---\n${clip(text)}\n--- end ---`] };
     }
-    return { ...base, delivery: 'native', parts: [await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label })] };
+    return { ...base, delivery: 'native', parts: [`${label}\n${facts}`, await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label })] };
   }
 
   const office = officePreviewKind(file.name, mime);
@@ -146,7 +149,8 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
     renderedPdf(file.bytes, base.sha256, kind),
     ooxml ? officeTextDigest(file.bytes, kind).catch(() => '') : Promise.resolve(''),
   ]);
-  const facts = manifest ? `\nFILE FACTS (read from the ${kind.toUpperCase()} package, authoritative for format statements):\n${manifest}` : '';
+  const measured = describeFileFacts({ name: file.name, mime: file.mime, size: file.bytes.byteLength });
+  const facts = `\n${measured}${manifest ? `\n${manifest}` : ''}`;
   const digest = text ? `\n--- text digest ---\n${clip(text)}\n--- end ---` : '';
 
   if (pdf) {
@@ -335,7 +339,7 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
     .filter((e) => !e.dir && !/(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)/.test(e.name) && !e.name.split('/').pop()?.startsWith('.'))
     .sort((a, b) => a.name.localeCompare(b.name));
   const listing = entries.map((e) => `  - ${e.name}`).join('\n');
-  const parts: (string | MediaPart)[] = [`${label}\nARCHIVE with ${entries.length} file(s):\n${listing || '  (empty)'}`];
+  const parts: (string | MediaPart)[] = [`${label}\n${describeFileFacts({ name: file.name, mime: file.mime, size: file.bytes.byteLength })}\nARCHIVE with ${entries.length} file(s):\n${listing || '  (empty)'}`];
   let budget = MAX_ARCHIVE_BYTES;
   for (const entry of entries.slice(0, MAX_ARCHIVE_ENTRIES)) {
     const bytes = new Uint8Array(await entry.async('uint8array'));

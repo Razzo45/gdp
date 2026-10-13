@@ -67,9 +67,10 @@ creators. "AI output" files to upload are written to `fixtures/ai-outputs/`;
 they differ from the Golden on purpose (missing slides, wrong figure, other
 font, hidden draft slide, typo). `curl -X POST localhost:4010/emit/<id>` sends
 a signed webhook; `localhost:4010/state` shows what was saved and moved by a
-push. On Cloud Run the image already ships LibreOffice; the worker renders each
-PPTX slide to a still. This laptop does not need soffice. `/api/health` returns
-`renderer: true` when the image is wired.
+push. On Cloud Run the image already ships LibreOffice and ffmpeg/ffprobe; the
+worker renders each PPTX slide to a still and measures video/audio for FILE
+FACTS. This laptop does not need soffice. `/api/health` returns `renderer: true`
+when the image is wired.
 
 ## GCP
 

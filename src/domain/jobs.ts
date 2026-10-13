@@ -27,7 +27,7 @@ export function isStatementLane(payload: Record<string, unknown> | null | undefi
   return ids.length > 0 && ids.length <= STATEMENT_LANE_MAX;
 }
 
-/** Images, AV, PDF can ride a live Files API URI. Office/zip still need bytes for FILE FACTS. */
+/** Images, AV, PDF can ride a live Files API URI. Size facts still come from the stored byte count. Office/zip still need bytes for package FILE FACTS. */
 export function canReuseStagedUri(mime: string, name: string): boolean {
   const clean = mime.toLowerCase().split(';')[0]?.trim() ?? '';
   if (/^(image\/|video\/|audio\/|application\/pdf)/.test(clean)) return true;

@@ -134,9 +134,10 @@ Rules:
   statement. An unavailable inventory is not proof the file is clean.
 - A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
   that file; answer No and say why.
-- FILE FACTS are authoritative for slide/page counts, packaged aspect, fonts and
+- FILE FACTS are authoritative for file size, slide/page counts, packaged aspect, fonts and
   embedded-media presence. They do not decide picture-level letterboxing, colour
-  look, or spoken content.
+  look, or spoken content. Use the FILE FACTS file-size line for any MB/KB size claim;
+  do not infer size from page count or how "lightweight" the document looks.
 - Embedded images attached after NO FULL-PAGE RENDER may support photograph/asset
   claims. For slide-level layout, spacing or typography you cannot see, the
   statement does not hold.

@@ -16,6 +16,7 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).toMatch(/close-enough|probable Yes is a No|paraphrase is a No/i);
     expect(AUTORATER_SYSTEM).toMatch(/letterbox|pillarbox/i);
     expect(AUTORATER_SYSTEM).toMatch(/container|metadata/i);
+    expect(AUTORATER_SYSTEM).toMatch(/file size/i);
     expect(AUTORATER_SYSTEM).not.toMatch(/not a worst-case guess/i);
   });
 
