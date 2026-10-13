@@ -3,6 +3,7 @@ import { sha256 } from '@/domain/fingerprint';
 import type { Db } from '@/db/types';
 import type { Actor } from '@/lib/auth/permissions';
 import { beginAiOutput, finishAiOutput, listAiOutputs } from '@/lib/services/files';
+import { submissionView } from '@/lib/services/view';
 import { ServiceError } from '@/lib/services/errors';
 import { claimSeat } from '@/lib/services/submissions';
 import { putObject } from '@/lib/storage';
@@ -11,6 +12,7 @@ import { makeSubmission, makeUser, testDb } from './helpers/db';
 let handle: Awaited<ReturnType<typeof testDb>>;
 let db: Db;
 let creator: Actor;
+let admin: Actor;
 
 beforeAll(async () => {
   process.env['AUTH_MODE'] = 'local';
@@ -19,10 +21,20 @@ beforeAll(async () => {
   handle = await testDb();
   db = handle.db;
   creator = await makeUser(db, 'upload@example.com', ['rubric_creator']);
+  admin = await makeUser(db, 'admin-upload@example.com', ['admin']);
 });
 afterAll(async () => handle.close());
 
 describe('signed AI output upload', () => {
+  it('lets an admin attach AI output while the rubric seat is empty', async () => {
+    const submission = await makeSubmission(db);
+    expect(submission.rubricAssigneeId).toBeNull();
+    const view = await submissionView(admin, submission.id);
+    expect(view.can.changeAiOutputs).toBe(true);
+    const ticket = await beginAiOutput(admin, submission.id, { name: 'ai.pdf', mime: 'application/pdf', size: 4 });
+    expect(ticket.path.startsWith(`ai-outputs/${submission.id}/`)).toBe(true);
+  });
+
   it('records a file after the object lands, and refuses a missing object', async () => {
     const submission = await makeSubmission(db);
     await claimSeat(creator, submission.id, 'rubric');

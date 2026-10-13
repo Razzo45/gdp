@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRunStability, canSeeSubmission, claimableSeat, taskLens, type Actor } from '@/lib/auth/permissions';
+import { canChangeAiOutputs, canRunStability, canSeeSubmission, claimableSeat, taskLens, type Actor } from '@/lib/auth/permissions';
 
 const seat = { rubricAssigneeId: 'ana', reviewerId: null as string | null, stage: 'rubric' };
 
@@ -29,6 +29,14 @@ describe('taskLens', () => {
     expect(canSeeSubmission(actor(['rubric_creator'], 'ana'), seat)).toBe(true);
     expect(canSeeSubmission(actor(['rubric_creator'], 'other'), seat)).toBe(false);
     expect(claimableSeat(actor(['reviewer'], 'rita'), { rubricAssigneeId: 'ana', reviewerId: null, stage: 'review' })).toBe('review');
+  });
+
+  it('lets admin attach AI output on an unassigned rubric task', () => {
+    const open = { rubricAssigneeId: null, reviewerId: null, stage: 'rubric' };
+    expect(canChangeAiOutputs(actor(['admin'], 'a'), open)).toBe(true);
+    expect(canChangeAiOutputs(actor(['pm'], 'p'), open)).toBe(true);
+    expect(canChangeAiOutputs(actor(['rubric_creator'], 'ana'), open)).toBe(false);
+    expect(canChangeAiOutputs(actor(['admin'], 'a'), { ...open, stage: 'review' })).toBe(false);
   });
 
   it('lets admin and the seated rubric creator run Stability at any stage', () => {

@@ -61,6 +61,12 @@ export function canRunStability(actor: Actor, seat: SeatView): boolean {
   return holdsRubricSeat(actor, seat);
 }
 
+/** AI output files may change only in rubric. Empty seat is fine for admin/PM. */
+export function canChangeAiOutputs(actor: Actor, seat: SeatView): boolean {
+  if (seat.stage !== 'rubric') return false;
+  return holdsRubricSeat(actor, seat);
+}
+
 /** May this actor perform the human AI evaluation and decide the review? */
 export function holdsReviewSeat(actor: Actor, seat: SeatView): boolean {
   return isController(actor) || (seat.reviewerId !== null && seat.reviewerId === actor.id);

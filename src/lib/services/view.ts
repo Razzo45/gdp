@@ -6,7 +6,7 @@ import { jobs, profiles, submissionEvents, type AiOutputFile, type Job, type Rub
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
-import { canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { canChangeAiOutputs, canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
 import { parseCatalogReturn } from '@/domain/catalogReturn';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
@@ -57,6 +57,7 @@ export interface SubmissionView {
     seeStability: boolean;
     seeHandoff: boolean;
     seeAiUpload: boolean;
+    changeAiOutputs: boolean;
     seeScoreGolden: boolean;
     seeScoreStability: boolean;
   };
@@ -201,6 +202,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       seeStability: lens !== 'reviewer',
       seeHandoff: lens === 'controller',
       seeAiUpload: lens !== 'reviewer',
+      changeAiOutputs: canChangeAiOutputs(actor, submission),
       seeScoreGolden: lens !== 'reviewer',
       seeScoreStability: lens !== 'reviewer',
     },

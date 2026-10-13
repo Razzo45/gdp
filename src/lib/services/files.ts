@@ -7,7 +7,7 @@ import { aiOutputFiles, catalogFileCache, submissions, type AiOutputFile, type S
 import type { DbOrTx } from '@/db/types';
 import { sha256 } from '@/domain/fingerprint';
 import { canReuseStagedUri, catalogIdentityMatch } from '@/domain/jobs';
-import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
+import { canChangeAiOutputs, type Actor } from '@/lib/auth/permissions';
 import { downloadCatalogFile, probeCatalogFile } from '@/lib/catalog/client';
 import type { CatalogFile } from '@/lib/catalog/types';
 import { lookupActiveFileUri, rememberGeminiUse } from '@/lib/ai/gemini';
@@ -242,8 +242,10 @@ export async function finishAiOutput(
 export async function removeAiOutput(actor: Actor, submissionId: string, fileId: string): Promise<void> {
   const database = db();
   const submission = await getSubmission(database, submissionId);
-  if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
-  if (submission.stage !== 'rubric') throw conflict('AI output files can only change while the task is in the rubric stage.');
+  if (!canChangeAiOutputs(actor, submission)) {
+    if (submission.stage !== 'rubric') throw conflict('AI output files can only change while the task is in the rubric stage.');
+    throw forbidden('You do not hold the rubric seat on this task.');
+  }
   const row = (await database.select().from(aiOutputFiles).where(and(eq(aiOutputFiles.id, fileId), eq(aiOutputFiles.submissionId, submissionId), isNull(aiOutputFiles.removedAt))).limit(1))[0];
   if (!row) throw notFound('The AI output file');
   await database.update(aiOutputFiles).set({ removedAt: new Date().toISOString() }).where(eq(aiOutputFiles.id, fileId));
@@ -258,8 +260,10 @@ function cleanName(raw: string): string {
 async function assertAiOutputMutable(actor: Actor, submissionId: string) {
   const database = db();
   const submission = await getSubmission(database, submissionId);
-  if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
-  if (submission.stage !== 'rubric') throw conflict('AI output files can only change while the task is in the rubric stage; the reviewer and stability must see the same files.');
+  if (!canChangeAiOutputs(actor, submission)) {
+    if (submission.stage !== 'rubric') throw conflict('AI output files can only change while the task is in the rubric stage; the reviewer and stability must see the same files.');
+    throw forbidden('You do not hold the rubric seat on this task.');
+  }
   const existing = await listAiOutputs(database, submissionId);
   if (existing.length >= MAX_AI_OUTPUTS) throw invalid(`At most ${MAX_AI_OUTPUTS} AI output files per task.`);
   return { database, submission };

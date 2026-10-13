@@ -14,7 +14,7 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
   const fileInput = useRef<HTMLInputElement>(null);
   const s = view.submission;
   const reviewer = view.can.lens === 'reviewer';
-  const uploadsAllowed = view.can.seeAiUpload && (view.can.editRubric || view.can.control) && view.aiOutputs.length < 8;
+  const uploadsAllowed = view.can.seeAiUpload && view.can.changeAiOutputs && view.aiOutputs.length < 8;
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -104,7 +104,6 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
           ))}
         </dl>
       )}
-
       {view.can.seeGoldenFiles && (
         <div className="border-t border-line py-4">
           <h3 className="mb-1 text-base font-bold">Golden files</h3>
