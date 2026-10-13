@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { assemble, type BankRow } from '@/domain/assemble';
 import { fingerprint, sourceFingerprint, statementHash, stripVolatileUrl } from '@/domain/fingerprint';
@@ -5,7 +6,7 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, quotaSpread, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
@@ -107,6 +108,8 @@ describe('rubric tags and quotas', () => {
       'The deliverable is an editable PowerPoint presentation in PPTX format.',
       'The presentation contains exactly 18 slides.',
       'The PPTX has the required fonts embedded.',
+      'The video playback frame rate is exactly 25 frames per second.',
+      'The delivered video has an encoding frame size of 3840 x 2160 pixels.',
     ];
     for (const statement of format) {
       expect(guessTag(statement)).toBe('Format/File');
@@ -118,6 +121,41 @@ describe('rubric tags and quotas', () => {
     expect(familyOfStatement('The presentation uses the Manrope font family for its slide text.', 'Content - Exact')).toBe('visual');
     expect(familyOfStatement('The title slide names the client review.', 'Content - Exact')).toBe('content');
     expect(correctTag('The deck cites 18 community partners.', 'Content - Exact')).toBe('Content - Exact');
+  });
+
+  it('does not treat a cited source filename as a Format claim', () => {
+    expect(guessTag('The Westbridge Health logo displayed in the video matches the asset provided in Westbridge_logo_blue_grey.png or Westbridge_logo_white.png rather than a modified or third-party logo mark.')).toBe(
+      'Visual - Branding',
+    );
+    expect(guessTag('The employee access card shown in close-up matches the card visual design provided in Access Card Image.png.')).toBe('Visual - Branding');
+    expect(guessTag('The fonts used for on-screen titles match the primary typefaces specified in Westbridge_Health_Brand_Guidelines.pptx.')).toBe('Visual - Branding');
+    expect(guessTag('The graphic background elements and title card plates utilize colors from the palette defined in Westbridge_Health_Brand_Guidelines.pptx.')).toBe(
+      'Visual - Branding',
+    );
+    expect(guessTag("Darren's spoken dialogue matches the presenter lines specified in the approved script Westbridge_Access_Card_Script.docx.")).toBe('Content - Semantics');
+    expect(guessTag('The aspect ratio of the Westbridge Health logo graphic remains unwarped and unstretched throughout its screen presence.')).toBe('Visual - Branding');
+    expect(guessTag('Each Instagram carousel image is delivered as a .png file.')).toBe('Format/File');
+    expect(
+      guessTag(
+        'The Angeli Vineyards crest logo shown in the opening of the delivered video matches the black-and-white line-art design from the input asset files',
+      ),
+    ).toBe('Visual - Branding');
+    expect(
+      correctTag(
+        'The Angeli Vineyards crest logo shown in the opening of the delivered video matches the black-and-white line-art design from the input asset files',
+        'Visual - Layout',
+      ),
+    ).toBe('Visual - Layout');
+    expect(reseatImportedTag('The Westbridge Health logo matches Westbridge_logo_white.png.', 'Format/File')).toBe('Visual - Branding');
+    expect(reseatImportedTag('The presentation contains exactly 18 slides.', 'Format/File')).toBe('Format/File');
+  });
+
+  it('seats Ali\'s Angeli Vineyards rubric as 5 Format, 15 Content, 30 Visual', () => {
+    const statements = JSON.parse(readFileSync(new URL('./fixtures/1704127a-statements.json', import.meta.url), 'utf8')) as string[];
+    expect(statements).toHaveLength(50);
+    const counts = { format: 0, content: 0, visual: 0 };
+    for (const statement of statements) counts[familyOfTag(guessTag(statement))] += 1;
+    expect(counts).toEqual({ format: 5, content: 15, visual: 30 });
   });
   it('splits 50 as 5/15/30 and sums to the target', () => {
     expect(familyQuotas(50)).toEqual({ format: 5, content: 15, visual: 30 });
@@ -132,6 +170,51 @@ describe('rubric tags and quotas', () => {
     expect(familyOfStatement(statement, 'Visual - Layout')).toBe('format');
     expect(seatedFamily({ family: 'visual', tag: 'Visual - Layout', statement })).toBe('visual');
     expect(seatedFamily({ tag: 'Visual - Layout', statement })).toBe('visual');
+  });
+
+  it('moves surplus Format seats onto 5/15/30 and leaves seated Content and Visual', () => {
+    const format = [
+      'The Westbridge Health logo displayed in the video matches the asset provided in Westbridge_logo_blue_grey.png.',
+      'The employee access card shown in close-up matches the card visual design provided in Access Card Image.png.',
+      'The fonts used for on-screen titles match the primary typefaces specified in Westbridge_Health_Brand_Guidelines.pptx.',
+      'The graphic background elements utilize colors from the palette defined in Westbridge_Health_Brand_Guidelines.pptx.',
+      'The aspect ratio of the Westbridge Health logo graphic remains unwarped.',
+      'The B-roll footage features workplace environments consistent with the architectural style in Location_1.jpg.',
+      'The presenter featured on camera matches the individual shown in Darren - Headshot.jpg.',
+      'The presenter Darren is visually identifiable based on the reference headshot in File 4 (Darren - Headshot.jpg).',
+      "Darren's spoken dialogue matches the presenter lines specified in the approved script.",
+      'The audio track contains the supplied corporate music track mixed underneath the spoken dialogue.',
+      'The background music track is mixed underneath the spoken dialogue throughout the video.',
+      'All required on-screen title cards sit within standard 16:9 title-safe boundaries.',
+      'The video playback frame rate is exactly 25 frames per second.',
+      'The delivered video has an encoding frame size of 3840 x 2160 pixels.',
+      'The video presentation maintains a 16:9 widescreen aspect ratio throughout its duration.',
+      'The close-up visual of the access card matches the design shown in Access Card Image.png including Westbridge logo and card layout.',
+      'The Westbridge logo maintains its correct aspect ratio without stretching.',
+    ].map((statement, index) => ({ id: `f${index}`, family: 'format' as const, tag: 'Format/File', statement }));
+    const content = Array.from({ length: 14 }, (_, index) => ({
+      id: `c${index}`,
+      family: 'content' as const,
+      tag: 'Content - Semantics',
+      statement: `The script states employee rule number ${index + 1} clearly.`,
+    }));
+    const visual = Array.from({ length: 19 }, (_, index) => ({
+      id: `v${index}`,
+      family: 'visual' as const,
+      tag: 'Visual - Layout',
+      statement: `The title card placement stays aligned on beat ${index + 1}.`,
+    }));
+    const result = reseatOverQuotaFamilies([...format, ...content, ...visual]);
+    expect(countFamilies(result)).toEqual({ format: 5, content: 15, visual: 30 });
+    for (const row of result) {
+      if (row.id.startsWith('c')) expect(row.family).toBe('content');
+      if (row.id.startsWith('v')) expect(row.family).toBe('visual');
+    }
+    expect(result.find((row) => row.statement.includes('25 frames'))?.family).toBe('format');
+    expect(result.find((row) => row.statement.includes('3840'))?.family).toBe('format');
+    expect(result.find((row) => row.statement.includes('16:9 widescreen'))?.family).toBe('format');
+    expect(result.find((row) => row.statement.includes('Westbridge Health logo displayed'))?.family).toBe('visual');
+    expect(result.find((row) => row.statement.includes('spoken dialogue matches'))?.family).toBe('content');
   });
 });
 

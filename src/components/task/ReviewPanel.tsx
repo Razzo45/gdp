@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, calibrationInBand } from '@/domain/gates';
+import { createDraftPersist } from '@/domain/draftPersist';
 import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
@@ -27,15 +28,56 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const answersRef = useRef(answers);
+  const evidenceRef = useRef(evidence);
+  const viewRef = useRef(view);
+  const notifyRef = useRef(notify);
+  answersRef.current = answers;
+  evidenceRef.current = evidence;
+  viewRef.current = view;
+  notifyRef.current = notify;
+
+  const persist = useRef(
+    createDraftPersist(
+      () => ({ answers: answersRef.current, evidence: evidenceRef.current }),
+      async (draft) => {
+        try {
+          await api(`/api/submissions/${viewRef.current.submission.id}/review/calibration`, {
+            method: 'PUT',
+            body: { ...draft, submit: false },
+          });
+          setDirty(false);
+        } catch (error) {
+          notifyRef.current(error instanceof Error ? error.message : 'Save failed.', 'bad');
+          throw error;
+        }
+      },
+      1200,
+    ),
+  ).current;
 
   useEffect(() => {
     if (!dirty && latest) {
       setAnswers(latest.answers);
       setEvidence(latest.evidence);
+      answersRef.current = latest.answers;
+      evidenceRef.current = latest.evidence;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latest?.id]);
+
+  useEffect(() => {
+    const flush = () => {
+      void persist.flush().catch((error) => {
+        notifyRef.current(error instanceof Error ? error.message : 'Save failed.', 'bad');
+      });
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+  }, [persist]);
 
   const score = useMemo(() => {
     const yes = statements.filter((s) => answers[s.id] === true).length;
@@ -44,30 +86,33 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
     return { yes, no, answered: yes + no, thin, percent: yes + no === 0 ? null : (yes / (yes + no)) * 100 };
   }, [answers, evidence, statements]);
 
-  async function persistDraft() {
-    if (timer.current) {
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
-    if (!dirty) return;
-    await api(`/api/submissions/${view.submission.id}/review/calibration`, { method: 'PUT', body: { answers, evidence, submit: false } });
-    setDirty(false);
-  }
-
   const schedule = () => {
     setDirty(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      void persistDraft().catch((error) => {
-        notify(error instanceof Error ? error.message : 'Save failed.', 'bad');
-      });
-    }, 1200);
+    persist.schedule();
   };
+
+  function grade(id: string, yes: boolean) {
+    setAnswers((current) => {
+      const next = { ...current, [id]: yes };
+      answersRef.current = next;
+      return next;
+    });
+    schedule();
+  }
+
+  function note(id: string, text: string) {
+    setEvidence((current) => {
+      const next = { ...current, [id]: text };
+      evidenceRef.current = next;
+      return next;
+    });
+    schedule();
+  }
 
   async function decide(decision: 'approved' | 'changes_requested') {
     setBusy(decision);
     try {
-      await persistDraft();
+      await persist.flush();
       await api(`/api/submissions/${view.submission.id}/review/decision`, { body: { decision, feedback } });
       notify(decision === 'approved' ? 'Approved. The creator can now run stability.' : 'Sent back to the creator.');
       await refresh();
@@ -125,8 +170,7 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
                 const next = gradeFromKey(event);
                 if (next === null) return;
                 event.preventDefault();
-                setAnswers((a) => ({ ...a, [s.id]: next }));
-                schedule();
+                grade(s.id, next);
                 focusNextSeat(event.currentTarget);
               }}
             >
@@ -145,7 +189,7 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
                           className="input mt-1 min-h-24"
                           placeholder="Add the observation supporting this grade"
                           value={evidence[s.id] ?? ''}
-                          onChange={(e) => { setEvidence((ev) => ({ ...ev, [s.id]: e.target.value })); schedule(); }}
+                          onChange={(e) => note(s.id, e.target.value)}
                         />
                       </label>
                     ) : (
@@ -162,8 +206,7 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
                       clearable={false}
                       onChange={(value) => {
                         if (value === null) return;
-                        setAnswers((a) => ({ ...a, [s.id]: value }));
-                        schedule();
+                        grade(s.id, value);
                       }}
                     />
                     <span className="text-xs tabular-nums text-muted" title="Percentage share of the rubric score">{formatWeight(weights[seats.get(s.id)! - 1] ?? 0)}</span>
