@@ -1,9 +1,10 @@
 import './env';
+import { inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { submissions } from '@/db/schema';
+import { profiles, submissions } from '@/db/schema';
 import { workStateOf } from '@/domain/workState';
 import { env } from '@/lib/env';
-import { writeWorkStatusSheetMany } from '@/lib/sheets/workStatus';
+import { ownerNameFor, writeWorkStatusSheetMany } from '@/lib/sheets/workStatus';
 
 /**
  * First populate of Status Rubrics after cutover.
@@ -24,11 +25,20 @@ async function main(): Promise<void> {
       catalogSubmissionId: submissions.catalogSubmissionId,
       stage: submissions.stage,
       rubricAssigneeId: submissions.rubricAssigneeId,
+      reviewerId: submissions.reviewerId,
       reviewStatus: submissions.reviewStatus,
       handoffStatus: submissions.handoffStatus,
     })
     .from(submissions);
-  const items = rows.map((row) => ({ catalogSubmissionId: row.catalogSubmissionId, state: workStateOf(row) }));
+  const personIds = [...new Set(rows.flatMap((row) => [row.rubricAssigneeId, row.reviewerId]).filter((id): id is string => Boolean(id)))];
+  const people = personIds.length
+    ? await db().select({ id: profiles.id, displayName: profiles.displayName, email: profiles.email }).from(profiles).where(inArray(profiles.id, personIds))
+    : [];
+  const names = new Map(people.map((row) => [row.id, (row.displayName ?? row.email).trim()]));
+  const items = rows.map((row) => {
+    const state = workStateOf(row);
+    return { catalogSubmissionId: row.catalogSubmissionId, state, ownerName: ownerNameFor(state, row, names) };
+  });
   console.log(`GDP tasks ${items.length}${apply ? '' : ' (dry-run)'}`);
   if (!apply) {
     console.log('Re-run with --apply after cutover to write Status Rubrics on rows that already have a Task ID.');

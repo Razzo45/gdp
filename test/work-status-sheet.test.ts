@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   catalogIdFromTaskCell,
   findStatusRubricsUpdate,
+  findWorkStatusSheetUpdates,
+  shouldPushWorkSheet,
   shouldPushWorkStatus,
   WORK_STATUS_SHEET_LABELS,
+  workStatusSheetOwner,
 } from '@/domain/workStatusSheet';
 
 describe('shouldPushWorkStatus', () => {
@@ -74,6 +77,55 @@ describe('findStatusRubricsUpdate', () => {
       columnIndex: 13,
       value: 'Unassigned',
     });
+  });
+});
+
+describe('workStatusSheetOwner', () => {
+  it('writes the platform name for the person who currently owns the piece', () => {
+    expect(workStatusSheetOwner('preparing', { rubric: 'Pietro', reviewer: null })).toBe('Pietro');
+    expect(workStatusSheetOwner('in_review', { rubric: 'Pietro', reviewer: 'Jakub' })).toBe('Jakub');
+    expect(workStatusSheetOwner('unassigned', { rubric: null, reviewer: null })).toBe('Rubric Team');
+    expect(workStatusSheetOwner('in_review', { rubric: 'Pietro', reviewer: null })).toBe('Review Team');
+  });
+});
+
+describe('shouldPushWorkSheet', () => {
+  it('writes when the owner changes even if the board status does not', () => {
+    expect(shouldPushWorkSheet({ state: 'preparing', owner: 'Pietro' }, { state: 'preparing', owner: 'Vahan' })).toBe(true);
+    expect(shouldPushWorkSheet({ state: 'preparing', owner: 'Pietro' }, { state: 'preparing', owner: 'Pietro' })).toBe(false);
+  });
+});
+
+describe('findWorkStatusSheetUpdates', () => {
+  const id = '80bba201-5c64-4ec4-a347-e549d3de26b1';
+  const live = [
+    [
+      'Job Title',
+      'Industry',
+      'Deliverable Details',
+      'Details',
+      'PM',
+      'Task Writer',
+      'Deadline',
+      'Golden Output Creator',
+      'Expert',
+      'Task ID',
+      'Distractor?',
+      'Wirestock status',
+      'Date sent to Rubrics',
+      'Staus Rubrics Team',
+      'Assignee',
+      'Date Returned',
+      'Task ID short',
+    ],
+    ['', '', '', '', '', '', '', '', '', id, '', 'K.Golden Output Approved', '', 'Preparing', 'Rubric Team', '', '80bba201'],
+  ];
+
+  it('patches Status Rubrics and Assignee on the matching row', () => {
+    expect(findWorkStatusSheetUpdates(live, id, { status: 'In review', owner: 'Jakub' })).toEqual([
+      { rowIndex: 1, columnIndex: 13, value: 'In review' },
+      { rowIndex: 1, columnIndex: 14, value: 'Jakub' },
+    ]);
   });
 });
 

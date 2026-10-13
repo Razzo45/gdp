@@ -14,8 +14,28 @@ export function shouldPushWorkStatus(previous: WorkState | null, next: WorkState
   return previous !== next;
 }
 
+export function shouldPushWorkSheet(
+  previous: { state: WorkState; owner: string } | null,
+  next: { state: WorkState; owner: string },
+): boolean {
+  if (!previous) return true;
+  return previous.state !== next.state || previous.owner !== next.owner;
+}
+
 export function workStatusSheetLabel(state: WorkState): string {
   return WORK_STATE_LABEL[state];
+}
+
+/** Same owner the PM board shows: reviewer while In review, else the rubric holder. */
+export function workStatusSheetOwner(
+  state: WorkState,
+  names: { rubric: string | null; reviewer: string | null },
+): string {
+  if (state === 'in_review') return names.reviewer?.trim() || 'Review Team';
+  const rubric = names.rubric?.trim() || '';
+  if (rubric) return rubric;
+  if (state === 'unassigned' || state === 'preparing' || state === 'review_returned') return 'Rubric Team';
+  return '';
 }
 
 export interface StatusRubricsUpdate {
@@ -38,22 +58,47 @@ function headerIndex(header: readonly string[], ...needles: string[]): number {
   return names.findIndex((name) => needles.some((needle) => name.includes(needle) && name !== 'task id short'));
 }
 
-/** First sheet row that already has this Catalog UUID. Never invents a row. */
-export function findStatusRubricsUpdate(
-  rows: readonly (readonly string[])[],
-  catalogId: string,
-  value: string,
-): StatusRubricsUpdate | null {
+function locateTaskRow(rows: readonly (readonly string[])[], catalogId: string): {
+  rowIndex: number;
+  statusCol: number;
+  ownerCol: number;
+} | null {
   const id = catalogIdFromTaskCell(catalogId);
   if (!id || rows.length === 0) return null;
   const header = rows[0] ?? [];
   const taskCol = headerIndex(header, 'task id');
   const statusCol = headerIndex(header, 'status rubrics', 'staus rubrics', 'staus rubrics team');
   if (taskCol < 0 || statusCol < 0) return null;
+  const ownerCol = headerIndex(header, 'assignee', 'owner');
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
     if (catalogIdFromTaskCell(rows[rowIndex]?.[taskCol]) === id) {
-      return { rowIndex, columnIndex: statusCol, value };
+      return { rowIndex, statusCol, ownerCol };
     }
   }
   return null;
+}
+
+/** First sheet row that already has this Catalog UUID. Never invents a row. */
+export function findStatusRubricsUpdate(
+  rows: readonly (readonly string[])[],
+  catalogId: string,
+  value: string,
+): StatusRubricsUpdate | null {
+  const found = locateTaskRow(rows, catalogId);
+  if (!found) return null;
+  return { rowIndex: found.rowIndex, columnIndex: found.statusCol, value };
+}
+
+export function findWorkStatusSheetUpdates(
+  rows: readonly (readonly string[])[],
+  catalogId: string,
+  values: { status: string; owner?: string | null },
+): StatusRubricsUpdate[] {
+  const found = locateTaskRow(rows, catalogId);
+  if (!found) return [];
+  const patches: StatusRubricsUpdate[] = [{ rowIndex: found.rowIndex, columnIndex: found.statusCol, value: values.status }];
+  if (found.ownerCol >= 0 && values.owner != null && values.owner !== '') {
+    patches.push({ rowIndex: found.rowIndex, columnIndex: found.ownerCol, value: values.owner });
+  }
+  return patches;
 }
