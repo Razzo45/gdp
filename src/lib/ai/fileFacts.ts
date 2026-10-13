@@ -119,7 +119,7 @@ function imageFacts(bytes: Uint8Array): string[] {
   if (bytes.byteLength >= 10 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
     const width = bytes[6]! | (bytes[7]! << 8);
     const height = bytes[8]! | (bytes[9]! << 8);
-    return [`Dimensions: ${width} x ${height}`, `Colour: ${bytes[2] === 0x38 ? 'GIF89a' : 'GIF87a'}`];
+    return [`Dimensions: ${width} x ${height}`, `Colour: ${bytes[4] === 0x39 ? 'GIF89a' : 'GIF87a'}`];
   }
   if (bytes.byteLength >= 30 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
     const tag = String.fromCharCode(bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!);
@@ -267,7 +267,7 @@ function fpsOf(rate?: string): string | null {
 function runFfprobe(path: string): Promise<string | null> {
   return new Promise((resolve) => {
     const bin = process.env['FFPROBE_BIN']?.trim() || 'ffprobe';
-    const child = spawn(bin, ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', path], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(/* turbopackIgnore: true */ bin, ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', path], { stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];
     child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
     const timer = setTimeout(() => {
