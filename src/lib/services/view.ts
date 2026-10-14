@@ -2,6 +2,7 @@ import 'server-only';
 
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
+import { isUserInteraction } from '@/domain/dashboard';
 import { helperResultOf, type HelperResult } from '@/domain/helper';
 import { jobs as jobsTable, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
@@ -191,7 +192,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
             error: helperJob.error,
             result: helperResultOf(helperJob.result),
           },
-    events: lens === 'controller' ? events.map((e) => ({ id: e.id, actorId: e.actorId, action: e.action, detail: e.detail, createdAt: e.createdAt })) : [],
+    events: lens === 'controller' ? events.filter(isUserInteraction).map((e) => ({ id: e.id, actorId: e.actorId, action: e.action, detail: e.detail, createdAt: e.createdAt })) : [],
     catalogReturnNote: parseCatalogReturn(submission.catalogReturn)?.note ?? null,
     can: {
       lens,

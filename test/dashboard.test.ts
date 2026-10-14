@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countIn, isStuckStatus, latestEntryAt, statusEnteredAt, teamSignal } from '@/domain/dashboard';
+import { countIn, isStuckStatus, isUserInteraction, lastUserInteractionAt, latestEntryAt, statusEnteredAt, teamSignal } from '@/domain/dashboard';
 
 const now = Date.parse('2026-10-10T12:00:00.000Z');
 
@@ -40,6 +40,21 @@ describe('stuck status', () => {
     expect(entered).toBe('2026-10-09T11:00:00.000Z');
     expect(isStuckStatus('2026-10-09T13:00:00.000Z', now)).toBe(false);
     expect(isStuckStatus('2026-10-09T12:00:00.000Z', now)).toBe(true);
+  });
+});
+
+describe('lastUserInteractionAt', () => {
+  it('ignores catalog refreshes and actor-less syncs', () => {
+    expect(
+      lastUserInteractionAt([
+        { action: 'upstream_changed', actorId: 'user-1', createdAt: '2026-10-10T12:00:00.000Z' },
+        { action: 'landed', actorId: null, createdAt: '2026-10-10T11:00:00.000Z' },
+        { action: 'rubric_claimed', actorId: 'user-1', createdAt: '2026-10-09T11:00:00.000Z' },
+        { action: 'sent_to_review', actorId: 'user-1', createdAt: '2026-10-09T15:00:00.000Z' },
+      ]),
+    ).toBe('2026-10-09T15:00:00.000Z');
+    expect(isUserInteraction({ action: 'upstream_changed', actorId: 'user-1' })).toBe(false);
+    expect(isUserInteraction({ action: 'rubric_claimed', actorId: null })).toBe(false);
   });
 });
 

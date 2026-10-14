@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, desc, eq, getTableColumns, ilike, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '@/db/client';
 import { profiles, submissionEvents, submissions, userRoles, watchedProjects, type Submission } from '@/db/schema';
@@ -10,6 +10,7 @@ import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { catalogReturnFromSync, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
+import { isUserInteraction } from '@/domain/dashboard';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
 import { heroDeliverableFromSource, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
@@ -177,6 +178,8 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
   blinded: boolean;
   /** Why-text when Catalog sent this task back. */
   catalogReturnNote: string | null;
+  /** Latest person doing work — not a Catalog refresh / last_seen_at sync. */
+  lastInteractionAt: string | null;
 }
 
 const { source: _omittedSource, ...submissionListColumns } = getTableColumns(submissions);
@@ -256,24 +259,44 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     const names = readProjectStatuses(watchByProject.get(row.projectId)?.project ?? null);
     return names?.statuses.find((item) => item.id === row.statusId)?.name ?? null;
   };
-  return rows.map((r) => {
-    const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
-    const blinded = !isController(actor) && !held;
-    const workState = workStateOf(r.submission);
-    const watch = watchByProject.get(r.submission.projectId);
-    return {
-      ...r.submission,
-      ...(blinded ? { catalogSubmissionId: '', projectId: '' } : {}),
-      rubricAssigneeName: blinded ? null : (r.rubricAssigneeName ?? null),
-      reviewerName: blinded ? null : (r.reviewerName ?? null),
-      workState,
-      catalogStatusName: blinded ? null : statusName(r.submission),
-      projectName: projectDisplayName(watch),
-      heroDeliverable: heroDeliverableFromSource(r.source),
-      blinded,
-      catalogReturnNote: blinded ? null : (parseCatalogReturn(r.submission.catalogReturn)?.note ?? null),
-    };
-  });
+  const latestById = new Map<string, string>();
+  if (rows.length > 0) {
+    const events = await database
+      .select({
+        submissionId: submissionEvents.submissionId,
+        actorId: submissionEvents.actorId,
+        action: submissionEvents.action,
+        createdAt: submissionEvents.createdAt,
+      })
+      .from(submissionEvents)
+      .where(inArray(submissionEvents.submissionId, rows.map((row) => row.submission.id)));
+    for (const event of events) {
+      if (!isUserInteraction(event)) continue;
+      const have = latestById.get(event.submissionId);
+      if (!have || event.createdAt > have) latestById.set(event.submissionId, event.createdAt);
+    }
+  }
+  return rows
+    .map((r) => {
+      const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
+      const blinded = !isController(actor) && !held;
+      const workState = workStateOf(r.submission);
+      const watch = watchByProject.get(r.submission.projectId);
+      return {
+        ...r.submission,
+        ...(blinded ? { catalogSubmissionId: '', projectId: '' } : {}),
+        rubricAssigneeName: blinded ? null : (r.rubricAssigneeName ?? null),
+        reviewerName: blinded ? null : (r.reviewerName ?? null),
+        workState,
+        catalogStatusName: blinded ? null : statusName(r.submission),
+        projectName: projectDisplayName(watch),
+        heroDeliverable: heroDeliverableFromSource(r.source),
+        blinded,
+        catalogReturnNote: blinded ? null : (parseCatalogReturn(r.submission.catalogReturn)?.note ?? null),
+        lastInteractionAt: latestById.get(r.submission.id) ?? r.submission.lastClaimedAt,
+      };
+    })
+    .toSorted((left, right) => (right.lastInteractionAt ?? '').localeCompare(left.lastInteractionAt ?? ''));
 }
 
 /** Offer a blind claim without loading the brief. */

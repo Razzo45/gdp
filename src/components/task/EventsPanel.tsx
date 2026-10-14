@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import { isUserInteraction } from '@/domain/dashboard';
 import { formatDate } from '../format';
 import type { PanelProps } from './TaskWorkspace';
 
 export function EventsPanel({ view }: PanelProps) {
   const [open, setOpen] = useState(false);
-  const events = view.events;
+  const events = view.events.filter(isUserInteraction);
   if (events.length === 0) return null;
   return (
     <section className="card">

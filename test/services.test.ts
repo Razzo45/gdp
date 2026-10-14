@@ -13,7 +13,7 @@ import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
-import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, releaseSeat } from '@/lib/services/submissions';
+import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, recordEvent, releaseSeat } from '@/lib/services/submissions';
 import { makeSubmission, makeUser, seatedRubricInputs, testDb, yesAnswers } from './helpers/db';
 
 let handle: Awaited<ReturnType<typeof testDb>>;
@@ -114,6 +114,17 @@ describe('seats', () => {
     const mine = await listSubmissions(creator2, { mine: true });
     expect(mine.map((x) => x.id)).toContain(s.id);
     expect(mine.find((x) => x.id === s.id)!.rubricAssigneeName).toBe('c2');
+  });
+
+  it('lists last interaction from a person, not a Catalog refresh', async () => {
+    const s = await makeSubmission(db);
+    const claimed = await claimSeat(creator, s.id, 'rubric');
+    await recordEvent(db, s.id, creator.id, 'upstream_changed', { statusId: 'sync' });
+    await db.update(submissions).set({ lastSeenAt: '2026-12-01T00:00:00.000Z' }).where(eq(submissions.id, s.id));
+    const row = (await listSubmissions(pm)).find((r) => r.id === s.id);
+    expect(row?.lastInteractionAt).toBeTruthy();
+    expect(row?.lastInteractionAt).not.toBe('2026-12-01T00:00:00.000Z');
+    expect(Date.parse(row!.lastInteractionAt!)).toBeLessThanOrEqual(Date.parse(claimed.lastClaimedAt!) + 2_000);
   });
 
   it('assigns review only to the review team while the task is in review', async () => {

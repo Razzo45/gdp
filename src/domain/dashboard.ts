@@ -18,6 +18,25 @@ export const STATE_ENTRY_ACTIONS: Record<WorkState, readonly string[]> = {
 
 export const TEAM_ACTIVITY_ACTIONS = ['sent_to_review', 'review_approved', 'review_changes_requested', 'pushed_to_catalog'] as const;
 
+/** Catalog sync / refresh. A person opening or polling a task is not work. */
+const REFRESH_EVENT_ACTIONS = new Set(['upstream_changed']);
+
+export function isUserInteraction(event: { action: string; actorId?: string | null }): boolean {
+  if (!event.actorId) return false;
+  return !REFRESH_EVENT_ACTIONS.has(event.action);
+}
+
+export function lastUserInteractionAt(
+  events: readonly { action: string; actorId?: string | null; createdAt: string }[],
+): string | null {
+  let latest: string | null = null;
+  for (const event of events) {
+    if (!isUserInteraction(event)) continue;
+    if (!latest || event.createdAt > latest) latest = event.createdAt;
+  }
+  return latest;
+}
+
 export type TeamSignal = 'attention' | 'moving' | 'quiet';
 
 export function periodStarts(now = Date.now()): { day: number; week: number; month: number } {

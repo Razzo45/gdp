@@ -129,7 +129,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                       Evidence JSON
                     </a>
                   ) : (
-                    <TimeAgo iso={s.lastSeenAt} />
+                    {s.lastInteractionAt ? <TimeAgo iso={s.lastInteractionAt} /> : <span className="text-quiet">—</span>}
                   )}
                 </td>
               </tr>
