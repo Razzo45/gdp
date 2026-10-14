@@ -128,8 +128,10 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                     >
                       Evidence JSON
                     </a>
+                  ) : s.lastInteractionAt ? (
+                    <TimeAgo iso={s.lastInteractionAt} />
                   ) : (
-                    {s.lastInteractionAt ? <TimeAgo iso={s.lastInteractionAt} /> : <span className="text-quiet">—</span>}
+                    <span className="text-quiet">—</span>
                   )}
                 </td>
               </tr>
