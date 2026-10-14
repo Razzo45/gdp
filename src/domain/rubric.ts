@@ -163,6 +163,12 @@ export function correctTag(statement: string, suggested?: string): RubricTag {
   return inferred;
 }
 
+/** Creator seating wins. Factory/import still use correctTag to steal Format from untrusted tags. */
+export function honorSeatedTag(statement: string, chosen?: string): RubricTag {
+  if (chosen && isRubricTag(chosen)) return chosen;
+  return correctTag(statement);
+}
+
 export function familyOfStatement(statement: string, tag?: string): Family {
   return familyOfTag(correctTag(statement, tag));
 }
@@ -292,8 +298,7 @@ export interface SeatRef {
 }
 
 function familyOfSeat(row: SeatRef): Family {
-  if (row.statement) return familyOfStatement(row.statement, row.tag);
-  return row.family ?? familyOfTag(row.tag ?? '');
+  return seatedFamily(row);
 }
 
 /** Format 1–5, Content 6–20, Visual 21–50 — one number the whole team shares. */

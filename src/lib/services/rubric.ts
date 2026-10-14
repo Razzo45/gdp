@@ -12,7 +12,7 @@ import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
 import { lintStatement, nearDuplicate, type LintResult } from '@/domain/lint';
 import { applyInferredScope } from '@/domain/fileScope';
 import { preparePastedSeats } from '@/domain/import';
-import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, honorSeatedTag, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import type { FactoryStatement } from '@/lib/engines/rubricFactory';
 import { conflict, forbidden, invalid, notFound } from './errors';
@@ -106,7 +106,7 @@ export async function saveStatements(actor: Actor, submissionId: string, request
 
     for (const raw of request.upserts) {
       const input = scopeFromCatalog(raw, submission);
-      const tag = correctTag(input.statement, input.tag);
+      const tag = honorSeatedTag(input.statement, input.tag);
       const lint = lintStatement({ statement: input.statement, tag });
       const family = familyOfTag(tag);
       if (input.id && byId.has(input.id)) {
@@ -476,5 +476,5 @@ export async function replaceRubricFromPaste(
 }
 
 export function toGradeStatement(s: RubricStatement, seat?: number) {
-  return { id: s.id, seat, statement: s.statement, tag: correctTag(s.statement, s.tag), scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile };
+  return { id: s.id, seat, statement: s.statement, tag: honorSeatedTag(s.statement, s.tag), scope: s.scope, inputFileIds: s.inputFileIds, outputFile: s.outputFile };
 }

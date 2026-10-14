@@ -9,7 +9,7 @@ import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, correctTag, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { FAMILY_LABELS, MAX_ROUGH_CHARS, honorSeatedTag, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { PasteRubricModal } from './PasteRubricModal';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
@@ -672,7 +672,7 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
                 onChange={(e) => {
                   const statement = e.target.value;
                   const files = catalogFiles(view);
-                  const patch: Partial<Draft> = { statement, tag: correctTag(statement, d.tag) };
+                  const patch: Partial<Draft> = { statement, tag: honorSeatedTag(statement, d.tag) };
                   if (!d.outputFile) Object.assign(patch, inferFileScope(statement, files.inputs, files.goldens));
                   onUpdate(d.id, patch);
                 }}

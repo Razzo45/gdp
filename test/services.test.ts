@@ -383,6 +383,33 @@ describe('rubric quota seats', () => {
     expect(replaced.statements.some((row) => row.statement.includes('carousel images') && row.family === 'visual')).toBe(true);
   });
 
+  it('keeps a creator-seated Visual row on save when the edited wording looks like Format', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const first = await saveStatements(creator, s.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
+    const visual = first.statements.find((row) => row.family === 'visual');
+    expect(visual).toBeTruthy();
+    const saved = await saveStatements(creator, s.id, {
+      revision: first.revision,
+      upserts: [
+        {
+          id: visual!.id,
+          tag: 'Visual - Layout',
+          statement:
+            'Every text box, chart, shape, and image across all slides in the delivered presentation is positioned entirely within the 16:9 slide canvas boundaries without extending beyond the slide edges.',
+          notes: visual!.notes,
+          scope: visual!.scope,
+          inputFileIds: visual!.inputFileIds,
+          outputFile: visual!.outputFile,
+        },
+      ],
+      deletes: [],
+    });
+    const row = saved.statements.find((item) => item.id === visual!.id);
+    expect(row).toMatchObject({ family: 'visual', tag: 'Visual - Layout' });
+    expect(countFamilies(saved.statements)).toEqual({ format: 5, content: 15, visual: 30 });
+  });
+
   it('refuses Golden autorate until the 5 / 15 / 30 spread is seated', async () => {
     const s = await makeSubmission(db);
     await claimSeat(creator, s.id, 'rubric');

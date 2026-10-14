@@ -6,7 +6,7 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, honorSeatedTag, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
@@ -186,6 +186,21 @@ describe('rubric tags and quotas', () => {
     expect(familyOfStatement(statement, 'Visual - Layout')).toBe('format');
     expect(seatedFamily({ family: 'visual', tag: 'Visual - Layout', statement })).toBe('visual');
     expect(seatedFamily({ tag: 'Visual - Layout', statement })).toBe('visual');
+  });
+
+  it('lets a creator-chosen seat win over the Format guess the paste helper would make', () => {
+    const statement =
+      'Every text box, chart, shape, and image across all slides in the delivered presentation is positioned entirely within the 16:9 slide canvas boundaries without extending beyond the slide edges.';
+    expect(guessTag(statement)).toBe('Format/File');
+    expect(correctTag(statement, 'Visual - Layout')).toBe('Format/File');
+    expect(honorSeatedTag(statement, 'Visual - Layout')).toBe('Visual - Layout');
+    expect(honorSeatedTag(statement, 'not-a-tag')).toBe('Format/File');
+    const ordered = seatsInDisplayOrder([
+      { id: 'fmt', family: 'format' as const, tag: 'Format/File', position: 1, statement: 'The delivered presentation uses a 16:9 page size.' },
+      { id: 'late-fmt', family: 'format' as const, tag: 'Format/File', position: 50, statement: 'The pack is a PPTX file.' },
+      { id: 'vis', family: 'visual' as const, tag: 'Visual - Layout', position: 47, statement },
+    ]);
+    expect(ordered.map((row) => row.id)).toEqual(['fmt', 'late-fmt', 'vis']);
   });
 
   it('moves surplus Format seats onto 5/15/30 and leaves seated Content and Visual', () => {

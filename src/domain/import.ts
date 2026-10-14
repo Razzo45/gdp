@@ -1,6 +1,6 @@
 import { describeNamedFiles } from './fileLanguage';
 import { toAffirmativeStatement } from './lint';
-import { correctTag, familyOfTag, guessTag, isRubricTag, RUBRIC_TAGS, type Family, type RubricTag } from './rubric';
+import { correctTag, familyOfTag, guessTag, honorSeatedTag, isRubricTag, RUBRIC_TAGS, type Family, type RubricTag } from './rubric';
 
 /**
  * Parses pasted text into statements. One per line; an optional leading
@@ -48,7 +48,7 @@ export function parsePasteLines(text: string): { rows: { statement: string; sugg
 export function preparePastedSeats(rows: readonly { tag: RubricTag; statement: string }[]): { statement: string; tag: RubricTag; family: Family }[] {
   return rows.map((row) => {
     const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
-    const tag = isRubricTag(row.tag) ? row.tag : correctTag(statement);
+    const tag = honorSeatedTag(statement, row.tag);
     return { statement, tag, family: familyOfTag(tag) };
   });
 }
