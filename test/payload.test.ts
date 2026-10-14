@@ -54,6 +54,31 @@ describe('429 stand-in', () => {
     expect(ai.verdicts[0]?.answer).toBe(mockGradeYes(id, true) ? 'Yes' : 'No');
   });
 
+  it('drafts helper repair and add rows from stuck seats', () => {
+    const Drafts = z.object({
+      drafts: z.array(
+        z.object({
+          seatId: z.string().optional(),
+          statement: z.string(),
+          tag: z.string(),
+          grounding: z.string(),
+          evidence: z.string().optional(),
+        }),
+      ),
+    });
+    const drafted = standInValue({
+      system: 'You help a rubric writer after seats are already classified. Do not classify.',
+      parts: [
+        '--- Task prompt ---\nDeliver a 16:9 staff deck. The spoken narration states that Westbridge is introducing a new employee access card.',
+        '--- Seats that need work ---\n11111111-1111-4111-8111-111111111111 | Visual - Layout | golden_fail | Golden No\nType sits past the edge.',
+      ],
+      schema: Drafts,
+    });
+    expect(drafted.drafts.some((row) => row.seatId === '11111111-1111-4111-8111-111111111111')).toBe(true);
+    expect(drafted.drafts.some((row) => row.grounding === 'prompt' && !row.seatId)).toBe(true);
+    expect(drafted.drafts.every((row) => row.statement.length > 8 && !row.statement.includes('?'))).toBe(true);
+  });
+
   it('expands a seed into lint-shaped rows', () => {
     const rows = standInValue({
       system: 'You are a senior practitioner turning ONE expert human seed into GRANULAR Precise Boolean Yes/No rows. Emit UP TO 3 rows',

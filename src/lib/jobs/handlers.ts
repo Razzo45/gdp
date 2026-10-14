@@ -13,7 +13,9 @@ import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autor
 import type { Seed } from '@/lib/engines/rubricFactory';
 import { GeminiError } from '@/lib/ai/gemini';
 import { listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
-import { currentRubric, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
+import { analyzeHelperSeats, packHelperResult, promptFromFields, type HelperSeatInput } from '@/domain/helper';
+import { currentRubric, goldenState, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
+import { latestGroup } from '@/lib/services/stability';
 import { pruneFinishedJobs, pruneGoldenRatings, pruneStabilityGroups } from '@/lib/services/retention';
 import { submittedCalibration } from '@/lib/services/review';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
@@ -51,7 +53,7 @@ export function isRetryable(error: unknown): boolean {
 function taskContextOf(submission: { source: unknown; title: string }): { prompt: string; context: string; gradeContext: string; inputNames: string } {
   const read = readSource(submission as Parameters<typeof readSource>[0]);
   if (!read) return { prompt: '', context: submission.title, gradeContext: submission.title, inputNames: '' };
-  const prompt = read.fields.find((f) => /prompt|instruction|brief/i.test(f.key))?.text ?? '';
+  const prompt = promptFromFields(read.fields);
   const context = read.fields.map((f) => `${f.label}: ${f.text}`).join('\n');
   const inputNames = read.inputFiles.map((f) => `${f.name} (id ${f.id})`).join(', ');
   const gradeContext = [`Project: ${read.projectName}`.trim(), `Task: ${submission.title}`].filter((line) => line.length > 8).join('\n');
@@ -382,10 +384,55 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   return { groupId, scores: passes.map((p) => p.scorePercent), errors: passes.map((p) => Object.keys(p.errors).length) };
 }
 
+async function runRubricHelper(ctx: JobContext): Promise<Record<string, unknown>> {
+  const { job } = ctx;
+  const database = db();
+  const submission = await getSubmission(database, job.submissionId);
+  const rubric = await currentRubric(database, job.submissionId);
+  if (!rubric) throw new ServiceError(409, 'Write a rubric first.');
+  const statements = await statementsOf(database, rubric.id);
+  const [golden, passes] = await Promise.all([
+    goldenState(database, rubric.id, statements),
+    latestGroup(database, rubric.id),
+  ]);
+  const { prompt } = taskContextOf(submission);
+  const source = readSource(submission);
+  const inputRoles = (source?.inputFiles ?? []).flatMap((file) => (file.role ? [file.role] : []));
+  await ctx.tick({ done: 0, total: 3, note: 'Classifying seats from Golden and this AI pack' });
+  const seats: HelperSeatInput[] = statements.map((row) => ({
+    id: row.id,
+    statement: row.statement,
+    tag: row.tag,
+    family: row.family,
+    claimKey: row.claimKey,
+    golden: golden.verdicts[row.id] ?? null,
+    goldenEvidence: golden.evidence[row.id],
+    stability: passes.map((pass) => pass.answers[row.id] ?? null),
+    stabilityEvidence: passes.map((pass) => pass.evidence[row.id] ?? ''),
+  }));
+  const analyzed = analyzeHelperSeats(seats, { prompt });
+  await ctx.tick({ done: 1, total: 3, note: `Keep ${analyzed.filter((row) => row.action === 'keep').length} · act ${analyzed.filter((row) => row.action !== 'keep').length}` });
+  const { draftHelperRows } = await import('@/lib/engines/helperDraft');
+  const drafts = await draftHelperRows({ prompt, inputRoles, seats: analyzed, signal: ctx.signal });
+  await ctx.tick({ done: 2, total: 3, note: 'Packing Keep / Act / Add' });
+  const packed = packHelperResult({ seats, prompt, inputRoles, drafts });
+  await recordEvent(database, job.submissionId, job.createdBy, 'helper_finished', {
+    jobId: job.id,
+    keep: packed.mix.keep,
+    act: packed.mix.act,
+    add: packed.mix.add,
+    predictedGolden: packed.mix.predictedGolden,
+    predictedCalibration: packed.mix.predictedCalibration,
+    ready: packed.mix.ready,
+  });
+  return packed as unknown as Record<string, unknown>;
+}
+
 export const HANDLERS: Record<Job['kind'], (ctx: JobContext) => Promise<Record<string, unknown>>> = {
   rubric_generate: runRubricGenerate,
   golden_autorate: runGoldenAutorate,
   stability_run: runStability,
+  rubric_helper: runRubricHelper,
 };
 
 export { heartbeat };

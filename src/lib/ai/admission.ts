@@ -25,7 +25,7 @@
  * Pure in-memory and dependency free so it is unit-testable with fake time.
  */
 
-export type RequestClass = 'interactive' | 'background';
+export type RequestClass = 'interactive' | 'background' | 'idle';
 
 export interface AdmissionOptions {
   /** Model name for inference, or 'files' for the Files API. */
@@ -43,6 +43,8 @@ export interface AdmissionConfig {
   ownerCeiling: number;
   filesCeiling: number;
   agingMs: number;
+  /** How long an idle helper ping waits before it can age past other idle work. */
+  idleAgingMs: number;
   /** Successes required for +1. */
   increaseAfter: number;
   maxCooldownMs: number;
@@ -131,6 +133,7 @@ export class AdaptiveAdmission {
       ownerCeiling: clamp(config.ownerCeiling ?? ceiling, 1, 256),
       filesCeiling: clamp(config.filesCeiling ?? 8, 1, 32),
       agingMs: Math.max(0, config.agingMs ?? 5_000),
+      idleAgingMs: Math.max(0, config.idleAgingMs ?? 60_000),
       increaseAfter: Math.max(1, config.increaseAfter ?? 4),
       maxCooldownMs: Math.max(1_000, config.maxCooldownMs ?? 90_000),
     };
@@ -303,6 +306,12 @@ export class AdaptiveAdmission {
     if (lane === FILES) return laneActive < this.laneTarget(lane) && now >= this.filesCooldownUntil;
     if (now < this.cooldownUntil) return false;
     if (this.active >= this.target || laneActive >= this.laneTarget(lane)) return false;
+    const higherWaiting = this.waiting.some((w) => w.requestClass !== 'idle' && w.lane !== FILES);
+    if (requestClass === 'idle') {
+      if (higherWaiting) return false;
+      // Idle never takes the reserved interactive slot.
+      if (this.target > 1 && this.active >= this.target - 1) return false;
+    }
     // Reserve a slot only when a creator is actually waiting on a button.
     if (requestClass === 'background' && this.target > 1 && this.activeBackground >= this.target - 1) {
       const interactiveWaiting = this.waiting.some((w) => w.requestClass === 'interactive' && w.lane !== FILES);
@@ -377,8 +386,10 @@ export class AdaptiveAdmission {
       if (eligible.length === 0) return;
       const interactive = eligible.filter((w) => w.requestClass === 'interactive');
       const aged = eligible.filter((w) => w.requestClass === 'background' && now - w.enqueuedAt >= this.cfg.agingMs);
-      // Interactive first; then background that has waited; then anything.
-      const pool = interactive.length ? interactive : aged.length ? aged : eligible;
+      const higher = eligible.filter((w) => w.requestClass !== 'idle');
+      const agedIdle = eligible.filter((w) => w.requestClass === 'idle' && now - w.enqueuedAt >= this.cfg.idleAgingMs);
+      // Interactive first; then aged background; then any non-idle; idle last.
+      const pool = interactive.length ? interactive : aged.length ? aged : higher.length ? higher : agedIdle.length ? agedIdle : eligible;
       const owners = new Set(pool.map((w) => w.owner));
       for (const o of owners) if (!this.ownerRing.includes(o)) this.ownerRing.push(o);
       const start = this.ownerCursor === null ? 0 : (this.ownerRing.indexOf(this.ownerCursor) + 1) % this.ownerRing.length;

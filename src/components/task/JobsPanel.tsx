@@ -6,7 +6,7 @@ import { TimeAgo } from '../TimeAgo';
 import { Pill } from '../StageBadge';
 import type { PanelProps } from './TaskWorkspace';
 
-const KIND: Record<string, string> = { rubric_generate: 'Rubric generation', golden_autorate: 'Golden autorate', stability_run: 'Stability run' };
+const KIND: Record<string, string> = { rubric_generate: 'Rubric generation', golden_autorate: 'Golden autorate', stability_run: 'Stability run', rubric_helper: 'Need a hand' };
 
 interface Traffic {
   target: number;

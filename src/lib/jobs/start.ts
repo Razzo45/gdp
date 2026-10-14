@@ -9,8 +9,9 @@ import { assertGeminiConfigured } from '@/lib/ai/gemini';
 import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/errors';
 import { listAiOutputs } from '@/lib/services/files';
 import { submittedCalibration } from '@/lib/services/review';
-import { currentRubric, ensureCurrentRubric, statementsOf } from '@/lib/services/rubric';
-import { stabilityView } from '@/lib/services/stability';
+import { helperGate, promptFromFields } from '@/domain/helper';
+import { currentRubric, ensureCurrentRubric, goldenState, statementsOf } from '@/lib/services/rubric';
+import { latestGroup, stabilityView } from '@/lib/services/stability';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
 
@@ -119,6 +120,44 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
         deadlineMs: 2 * 60 * 60_000,
       });
       await recordEvent(tx, submissionId, actor.id, 'stability_started', { jobId: job.id, groupId: (job.payload as { groupId: string }).groupId, calibrationGateActive: official });
+      return job;
+    }),
+  );
+}
+
+export async function startHelper(actor: Actor, submissionId: string, input: { requestId: string }): Promise<Job> {
+  return wrap(() =>
+    db().transaction(async (tx) => {
+      const submission = await getSubmission(tx, submissionId);
+      if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task. Claim or ask a PM to assign it.');
+      if (submission.stage !== 'rubric') throw conflict(`The helper is available while the task is in rubric, not ${submission.stage}.`);
+      const rubric = await currentRubric(tx, submissionId);
+      const statements = rubric ? await statementsOf(tx, rubric.id) : [];
+      const golden = rubric ? await goldenState(tx, rubric.id, statements) : null;
+      const passes = rubric ? await latestGroup(tx, rubric.id) : [];
+      const outputs = await listAiOutputs(tx, submissionId);
+      const source = readSource(submission);
+      const prompt = promptFromFields(source?.fields ?? []);
+      const gate = helperGate({
+        hasRubric: statements.length > 0,
+        goldenGraded: statements.filter((row) => golden?.verdicts[row.id] === true || golden?.verdicts[row.id] === false).length,
+        stabilityPasses: passes.length,
+        hasAi: outputs.length > 0,
+        hasPrompt: prompt.trim().length > 0,
+      });
+      if (!gate.ok) throw conflict(gate.missing.join(' '));
+      requireGemini();
+      const files = [...(source?.goldenFiles ?? []), ...(source?.inputFiles ?? []), ...outputs];
+      const job = await enqueue(tx, {
+        kind: 'rubric_helper',
+        submissionId,
+        rubricId: rubric!.id,
+        requestId: input.requestId,
+        payload: { ...heavyFlag(files) },
+        createdBy: actor.id,
+        deadlineMs: 30 * 60_000,
+      });
+      await recordEvent(tx, submissionId, actor.id, 'helper_started', { jobId: job.id });
       return job;
     }),
   );

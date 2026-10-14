@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Script from 'next/script';
 import { Poppins } from 'next/font/google';
+import { ThemeSync } from '@/components/ThemeToggle';
 import './globals.css';
 
 const poppins = Poppins({
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <Script id="gdp-theme" strategy="beforeInteractive">
           {`try{var t=localStorage.getItem('gdp-theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}`}
         </Script>
+        <ThemeSync />
         {children}
       </body>
     </html>

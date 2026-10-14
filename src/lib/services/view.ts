@@ -1,8 +1,9 @@
 import 'server-only';
 
-import { desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { jobs, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
+import { helperResultOf, type HelperResult } from '@/domain/helper';
+import { jobs as jobsTable, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
@@ -35,6 +36,7 @@ export interface SubmissionView {
   stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
+  helper: { id: string; status: Job['status']; progress: Job['progress']; error: string | null; result: HelperResult | null } | null;
   events: Pick<SubmissionEvent, 'id' | 'actorId' | 'action' | 'detail' | 'createdAt'>[];
   catalogReturnNote: string | null;
   can: {
@@ -67,12 +69,19 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
   const database = db();
   const submission = await getVisibleSubmission(database, actor, id);
   const source = readSource(submission);
-  const [rubric, aiOutputs, feedback, jobs, events] = await Promise.all([
+  const [rubric, aiOutputs, feedback, jobs, events, helperJob] = await Promise.all([
     currentRubric(database, id),
     listAiOutputs(database, id),
     feedbackFor(database, id),
     jobsForSubmission(database, id, 12),
     database.select().from(submissionEvents).where(eq(submissionEvents.submissionId, id)).orderBy(desc(submissionEvents.createdAt)).limit(40),
+    database
+      .select()
+      .from(jobsTable)
+      .where(and(eq(jobsTable.submissionId, id), eq(jobsTable.kind, 'rubric_helper')))
+      .orderBy(desc(jobsTable.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null),
   ]);
   const statements = rubric ? await statementsOf(database, rubric.id) : [];
   const [golden, latest, submitted, stability] = rubric
@@ -172,6 +181,16 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       finishedAt: j.finishedAt,
       attempts: j.attempts,
     })),
+    helper:
+      lens === 'reviewer' || !helperJob
+        ? null
+        : {
+            id: helperJob.id,
+            status: helperJob.status,
+            progress: helperJob.progress,
+            error: helperJob.error,
+            result: helperResultOf(helperJob.result),
+          },
     events: lens === 'controller' ? events.map((e) => ({ id: e.id, actorId: e.actorId, action: e.action, detail: e.detail, createdAt: e.createdAt })) : [],
     catalogReturnNote: parseCatalogReturn(submission.catalogReturn)?.note ?? null,
     can: {
@@ -222,10 +241,10 @@ export async function submissionPulse(actor: Actor, id: string): Promise<StatusP
     lens === 'reviewer'
       ? []
       : await database
-          .select({ id: jobs.id, status: jobs.status, progress: jobs.progress })
-          .from(jobs)
-          .where(eq(jobs.submissionId, id))
-          .orderBy(desc(jobs.createdAt))
+          .select({ id: jobsTable.id, status: jobsTable.status, progress: jobsTable.progress })
+          .from(jobsTable)
+          .where(eq(jobsTable.submissionId, id))
+          .orderBy(desc(jobsTable.createdAt))
           .limit(12);
   const visible = lens === 'rubric' ? raw.filter((job) => job.status === 'queued' || job.status === 'running') : raw;
   return {

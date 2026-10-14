@@ -122,8 +122,9 @@ export const geminiConfigured = (): boolean => {
   return Boolean(key) && !/^sk[-_]/.test(key);
 };
 
-/** Throws if the key is missing or is an OpenAI key. */
+/** Throws if the key is missing or is an OpenAI key. GEMINI_MOCK=1 may run without a key. */
 export function assertGeminiConfigured(): void {
+  if (geminiMockEnabled()) return;
   geminiApiKey();
 }
 
@@ -258,6 +259,14 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
   const useStructured = input.structured !== false;
   const jsonSchema = useStructured ? z.toJSONSchema(input.schema, { target: 'draft-7', unrepresentable: 'any' }) : undefined;
   const contents = [{ role: 'user' as const, parts: toParts(input.parts) }];
+  if (geminiMockEnabled() && !geminiConfigured()) {
+    return {
+      value: standInValue(input),
+      model,
+      usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 },
+      durationMs: 0,
+    };
+  }
   const attempts = 5;
   let useSchema = useStructured;
   const ctx = modelContext();

@@ -40,7 +40,7 @@ export const HANDOFF_STATUSES = [
 ] as const;
 export type HandoffStatus = (typeof HANDOFF_STATUSES)[number];
 
-export const JOB_KINDS = ['rubric_generate', 'golden_autorate', 'stability_run'] as const;
+export const JOB_KINDS = ['rubric_generate', 'golden_autorate', 'stability_run', 'rubric_helper'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export const JOB_STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled'] as const;

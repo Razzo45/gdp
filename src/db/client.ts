@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { createRequire } from 'node:module';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
@@ -13,11 +14,18 @@ export function setDbForTests(db: Db | null): void {
   override = db;
 }
 
+function sandboxDb(url: string): Db {
+  // Lazy so Railway never loads @electric-sql/pglite. Local `dev:helper` only.
+  const require = createRequire(__filename);
+  return (require('./pglite') as typeof import('./pglite')).openPglite(url);
+}
+
 export function db(): Db {
   if (override) return override;
   if (cached) return cached.db;
   const url = process.env['DATABASE_URL'];
   if (!url) throw new Error('DATABASE_URL is not configured.');
+  if (url.startsWith('pglite:')) return sandboxDb(url);
   // Supabase's pooler (transaction mode) does not support prepared statements.
   const sql = postgres(url, {
     prepare: false,

@@ -59,7 +59,12 @@ export function startWorker(options: WorkerOptions = {}): WorkerHandle {
       const result = await withModelContext(
         {
           ownerId: `task:${job.submissionId}`,
-          requestClass: job.kind === 'golden_autorate' && isStatementLane(job.payload) ? 'interactive' : 'background',
+          requestClass:
+            job.kind === 'rubric_helper'
+              ? 'idle'
+              : job.kind === 'golden_autorate' && isStatementLane(job.payload)
+                ? 'interactive'
+                : 'background',
           signal: abort.signal,
         },
         () => HANDLERS[job.kind]({ job, leaseToken, tick, signal: abort.signal }),

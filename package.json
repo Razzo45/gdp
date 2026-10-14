@@ -8,6 +8,9 @@
   },
   "scripts": {
     "dev": "next dev --port 3000",
+    "dev:helper": "tsx --conditions=react-server scripts/helper-sandbox.ts --serve",
+    "db:helper-sandbox": "tsx --conditions=react-server scripts/helper-sandbox.ts",
+    "dev:helper-from": "tsx --conditions=react-server scripts/helper-sandbox.ts --from --serve",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${PORT:-3000}",
     "typecheck": "tsc --noEmit",

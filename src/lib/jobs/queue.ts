@@ -96,6 +96,7 @@ export async function claimNext(kinds: readonly JobKind[]): Promise<{ job: Job; 
               and jsonb_array_length(${jobs.payload}->'statementIds') between 1 and 8
             then 0
             when ${jobs.kind} = 'rubric_generate' then 2
+            when ${jobs.kind} = 'rubric_helper' then 3
             else 1
           end`,
           jobs.createdAt,

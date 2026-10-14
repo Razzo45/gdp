@@ -4,11 +4,12 @@ import { aiOutputFiles, calibrations, goldenRatings, jobs, rubrics, submissions 
 import { statementHash } from '@/domain/fingerprint';
 import type { Db } from '@/db/types';
 import type { Actor } from '@/lib/auth/permissions';
+import { JOB_KINDS } from '@/db/schema';
 import { claimNext, complete, enqueue, expireOverdue, fail, heartbeat, JobConflict } from '@/lib/jobs/queue';
 import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
 import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
-import { startGoldenAutorate } from '@/lib/jobs/start';
+import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
@@ -787,5 +788,60 @@ describe('job queue', () => {
     await expect(
       enqueue(db, { kind: 'golden_autorate', submissionId: s.id, rubricId: null, requestId: crypto.randomUUID(), payload: {}, createdBy: creator.id }),
     ).resolves.toMatchObject({ kind: 'golden_autorate' });
+  });
+
+  it('claims a helper job only after Golden, Stability, and rubric generation', async () => {
+    const rows = await Promise.all(Array.from({ length: 4 }, () => makeSubmission(db)));
+    const helper = await enqueue(db, {
+      kind: 'rubric_helper',
+      submissionId: rows[0]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const generate = await enqueue(db, {
+      kind: 'rubric_generate',
+      submissionId: rows[1]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const stability = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[2]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const smallGolden = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[3]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { statementIds: ['a'] },
+      createdBy: creator.id,
+    });
+    const wanted = new Set([helper.id, generate.id, stability.id, smallGolden.id]);
+    const claimed: string[] = [];
+    for (let i = 0; i < 20 && claimed.length < wanted.size; i += 1) {
+      const row = await claimNext(JOB_KINDS);
+      if (!row) break;
+      if (wanted.has(row.job.id)) claimed.push(row.job.id);
+    }
+    expect(claimed).toEqual([smallGolden.id, stability.id, generate.id, helper.id]);
+  });
+});
+
+describe('rubric helper enqueue', () => {
+  it('refuses a run without the rubric seat, Golden, Stability, or AI output', async () => {
+    const s = await makeSubmission(db);
+    await expectStatus(startHelper(creator, s.id, { requestId: crypto.randomUUID() }), 403);
+    await claimSeat(creator, s.id, 'rubric');
+    await expectStatus(startHelper(creator, s.id, { requestId: crypto.randomUUID() }), 409);
+    await saveStatements(creator, s.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
+    await expectStatus(startHelper(creator, s.id, { requestId: crypto.randomUUID() }), 409);
   });
 });

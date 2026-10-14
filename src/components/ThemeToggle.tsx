@@ -1,9 +1,21 @@
 'use client';
 
+import { useLayoutEffect } from 'react';
+
 const KEY = 'gdp-theme';
 
 function current(): 'light' | 'dark' {
   return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+}
+
+function preferred(): 'light' | 'dark' {
+  try {
+    const stored = localStorage.getItem(KEY);
+    if (stored === 'dark' || stored === 'light') return stored;
+  } catch {
+    /* ignore quota / private mode */
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 function apply(theme: 'light' | 'dark') {
@@ -13,6 +25,14 @@ function apply(theme: 'light' | 'dark') {
   } catch {
     /* ignore quota / private mode */
   }
+}
+
+/** Put the class back after a remount so React cannot strip `dark` off <html>. */
+export function ThemeSync() {
+  useLayoutEffect(() => {
+    apply(preferred());
+  }, []);
+  return null;
 }
 
 export function ThemeToggle() {

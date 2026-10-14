@@ -232,6 +232,34 @@ describe('AdaptiveAdmission', () => {
     await first;
   });
 
+  it('holds idle helper pings behind interactive and background work', async () => {
+    const { admission } = harness({ initial: 1, floor: 1, ceiling: 1, agingMs: 20, idleAgingMs: 10_000 });
+    const started: string[] = [];
+    const bgHold = gate();
+    const uiHold = gate();
+    const idleHold = gate();
+    const run = (name: string, requestClass: 'interactive' | 'background' | 'idle', hold: ReturnType<typeof gate>) =>
+      admission.use(async () => {
+        started.push(name);
+        await hold.done;
+      }, { lane: 'm', requestClass, ownerId: name });
+    const first = run('bg', 'background', bgHold);
+    const idle = run('idle', 'idle', idleHold);
+    await flush();
+    expect(started).toEqual(['bg']);
+    const ui = run('ui', 'interactive', uiHold);
+    bgHold.release();
+    await first;
+    await flush();
+    expect(started).toEqual(['bg', 'ui']);
+    uiHold.release();
+    await ui;
+    await flush();
+    expect(started).toEqual(['bg', 'ui', 'idle']);
+    idleHold.release();
+    await idle;
+  });
+
   it('keeps the files lane independent from inference', async () => {
     const { admission } = harness({ initial: 1, floor: 1, ceiling: 1, ownerCeiling: 4, filesCeiling: 2 });
     const g = gate();

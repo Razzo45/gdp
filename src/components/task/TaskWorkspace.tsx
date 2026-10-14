@@ -22,6 +22,7 @@ import { JobsPanel } from './JobsPanel';
 import { ReviewPanel } from './ReviewPanel';
 import { RubricEditor } from './RubricEditor';
 import { SeatControls, type Assignable } from './SeatControls';
+import { Helper } from './Helper';
 import { StabilityPanel } from './StabilityPanel';
 
 export interface WorkspaceProps {
@@ -131,6 +132,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   }
 
   return (
+    <Helper.Provider view={view} refresh={refresh} notify={notify}>
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
 
@@ -238,7 +240,14 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           )}
         </div>
       </div>
+      {view.can.seeRubricEditor ? (
+        <>
+          <Helper.Launcher />
+          <Helper.Panel />
+        </>
+      ) : null}
     </div>
+    </Helper.Provider>
   );
 }
 

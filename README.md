@@ -8,6 +8,7 @@ the result back to the Catalog.
 Catalog webhook ──▶ task lands ──▶ creator claims rubric seat
    ▶ generate / edit rubric (autosaves, real-time CAS)
    ▶ Golden autorate must reach 100%            (gate 1)
+   ▶ Need a hand (optional) classifies seats after Golden + an AI pack grade
    ▶ upload AI output ▶ send to review
    ▶ reviewer claims review seat ▶ human AI eval ▶ score in 20–50%   (gate 2)
    ▶ approve ▶ creator runs Stability (3 × autorater on the AI output)
@@ -122,6 +123,7 @@ Health: `GET /api/health` (checks the database).
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | vitest (domain, catalog, office, services on in-memory Postgres) |
 | `npm run db:migrate` | apply pending `drizzle/*.sql` |
+| `npm run dev:helper` | local PGlite sandbox for Need a hand (not Railway) |
 | `npm run db:grant-admin -- email` | create/invite a user and grant `admin` |
 | `npm run db:seed` | local-mode users, watched fixture project, fixture tasks |
 | `npm run db:snapshot-supabase` | read-only copy of live `public.*` into `tmp/supabase-snapshot/` |

@@ -63,7 +63,7 @@ export async function pruneReviewFeedback(database: DbOrTx, submissionId: string
   return drop.length;
 }
 
-export async function pruneFinishedJobs(database: DbOrTx, submissionId: string, kind: 'rubric_generate' | 'golden_autorate' | 'stability_run'): Promise<number> {
+export async function pruneFinishedJobs(database: DbOrTx, submissionId: string, kind: 'rubric_generate' | 'golden_autorate' | 'stability_run' | 'rubric_helper'): Promise<number> {
   const rows = await database
     .select({ id: jobs.id, status: jobs.status })
     .from(jobs)

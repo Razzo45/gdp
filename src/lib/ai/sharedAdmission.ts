@@ -62,6 +62,9 @@ export async function withSharedAdmission<T>(
   const maxBackground = lane === 'files' ? maxActive : Math.max(1, maxActive - 1);
   const leaseSeconds = lane === 'files' ? 180 : 75;
   const token = crypto.randomUUID();
+  // Shared leases only know interactive|background. Idle yields in-process;
+  // across replicas it borrows the background ceiling and reserved-slot rules.
+  const requestClass = options.requestClass === 'idle' ? 'background' : options.requestClass;
   let held = false;
   try {
     while (!held) {
@@ -70,7 +73,7 @@ export async function withSharedAdmission<T>(
         select app.acquire_gemini_admission(
           ${token}::uuid,
           ${lane},
-          ${options.requestClass},
+          ${requestClass},
           ${leaseSeconds},
           ${maxActive},
           ${maxBackground},

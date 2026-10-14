@@ -71,6 +71,33 @@ function mockVerdicts(text: string): unknown {
   };
 }
 
+function mockHelperDrafts(text: string): unknown {
+  const seats = [...text.matchAll(/([0-9a-f-]{36})\s*\|\s*([^|\n]+)\s*\|/gi)].map((match) => ({
+    seatId: match[1]!,
+    tag: match[2]!.trim(),
+  }));
+  const drafts = seats.map((seat) => ({
+    seatId: seat.seatId,
+    statement:
+      /visual|layout/i.test(seat.tag)
+        ? 'All on-screen graphics stay inside the 16:9 slide canvas.'
+        : /format/i.test(seat.tag)
+          ? 'The delivered presentation uses a 16:9 page size.'
+          : 'The spoken narration states that Westbridge is introducing a new employee access card.',
+    tag: seat.tag,
+    grounding: 'prompt',
+    evidence: 'Stand-in helper draft from the task prompt.',
+  }));
+  drafts.push({
+    seatId: '',
+    statement: 'The spoken narration states that Westbridge is introducing a new employee access card.',
+    tag: 'Content - Semantics',
+    grounding: 'prompt',
+    evidence: 'Stand-in add from the task prompt.',
+  });
+  return { drafts };
+}
+
 export function standInValue<T>(input: { system: string; parts: (string | MediaPart)[]; schema: z.ZodType<T> }): T {
   const text = `${input.system}\n${flattenParts(input.parts)}`;
   const system = input.system;
@@ -97,6 +124,8 @@ export function standInValue<T>(input: { system: string; parts: (string | MediaP
   } else if (/rewrite ONE rubric statement/i.test(system)) {
     const statement = text.match(/statement:\s*(.+)/i)?.[1]?.trim() || 'The deliverable matches the brief.';
     raw = { statement, rationale: 'Stand-in rewrite after a free-tier 429.' };
+  } else if (/rubric writer/i.test(system)) {
+    raw = mockHelperDrafts(text);
   } else {
     raw = {};
   }
