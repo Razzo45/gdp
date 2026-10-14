@@ -22,7 +22,7 @@ export function shareFileHref(submissionId: string, fileId: string, token: strin
   return `/api/s/${encodeURIComponent(submissionId)}/files/${encodeURIComponent(fileId)}?t=${encodeURIComponent(token)}`;
 }
 
-const HIDDEN_SHARE_FIELD = /^(expert\s*review|acceptance\s*criteria|preview(?:\s*image)?|notes)$/i;
+const HIDDEN_SHARE_FIELD = /^(task|prompt|instruction|description|expert\s*review|acceptance\s*criteria|preview(?:\s*image)?|notes)$/i;
 const HIDDEN_BRIEF_FIELD = /^(expert\s*(qa|review)|preview(?:\s*image)?)$/i;
 
 function fieldToken(value: string): string {

@@ -31,8 +31,10 @@ describe('viewTask link', () => {
 });
 
 describe('share visible fields', () => {
-  it('drops expert review, acceptance criteria, preview image and notes', () => {
+  it('drops the task brief (already the page title and Task section), plus expert review, acceptance criteria, preview and notes', () => {
     const kept = shareVisibleFields([
+      { key: 'task', label: 'Task', text: 'Deliverable: One editable 18-slide PowerPoint presentation.' },
+      { key: 'prompt', label: 'Prompt', text: 'Make a deck.' },
       { key: 'generalInformation', label: 'General Information', text: 'Industry: Corporate Communications' },
       { key: 'expertReview', label: 'Expert Review', text: 'Question 1: Answer: Yes' },
       { key: 'previewImage', label: 'Preview image', text: '[file: shot.png]' },

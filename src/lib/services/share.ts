@@ -29,7 +29,7 @@ export async function sharePack(submissionId: string, token: string | null | und
   const statements = rubric ? await statementsOf(database, rubric.id) : [];
   const view = await handoffView(database, submission, { rubric, statements });
   const ai = await listAiOutputs(database, submissionId);
-  const fields = shareVisibleFields((source?.fields ?? []).filter((f) => f.key !== 'inputFiles' && f.key !== 'prompt'));
+  const fields = shareVisibleFields((source?.fields ?? []).filter((f) => f.key !== 'inputFiles'));
   const task =
     source?.fields.find((f) => /^(prompt|task|instruction|description)$/i.test(f.key))?.text?.trim() ||
     source?.title?.trim() ||
