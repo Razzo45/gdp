@@ -113,11 +113,11 @@ export function helperGate(input: {
   hasPrompt: boolean;
 }): { ok: boolean; missing: string[] } {
   const missing: string[] = [];
-  if (!input.hasRubric) missing.push('Write a rubric first.');
-  if (input.goldenGraded < 1) missing.push('Run Golden first.');
-  if (input.stabilityPasses < 1) missing.push('Grade this AI pack first (run Stability).');
+  if (!input.hasRubric) missing.push('Write a few seats first.');
+  if (input.goldenGraded < 1) missing.push('Grade the golden file first.');
+  if (input.stabilityPasses < 1) missing.push('Run Stability so we have an AI grade.');
   if (!input.hasAi) missing.push('Attach the AI output first.');
-  if (!input.hasPrompt) missing.push('The task needs a prompt.');
+  if (!input.hasPrompt) missing.push('This task is missing its brief.');
   return { ok: missing.length === 0, missing };
 }
 
@@ -151,48 +151,48 @@ export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding:
     const ai = aiOf(seat.stability);
     let bucket: HelperBucket = 'ungraded';
     let action: HelperAction = 'keep';
-    let reason = 'Not graded on Golden or this AI pack yet.';
+    let reason = 'This seat has not been graded on the golden file or this AI pack yet.';
     const dup = seats.some((other) => other.id !== seat.id && (other.claimKey && seat.claimKey && other.claimKey === seat.claimKey || nearDuplicate(other.statement, seat.statement)));
     if (seat.golden === null && ai === null) {
       bucket = 'ungraded';
       action = 'keep';
-      reason = 'Not graded on Golden or this AI pack yet.';
+      reason = 'This seat has not been graded on the golden file or this AI pack yet.';
     } else if (dup) {
       bucket = 'duplicate';
       action = 'drop';
-      reason = 'Same claim as another seat. Tags do not make a duplicate legal.';
+      reason = 'This says the same thing as another seat. Drop one of them.';
     } else if (looksRaterNoise(seat)) {
       bucket = 'rater_noise';
       action = 'override';
-      reason = 'Known rater-noise family. Keep the claim. Override with the disk measure. Do not weaken it.';
+      reason = 'The grade looks like a measurement glitch. Keep the wording and override the grade from the file.';
     } else if (seat.golden === false) {
       bucket = 'false_on_golden';
       action = 'rewrite';
-      reason = 'False on Golden. Reword to a grounded form that is true on disk, or drop. Never Yes a false lock.';
+      reason = 'This failed on the golden file. Reword it so it is true, or drop it. Do not mark a false seat as yes.';
     } else if (seat.golden === true && ai === false && looksHappenstance(seat.statement, grounding.prompt)) {
       bucket = 'happenstance';
       action = 'drop';
-      reason = 'True only because this golden did it. Drop unless the prompt or an input required it.';
+      reason = 'This is true on this golden file, but the brief did not ask for it. Drop it unless an input required it.';
     } else if (seat.golden === true && isSoftSeat({ statement: seat.statement }) && !REQUIRED_LOCK.test(seat.statement)) {
       bucket = 'soft';
       action = 'rewrite';
-      reason = 'Soft wording. Replace the taste word with the input’s own number, ratio, locked line, or named colour. If none exists, drop.';
+      reason = 'This is too vague. Use a number, ratio, locked line, or named color from the brief. If none exists, drop it.';
     } else if (seat.golden === true && ai === true && isGenericBar(seat.statement) && !isRequiredHygiene(seat)) {
       bucket = 'hygiene';
       action = 'drop';
-      reason = 'Yes on Golden and Yes on this AI pack. Soft hygiene lifts calibration. Drop it. Do not add more canvas or generic contrast.';
+      reason = 'Both the golden file and this AI pack already pass this. It is too easy — drop it.';
     } else if (seat.golden === true && ai === true) {
       bucket = 'hygiene';
       action = 'keep';
-      reason = 'Yes on both. Keep only as a required brief lock (canvas size, locked CTA, named type).';
+      reason = 'Both files pass this. Keep it only if the brief requires it (page size, locked line, named type).';
     } else if (seat.golden === true && ai === false) {
       bucket = 'discriminator';
       action = 'keep';
-      reason = 'True on Golden, false on this AI pack, and seated. Keep. Do not soften it.';
+      reason = 'The golden file passes and this AI pack fails. Keep this seat as written.';
     } else {
       bucket = 'ungraded';
       action = 'keep';
-      reason = 'Not graded on Golden or this AI pack yet.';
+      reason = 'This seat has not been graded on the golden file or this AI pack yet.';
     }
     return { ...seat, bucket, action, reason, ai };
   });
@@ -243,9 +243,9 @@ function mixOf(kept: { golden: boolean | null; ai: boolean | null }[], added: { 
   const predictedGolden = gradedGolden.length === 0 ? 0 : (goldenYes / gradedGolden.length) * 100;
   const predictedCalibration = gradedAi.length === 0 ? 0 : (aiYes / gradedAi.length) * 100;
   let refuse: string | null = null;
-  if (predictedGolden < 100) refuse = 'This batch still has a false Golden lock. Measure. If true, override. If false, reword or drop. Never Yes a false lock.';
-  else if (predictedCalibration >= 40) refuse = 'Predicted calibration is still 40 or higher. Drop Yes-both hygiene. Add only measured Golden-Yes / AI-No claims. Do not spray visual seats.';
-  else if (predictedCalibration < 20) refuse = 'Predicted calibration is under 20. Add required both-Yes locks from the brief (canvas, typeface, locked line) until the mix sits in 20–50.';
+  if (predictedGolden < 100) refuse = 'Do not take this whole batch. A seat still fails the golden file. If the file is right, change the grade. If the seat is wrong, reword or drop it.';
+  else if (predictedCalibration >= 40) refuse = 'Too many seats would still pass this AI pack. Drop the easy ones both files already pass. Only add something the golden file has and the AI missed.';
+  else if (predictedCalibration < 20) refuse = 'Too few seats would pass this AI pack. Add a required lock from the brief — page size, typeface, or a locked line — until more of them pass both.';
   return {
     keep: 0,
     act: 0,

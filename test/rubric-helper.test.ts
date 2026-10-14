@@ -27,7 +27,7 @@ describe('helperGate', () => {
     });
     expect(
       helperGate({ hasRubric: true, goldenGraded: 0, stabilityPasses: 3, hasAi: true, hasPrompt: true }).missing,
-    ).toContain('Run Golden first.');
+    ).toContain('Grade the golden file first.');
   });
 
   it('reads the Catalog task field as the prompt', () => {
@@ -143,7 +143,7 @@ describe('packHelperResult', () => {
     });
     expect(packed.mix.predictedGolden).toBeLessThan(100);
     expect(packed.mix.ready).toBe(false);
-    expect(packed.mix.refuse).toMatch(/false lock/i);
+    expect(packed.mix.refuse).toMatch(/fails the golden file/i);
   });
 });
 
