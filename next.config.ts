@@ -7,22 +7,13 @@ const config: NextConfig = {
   // Do not write a generated AGENTS.md into the repo on `next dev`.
   agentRules: false,
   // Server-only native/binary packages must not be bundled by Turbopack/webpack.
-    serverExternalPackages: ['postgres', 'jszip', 'mammoth', '@google/genai', '@google-cloud/storage', 'pdfjs-dist', '@napi-rs/canvas', '@aws-sdk/client-ses', '@electric-sql/pglite'],
+    serverExternalPackages: ['postgres', 'jszip', 'mammoth', '@google/genai', '@google-cloud/storage', 'pdfjs-dist', '@napi-rs/canvas', '@aws-sdk/client-ses'],
   experimental: {
     serverActions: { bodySizeLimit: '2mb' },
     // Keep the client from treating every force-dynamic page as instantly
     // stale. A 0s stale time refetches the RSC tree on each client fetch and
     // Turbopack logs that as a compile loop.
     staleTimes: { dynamic: 60, static: 180 },
-  },
-  webpack: (config, { dev }) => {
-    if (dev) {
-      config.watchOptions = {
-        ...config.watchOptions,
-        ignored: ['**/node_modules/**', '**/.git/**', '**/tmp/**', '**/.next/**'],
-      };
-    }
-    return config;
   },
   headers: async () => [
     {
