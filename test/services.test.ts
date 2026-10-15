@@ -13,6 +13,7 @@ import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
+import { workStateOf } from '@/domain/workState';
 import { assignSeat, claimSeat, claimsOverview, getVisibleSubmission, listSubmissions, recordEvent, releaseSeat } from '@/lib/services/submissions';
 import { makeSubmission, makeUser, seatedRubricInputs, testDb, yesAnswers } from './helpers/db';
 
@@ -442,6 +443,16 @@ describe('review flow', () => {
     for (const st of saved.statements) await overrideGolden(creator, s.id, st.id, true, 'Verified manually.');
     return { s, statements: saved.statements };
   }
+
+  it('clears a Catalog bounce when the creator sends the task to review', async () => {
+    const { s } = await readyForReview();
+    await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-bounce', storagePath: `bounce-${s.id}`, uploadedBy: creator.id });
+    await db.update(submissions).set({ handoffStatus: 'bounced' }).where(eq(submissions.id, s.id));
+    await sendToReview(creator, s.id);
+    const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
+    expect(after.handoffStatus).toBeNull();
+    expect(workStateOf(after)).toBe('in_review');
+  });
 
   it('requires AI output and golden 100% before review; gates approval to 20–50%', async () => {
     const { s, statements } = await readyForReview();

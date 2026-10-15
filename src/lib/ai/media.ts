@@ -12,7 +12,7 @@ import { sha256 } from '@/domain/fingerprint';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
 import { describeFileFacts, describeFileFactsAsync } from './fileFacts';
-import { mediaPart, type MediaPart } from './gemini';
+import { mediaPart, SEND_TEXT_CHARS, type MediaPart } from './gemini';
 import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
 
@@ -90,7 +90,32 @@ const EXT_MIME: Record<string, string> = {
   zip: 'application/zip',
 };
 
-export function normaliseMime(name: string, mime: string): string {
+/** Trust the bytes when a JPEG/PNG/PDF is wearing an Office name. */
+export function sniffMime(bytes: Uint8Array): string | null {
+  if (bytes.byteLength < 3) return null;
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.byteLength >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes.byteLength >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return 'image/gif';
+  if (bytes.byteLength >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return 'application/pdf';
+  if (
+    bytes.byteLength >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+export function normaliseMime(name: string, mime: string, bytes?: Uint8Array): string {
+  const sniffed = bytes ? sniffMime(bytes) : null;
+  if (sniffed) return sniffed;
   const clean = mime.toLowerCase().split(';')[0]?.trim() ?? '';
   if (clean && clean !== 'application/octet-stream' && clean !== 'binary/octet-stream') return clean;
   const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
@@ -99,7 +124,7 @@ export function normaliseMime(name: string, mime: string): string {
 
 export async function prepareFile(file: SourceFile, role: string, depth = 0): Promise<PreparedFile> {
   const digest = sha256(file.bytes);
-  const mime = normaliseMime(file.name, file.mime);
+  const mime = normaliseMime(file.name, file.mime, file.bytes);
   const label = `${role}: ${file.name} (id ${file.id})`;
   const base = { id: file.id, name: file.name, sha256: digest, bytes: file.bytes.byteLength };
 
@@ -114,7 +139,17 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
 
   if (mime === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
     const text = Buffer.from(file.bytes).toString('utf8');
-    return { ...base, delivery: 'text_digest', parts: [`${label}\n${facts}\nSVG markup (not rasterised):\n${clip(text)}\n--- end ---`] };
+    if (text.length > SEND_TEXT_CHARS) {
+      return {
+        ...base,
+        delivery: 'native',
+        parts: [
+          `${label}\n${facts}\nSVG attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
+          await mediaPart({ bytes: file.bytes, mime: 'image/svg+xml', sha256: digest, name: file.name, label }),
+        ],
+      };
+    }
+    return { ...base, delivery: 'text_digest', parts: [`${label}\n${facts}\nSVG markup (not rasterised):\n${text}\n--- end ---`] };
   }
 
   if (NATIVE_MIME.test(mime)) {
@@ -125,7 +160,7 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
       // string. tightenSendParts clips every string to 12k, which cut this
       // task's 84k HTML at the Categories label and made raters invent
       // incomplete_generation. Attach the file like a PDF instead.
-      if (html || text.length > MAX_TEXT_CHARS) {
+      if (html || text.length > SEND_TEXT_CHARS) {
         return {
           ...base,
           delivery: 'native',
@@ -166,7 +201,7 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
   ]);
   const measured = describeFileFacts({ name: file.name, mime: file.mime, size: file.bytes.byteLength });
   const facts = `\n${measured}${manifest ? `\n${manifest}` : ''}`;
-  const digest = text ? `\n--- text digest ---\n${clip(text)}\n--- end ---` : '';
+  const digest = text ? `\n--- text digest ---\n${clip(text, 2_000)}\n--- end ---` : '';
 
   if (pdf) {
     const pages = await rasterizePdfPages(pdf).catch(() => []);
@@ -373,4 +408,4 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
 /* ─────────────────────────────────────────────── helpers ── */
 
 const mb = (n: number) => Math.round(n / 1_048_576);
-const clip = (text: string) => (text.length > MAX_TEXT_CHARS ? `${text.slice(0, MAX_TEXT_CHARS)}\n…(truncated at ${MAX_TEXT_CHARS} chars)` : text);
+const clip = (text: string, limit = MAX_TEXT_CHARS) => (text.length > limit ? `${text.slice(0, limit)}\n…(truncated at ${limit} chars)` : text);

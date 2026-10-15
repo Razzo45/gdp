@@ -5,6 +5,7 @@ import { classifyCatalogListState } from '@/domain/catalogListState';
 import {
   catalogNoteFromPayload,
   catalogReturnFromSync,
+  landFromParked,
   lastRubricHolder,
   parseCatalogReturn,
   platformReturnNote,
@@ -72,8 +73,29 @@ describe('shouldEnqueueCatalogReturn', () => {
   });
 
   it('applies when a known parked or preparing task is sent back to E', () => {
-    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'parked', handoffStatus: null })).toBe(true);
-    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null })).toBe(true);
+    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'parked', handoffStatus: null, pushedAt: '2026-10-11T12:00:00.000Z' })).toBe(true);
+    expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null, pushedAt: '2026-10-11T12:00:00.000Z' })).toBe(true);
+  });
+
+  it('does not bounce a never-submitted task even when the Catalog log says revise', () => {
+    expect(
+      shouldEnqueueCatalogReturn({
+        stage: 'parked',
+        handoffStatus: null,
+        catalogLane: 'platform_return',
+        catalogStatusId: WORK,
+        existing: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldEnqueueCatalogReturn({
+        stage: 'rubric',
+        handoffStatus: null,
+        catalogLane: 'platform_return',
+        catalogStatusId: WORK,
+        existing: null,
+      }),
+    ).toBe(false);
   });
 
   it('does not enqueue the same Catalog status twice, whether pending, applied, or dismissed', () => {
@@ -233,6 +255,33 @@ describe('workStateOf after a Catalog or handoff bounce', () => {
   });
 });
 
+describe('landFromParked', () => {
+  const bounced = { stage: 'handoff' as const, reviewStatus: 'approved' as const, handoffStatus: 'bounced' as const };
+
+  it('does not mark a never-submitted parked task Platform returned', () => {
+    expect(
+      landFromParked({
+        stage: 'parked',
+        reviewStatus: null,
+        handoffStatus: null,
+        next: bounced,
+      }),
+    ).toEqual({ stage: 'rubric', reviewStatus: null, handoffStatus: null });
+  });
+
+  it('still lands a submitted-then-parked return as bounced', () => {
+    expect(
+      landFromParked({
+        stage: 'parked',
+        reviewStatus: 'approved',
+        handoffStatus: null,
+        pushedAt: '2026-10-11T12:00:00.000Z',
+        next: bounced,
+      }),
+    ).toEqual(bounced);
+  });
+});
+
 const WORKFLOW = {
   statuses: [
     { statusId: WORK, name: 'In progress' },
@@ -339,11 +388,25 @@ describe('Catalog return reconciliation', () => {
     expect(noted.catalogReturn).toMatchObject({ statusId: WORK, outcome: 'applied' });
   });
 
+  it('does not bounce a never-submitted parked task that only has a Catalog revise log', async () => {
+    const row = await makeSubmission(db, {
+      stage: 'parked',
+      statusId: WORK,
+      source: returnedSource,
+      rubricAssigneeId: null,
+    });
+    const noted = await noteCatalogReturnIfNeeded(db, row, null, null, HANDOFF);
+    expect(noted.handoffStatus).toBeNull();
+    expect(noted.catalogReturn).toBeNull();
+    expect(workStateOf(noted)).not.toBe('platform_returned');
+  });
+
   it('reopens a known parked task sent back to E, restores the last holder, and keeps the note', async () => {
     const row = await makeSubmission(db, {
       stage: 'parked',
       statusId: WORK,
       source: returnedSource,
+      pushedAt: '2026-10-11T12:00:00.000Z',
       rubricAssigneeId: null,
     });
     await db.insert(submissionEvents).values({

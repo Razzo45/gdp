@@ -8,7 +8,7 @@ import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
 import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
-import { catalogReturnFromSync, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
+import { catalogReturnFromSync, landFromParked, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { isUserInteraction } from '@/domain/dashboard';
 import { workStateOf, type WorkState } from '@/domain/workState';
@@ -96,8 +96,14 @@ async function landParkedIfInbound(database: DbOrTx, submission: Submission): Pr
     source: submission.source as { submission?: unknown; project?: unknown },
     watched,
   });
-  const next = pipelineFromListState(lane, submission.reviewStatus);
-  if (next.stage === 'parked') return submission;
+  const next = landFromParked({
+    stage: submission.stage,
+    reviewStatus: submission.reviewStatus,
+    handoffStatus: submission.handoffStatus,
+    pushedAt: submission.pushedAt,
+    next: pipelineFromListState(lane, submission.reviewStatus),
+  });
+  if (!next || next.stage === 'parked') return submission;
   const [updated] = await database
     .update(submissions)
     .set({ stage: next.stage, reviewStatus: next.reviewStatus, handoffStatus: next.handoffStatus })

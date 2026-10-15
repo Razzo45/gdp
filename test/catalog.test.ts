@@ -123,6 +123,7 @@ describe('catalog file bytes', () => {
     const file = { downloadUrl: 'https://s3/golden?exp=300', previewUrl: 'https://s3/golden?exp=86400' };
     expect(preferredCatalogBytesUrl(file, (url) => url.includes('exp=300'))).toBe('https://s3/golden?exp=86400');
     expect(preferredCatalogBytesUrl(file, () => false)).toBe('https://s3/golden?exp=300');
+    expect(preferredCatalogBytesUrl(file, () => true)).toBeNull();
   });
 
   it('buffers a 31MB Office file for a full download, and streams Range requests', () => {

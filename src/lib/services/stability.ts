@@ -11,6 +11,7 @@ import { submittedCalibration } from './review';
 import { currentRubric, statementsOf } from './rubric';
 import { scheduleReap } from '@/lib/ai/reaper';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
+import { handoffAfterContinue } from '@/domain/workState';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -136,7 +137,7 @@ export async function reopenRubricFromStability(actor: Actor, submissionId: stri
     const submission = await getSubmission(tx, submissionId);
     if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
     if (submission.stage !== 'stability') throw conflict('The task is not in the stability stage.');
-    await tx.update(submissions).set({ stage: 'rubric', reviewStatus: 'changes_requested' }).where(eq(submissions.id, submissionId));
+    await tx.update(submissions).set({ stage: 'rubric', reviewStatus: 'changes_requested', handoffStatus: handoffAfterContinue(submission.handoffStatus) }).where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'stability_reopened_rubric', { reason: reason.trim() });
   });
   scheduleWorkStatusSheet(previous, await getSubmission(db(), submissionId));

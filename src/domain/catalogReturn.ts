@@ -82,13 +82,27 @@ export function shouldEnqueueCatalogReturn(input: {
   if (input.existing?.statusId === statusId && (input.existing.outcome === 'pending' || input.existing.outcome === 'dismissed' || input.existing.outcome === 'applied')) {
     return false;
   }
-  // A revise/reject in the Catalog log is a return even if our local stage drifted.
-  if (input.catalogLane === 'platform_return') return true;
-  // Inbound K/E without a return trigger is only a bounce if we had already submitted.
-  // Otherwise a normal move onto K.Golden Output Approved marks empty work as Platform returned.
+  // Catalog revise/reject or an inbound walk-back is only a bounce if GDP
+  // actually submitted. A never-pushed task on K/E is inbound pickup.
   if (!localIsSubmitted(input)) return false;
+  if (input.catalogLane === 'platform_return') return true;
   const previous = input.previousStatusId?.trim() ?? '';
   return Boolean(previous && previous !== statusId);
+}
+
+/** Parked work that Catalog put back on inbound — bounce only if GDP had submitted. */
+export function landFromParked(input: {
+  stage: string;
+  reviewStatus: 'pending' | 'approved' | 'changes_requested' | null;
+  handoffStatus: string | null;
+  pushedAt?: string | null;
+  next: { stage: 'rubric' | 'review' | 'stability' | 'handoff' | 'done' | 'parked'; reviewStatus: 'pending' | 'approved' | 'changes_requested' | null; handoffStatus: 'bounced' | 'client_visible' | null };
+}): { stage: 'rubric' | 'review' | 'stability' | 'handoff' | 'done' | 'parked'; reviewStatus: 'pending' | 'approved' | 'changes_requested' | null; handoffStatus: 'bounced' | 'client_visible' | null } | null {
+  if (input.stage !== 'parked' || input.next.stage === 'parked') return null;
+  if (input.next.handoffStatus === 'bounced' && !localIsSubmitted(input)) {
+    return { stage: 'rubric', reviewStatus: input.reviewStatus, handoffStatus: null };
+  }
+  return input.next;
 }
 
 const object = (value: unknown): Record<string, unknown> =>

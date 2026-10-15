@@ -4,6 +4,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { calibrations, reviewFeedback, submissions, type Calibration } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
+import { mergeReviewDraft, REVIEW_NOTE_MIN_CHARS } from '@/domain/review';
 import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate } from '@/domain/gates';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
@@ -13,6 +14,7 @@ import { listAiOutputs } from './files';
 import { currentRubric, goldenState, statementsOf } from './rubric';
 import { latestGroup } from './stability';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
+import { handoffAfterContinue } from '@/domain/workState';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -49,7 +51,7 @@ export async function sendToReview(actor: Actor, submissionId: string): Promise<
     if (outputs.length === 0) throw conflict('Upload the AI output before sending the task to review.');
     await tx
       .update(submissions)
-      .set({ stage: 'review', reviewStatus: 'pending', reviewRubricId: rubric.id })
+      .set({ stage: 'review', reviewStatus: 'pending', reviewRubricId: rubric.id, handoffStatus: handoffAfterContinue(submission.handoffStatus) })
       .where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, 'sent_to_review', { rubricId: rubric.id, revision: rubric.revision, statements: statements.length });
   });
@@ -89,19 +91,21 @@ export async function saveCalibration(actor: Actor, submissionId: string, input:
     const evidence: Record<string, string> = {};
     for (const [id, text] of Object.entries(input.evidence)) if (ids.has(id) && typeof text === 'string') evidence[id] = text.trim().slice(0, 1000);
 
-    const score = scoreBreakdown(answers, statements.map((s) => s.id));
+    const latest = await latestCalibration(tx, rubric.id);
+    const incoming = { answers, evidence };
+    const draft = !input.submit && latest && !latest.submitted ? mergeReviewDraft(latest, incoming) : incoming;
+    const score = scoreBreakdown(draft.answers, statements.map((s) => s.id));
     if (input.submit && score.unanswered > 0) throw invalid(`${score.unanswered} statement(s) are still unanswered.`);
     if (input.submit) {
       const thin = statements.filter((s) => answers[s.id] !== undefined && (evidence[s.id] ?? '').length < EVIDENCE_MIN_CHARS);
       if (thin.length > 0) throw invalid(`${thin.length} statement(s) need an observation of at least ${EVIDENCE_MIN_CHARS} characters.`);
     }
     const outputs = await listAiOutputs(tx, submissionId);
-    const latest = await latestCalibration(tx, rubric.id);
     const values = {
       rubricId: rubric.id,
       reviewerId: actor.id,
-      answers,
-      evidence,
+      answers: draft.answers,
+      evidence: draft.evidence,
       scorePercent: score.percent ?? 0,
       submitted: input.submit,
       basis: { rubricRevision: rubric.revision, statementIds: statements.map((s) => s.id), aiOutputIds: outputs.map((o) => o.id), aiOutputShas: outputs.map((o) => o.sha256) },
@@ -139,8 +143,8 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
       if (!calibrationInBand(calibration.scorePercent)) {
         throw conflict(`The AI scored ${calibration.scorePercent.toFixed(1)}%; approval needs ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}%. Request changes so the creator can tighten or relax the rubric.`);
       }
-    } else if (feedback.trim().length < 10) {
-      throw invalid('Tell the creator what to change (at least 10 characters).');
+    } else if (feedback.trim().length < REVIEW_NOTE_MIN_CHARS) {
+      throw invalid(`Tell the creator what to change (at least ${REVIEW_NOTE_MIN_CHARS} characters).`);
     }
 
     await tx.insert(reviewFeedback).values({ submissionId, rubricId: rubric.id, reviewerId: actor.id, decision, feedback: feedback.trim(), calibrationId: calibration?.id ?? null });
@@ -149,8 +153,8 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
       .update(submissions)
       .set(
         decision === 'approved'
-          ? { stage: 'stability', reviewStatus: 'approved' }
-          : { stage: 'rubric', reviewStatus: 'changes_requested', rubricAssigneeId: submission.rubricAssigneeId },
+          ? { stage: 'stability', reviewStatus: 'approved', handoffStatus: handoffAfterContinue(submission.handoffStatus) }
+          : { stage: 'rubric', reviewStatus: 'changes_requested', rubricAssigneeId: submission.rubricAssigneeId, handoffStatus: handoffAfterContinue(submission.handoffStatus) },
       )
       .where(eq(submissions.id, submissionId));
     await recordEvent(tx, submissionId, actor.id, decision === 'approved' ? 'review_approved' : 'review_changes_requested', { calibrationId: calibration?.id ?? null, scorePercent: calibration?.scorePercent ?? null });

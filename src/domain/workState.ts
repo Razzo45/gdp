@@ -77,3 +77,8 @@ export function workStateOf(row: {
   if (row.stage === 'rubric') return 'preparing';
   return 'preparing';
 }
+
+/** Catalog bounce is leftover state. Continuing work must drop it. */
+export function handoffAfterContinue(status: HandoffStatus | null | undefined): HandoffStatus | null {
+  return status === 'bounced' ? null : (status ?? null);
+}

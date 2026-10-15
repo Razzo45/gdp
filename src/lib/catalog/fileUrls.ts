@@ -22,7 +22,7 @@ export function preferredCatalogBytesUrl(
 ): string | null {
   if (file.downloadUrl && !isStale(file.downloadUrl)) return file.downloadUrl;
   if (file.previewUrl && !isStale(file.previewUrl)) return file.previewUrl;
-  return file.downloadUrl ?? file.previewUrl ?? null;
+  return null;
 }
 
 const DEFAULT_BUFFER_BYTES = 80 * 1024 * 1024;

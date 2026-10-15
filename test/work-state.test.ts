@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdAgeHours, isStaleHold, platformStateChangedAt, seatIsStale, STALE_HOLD_HOURS } from '@/domain/workState';
+import { handoffAfterContinue, holdAgeHours, isStaleHold, platformStateChangedAt, seatIsStale, STALE_HOLD_HOURS, workStateOf } from '@/domain/workState';
 
 describe('hold aging', () => {
   const now = Date.parse('2026-10-10T12:00:00.000Z');
@@ -22,6 +22,15 @@ describe('hold aging', () => {
     const claimed = new Date(now - 72 * 3_600_000).toISOString();
     expect(seatIsStale({ claimedAt: claimed, stage: 'done' }, now)).toBe(false);
     expect(seatIsStale({ claimedAt: claimed, stage: 'rubric' }, now)).toBe(true);
+  });
+});
+
+describe('handoffAfterContinue', () => {
+  it('drops a Catalog bounce so the task can leave Platform returned', () => {
+    expect(handoffAfterContinue('bounced')).toBeNull();
+    expect(handoffAfterContinue('stability_pass')).toBe('stability_pass');
+    expect(handoffAfterContinue(null)).toBeNull();
+    expect(workStateOf({ stage: 'review', rubricAssigneeId: 'x', reviewStatus: 'pending', handoffStatus: handoffAfterContinue('bounced') })).toBe('in_review');
   });
 });
 

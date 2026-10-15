@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, calibrationInBand } from '@/domain/gates';
 import { createDraftPersist } from '@/domain/draftPersist';
-import { reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
+import { REVIEW_NOTE_MIN_CHARS, reviewApprovalScore, reviewGradesEditable } from '@/domain/review';
 import { Choice } from '../Choice';
 import { focusNextSeat, gradeFromKey } from '../seatKeys';
 import { api } from '../client';
@@ -235,7 +235,7 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
               <button className="btn btn-primary" disabled={busy !== null || !complete || !approvalInBand} type="button" onClick={() => void decide('approved')}>
                 {busy === 'approved' ? 'Approving…' : 'Approve'}
               </button>
-              <button className="btn" disabled={busy !== null || feedback.trim().length < 1} type="button" onClick={() => void decide('changes_requested')}>
+              <button className="btn" disabled={busy !== null || feedback.trim().length < REVIEW_NOTE_MIN_CHARS} type="button" onClick={() => void decide('changes_requested')}>
                 {busy === 'changes_requested' ? 'Sending…' : 'Request revisions'}
               </button>
             </div>
@@ -244,8 +244,8 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
             ) : !approvalInBand ? (
               <p className="text-sm text-muted">Approval needs an AI score between {CALIBRATION_MIN_PERCENT}% and {CALIBRATION_MAX_PERCENT}%. It is {pct(approvalPercent)} now.</p>
             ) : null}
-            {feedback.trim().length < 1 ? (
-              <p className="text-sm text-muted">Add a note if you are sending this back.</p>
+            {feedback.trim().length < REVIEW_NOTE_MIN_CHARS ? (
+              <p className="text-sm text-muted">Add a note of at least {REVIEW_NOTE_MIN_CHARS} characters if you are sending this back.</p>
             ) : null}
           </div>
         </div>

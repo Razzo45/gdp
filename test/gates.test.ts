@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed } from '@/domain/gates';
-import { reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
+import { mergeReviewDraft, reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
 const all = (v: boolean) => Object.fromEntries(ids.map((id) => [id, v]));
@@ -44,6 +44,19 @@ describe('review grades', () => {
     expect(reviewerReturnNote({ stage: 'review', feedback: returned })).toBeNull();
     expect(reviewerReturnNote({ stage: 'rubric', feedback: [{ decision: 'approved', feedback: 'ok' }] })).toBeNull();
     expect(reviewerReturnNote({ stage: 'rubric', feedback: [] })).toBeNull();
+  });
+
+  it('does not let a thin local draft erase a fuller saved review', () => {
+    const saved = {
+      answers: { a: true, b: false, c: true },
+      evidence: { a: 'Checked slide 1.', b: 'No page number.', c: 'Title matches the brief.' },
+    };
+    const thin = { answers: { a: false }, evidence: { a: 'Changed my mind on seat 1.' } };
+    expect(mergeReviewDraft(saved, thin)).toEqual({
+      answers: { a: false, b: false, c: true },
+      evidence: { a: 'Changed my mind on seat 1.', b: 'No page number.', c: 'Title matches the brief.' },
+    });
+    expect(mergeReviewDraft(null, thin)).toEqual(thin);
   });
 });
 

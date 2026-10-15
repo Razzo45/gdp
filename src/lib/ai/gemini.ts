@@ -172,7 +172,7 @@ function retryAfterMs(error: unknown): number | null {
   return seconds ? Math.min(120_000, Math.ceil(Number(seconds) * 1000)) : null;
 }
 
-const SEND_TEXT_CHARS = 12_000;
+export const SEND_TEXT_CHARS = 12_000;
 
 export function mediaResolutionFor(_mime: string): 'low' | 'medium' | 'high' {
   return 'medium';
