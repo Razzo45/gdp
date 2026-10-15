@@ -9,7 +9,7 @@ import { currentActor } from '@/lib/auth/identity';
 import { isController } from '@/lib/auth/permissions';
 import { listPendingCatalogReturns } from '@/lib/services/catalogReturn';
 import { listSubmissions } from '@/lib/services/submissions';
-import { TaskLabel } from '@/components/TaskLabel';
+import { CollapsibleCopy, TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStateChips } from '@/components/WorkStateChips';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
@@ -111,7 +111,11 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                 <td className="px-4 py-3.5 align-middle">
                   <Link href={`/submissions/${s.id}`} className="after:absolute after:inset-0 hover:underline">
                     <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} />
-                    {s.catalogReturnNote ? <p className="mt-1 text-xs leading-[18px] text-muted">Why: {s.catalogReturnNote}</p> : null}
+                    {s.catalogReturnNote ? (
+                      <p className="mt-1 text-xs leading-[18px] text-muted">
+                        Why: <CollapsibleCopy text={s.catalogReturnNote} />
+                      </p>
+                    ) : null}
                   </Link>
                 </td>
                 <td className="px-4 py-3.5 align-middle">

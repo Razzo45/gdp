@@ -21,7 +21,7 @@ export function TaskLabel({
     return (
       <>
         <h1 className="mt-1 font-mono text-2xl font-semibold tracking-[-0.025em] text-ink">{id}</h1>
-        {descriptor ? <p className="mt-1 text-sm text-muted"><HeroCopy text={descriptor} /></p> : null}
+        {descriptor ? <p className="mt-1 text-sm text-muted"><CollapsibleCopy text={descriptor} /></p> : null}
       </>
     );
   }
@@ -32,20 +32,20 @@ export function TaskLabel({
       </span>
       {descriptor ? (
         <span className="mt-0.5 block text-xs font-normal leading-[18px] text-muted">
-          <HeroCopy text={descriptor} />
+          <CollapsibleCopy text={descriptor} />
         </span>
       ) : null}
     </>
   );
 }
 
-function HeroCopy({ text }: { text: string }) {
+export function CollapsibleCopy({ text }: { text: string }) {
   const clip = clipWords(text);
   const [open, setOpen] = useState(false);
   if (!clip.collapsed) return text;
   return (
     <>
-      {open ? text : clip.preview}{' '}
+      <span className={open ? 'whitespace-pre-wrap' : undefined}>{open ? text : clip.preview}</span>{' '}
       <button
         className="relative z-10 font-semibold text-muted underline decoration-line underline-offset-2 hover:text-ink"
         type="button"

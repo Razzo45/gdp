@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { PendingCatalogReturn } from '@/domain/catalogReturn';
 import { api } from './client';
-import { TaskLabel } from './TaskLabel';
+import { CollapsibleCopy, TaskLabel } from './TaskLabel';
 
 /** PM queue: Catalog sent a submitted task back. Accept reopens; dismiss leaves it done. */
 export function CatalogReturnQueue({ items }: { items: PendingCatalogReturn[] }) {
@@ -49,9 +49,9 @@ export function CatalogReturnQueue({ items }: { items: PendingCatalogReturn[] })
                   {` · still ${item.stage === 'done' ? 'submitted' : item.stage} here`}
                 </p>
                 {item.catalogReturn.note ? (
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-ink">
+                  <p className="mt-1 text-sm text-ink">
                     <span className="text-muted">Why: </span>
-                    {item.catalogReturn.note}
+                    <CollapsibleCopy text={item.catalogReturn.note} />
                   </p>
                 ) : null}
               </div>
