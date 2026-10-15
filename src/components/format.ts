@@ -35,6 +35,17 @@ export function shortCatalogId(catalogSubmissionId: string | null | undefined): 
   return id ? id.slice(0, 8) : '—';
 }
 
+/** Board rows stay one line. Longer Catalog hero copy starts collapsed. */
+export const BOARD_HERO_WORDS = 10;
+
+export function clipWords(text: string, limit = BOARD_HERO_WORDS): { preview: string; collapsed: boolean } {
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return { preview: '', collapsed: false };
+  const words = trimmed.split(' ');
+  if (words.length <= limit) return { preview: trimmed, collapsed: false };
+  return { preview: `${words.slice(0, limit).join(' ')}…`, collapsed: true };
+}
+
 const ROLE_OPENER = /^(?:hi,?\s+)?i(?:'m| am)\s+/i;
 const ASKED =
   /(?:tasked with|asked to|need help|looking to)\s+(?:producing|creating|preparing|making|designing|building|writing|developing|produce|create|prepare|make|design|build|write|develop)\s+/i;

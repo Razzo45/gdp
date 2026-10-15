@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortCatalogId, shortTaskDescriptor } from '@/components/format';
+import { clipWords, shortCatalogId, shortTaskDescriptor } from '@/components/format';
 
 describe('task labels', () => {
   it('uses the first 8 of the catalog id', () => {
@@ -22,5 +22,16 @@ describe('task labels', () => {
     expect(shortTaskDescriptor('Make a deck for regional leadership.')).toBe('Deck for regional leadership');
     expect(shortTaskDescriptor('Q3 regional deck')).toBe('Q3 regional deck');
     expect(shortTaskDescriptor('')).toBe('');
+  });
+
+  it('collapses board hero copy after ten words', () => {
+    expect(clipWords('Brand Guide PDF')).toEqual({ preview: 'Brand Guide PDF', collapsed: false });
+    expect(clipWords('one two three four five six seven eight nine ten')).toEqual({
+      preview: 'one two three four five six seven eight nine ten',
+      collapsed: false,
+    });
+    const long = 'Why Brand Guideline is misspelled on the cover title in the cover header and the file name';
+    const clipped = clipWords(long);
+    expect(clipped).toEqual({ preview: 'Why Brand Guideline is misspelled on the cover title in…', collapsed: true });
   });
 });
