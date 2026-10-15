@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { sha256 } from '@/domain/fingerprint';
 import { documentViewHtml, documentViewKind } from '@/lib/ai/documentView';
 import { officePreviewKind, officePreviewPdf, rendererAvailable } from '@/lib/ai/media';
-import { preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
+import { contentDisposition, preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
 import { env } from '@/lib/env';
 
 const MAX_OFFICE_PREVIEW_BYTES = 80 * 1024 * 1024;
@@ -99,7 +99,7 @@ export async function proxyFile(url: string, request: Request, fallbackMime: str
   const out = new Headers();
   out.set('Content-Type', (upstream.headers.get('content-type') ?? fallbackMime).split(';')[0]!.trim() || fallbackMime);
   out.set('Cache-Control', 'private, max-age=60');
-  out.set('Content-Disposition', `${wantsDownload(request) ? 'attachment' : 'inline'}; filename="${filename.replace(/"/g, '')}"`);
+  out.set('Content-Disposition', contentDisposition(filename, wantsDownload(request) ? 'attachment' : 'inline'));
   const length = Number(upstream.headers.get('content-length') ?? '0');
   if (shouldBufferProxiedFile({ hasRange: Boolean(range), contentLength: length })) {
     const bytes = await upstream.arrayBuffer();
@@ -145,7 +145,7 @@ export async function officePreviewResponse(bytes: Uint8Array, name: string, mim
     status: 200,
     headers: {
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${name.replace(/\.[a-z0-9]+$/i, '')}.pdf"`,
+      'Content-Disposition': contentDisposition(`${name.replace(/\.[a-z0-9]+$/i, '')}.pdf`, 'inline'),
       'Cache-Control': 'private, max-age=300',
     },
   });

@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { catalogAsciiText, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
-import { preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
+import { contentDisposition, preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
 import { heroDeliverableFromSource, heroDeliverableOf, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
 
@@ -129,6 +129,15 @@ describe('catalog file bytes', () => {
     expect(shouldBufferProxiedFile({ hasRange: false, contentLength: 32_403_966 })).toBe(true);
     expect(shouldBufferProxiedFile({ hasRange: true, contentLength: 32_403_966 })).toBe(false);
     expect(shouldBufferProxiedFile({ hasRange: false, contentLength: 90 * 1024 * 1024 })).toBe(false);
+  });
+
+  it('keeps Content-Disposition in Latin-1 when the Catalog filename has an en-dash', () => {
+    const name = 'Leading Your First Team – Cohort 1 – Nov 2026.pptx';
+    expect(() => new Headers().set('Content-Disposition', `inline; filename="${name}"`)).toThrow(/ByteString|8211/);
+    const header = contentDisposition(name, 'inline');
+    expect(() => new Headers().set('Content-Disposition', header)).not.toThrow();
+    expect(header).toContain('filename="Leading Your First Team _ Cohort 1 _ Nov 2026.pptx"');
+    expect(header).toContain("filename*=UTF-8''Leading%20Your%20First%20Team%20");
   });
 });
 

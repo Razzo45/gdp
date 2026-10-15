@@ -33,3 +33,10 @@ export function shouldBufferProxiedFile(input: { hasRange: boolean; contentLengt
   if (input.contentLength <= 0) return false;
   return input.contentLength <= (input.maxBytes ?? DEFAULT_BUFFER_BYTES);
 }
+
+/** HTTP headers are Latin-1. Catalog names often carry en-dashes; put those in filename* only. */
+export function contentDisposition(filename: string, kind: 'inline' | 'attachment'): string {
+  const fallback = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(filename).replace(/['()]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
