@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } from '@/domain/freshness';
 import { platformReturnNote } from '@/domain/catalogReturn';
-import { reviewerReturnNote } from '@/domain/review';
+import { returnNotePreview, reviewerReturnNote } from '@/domain/review';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
@@ -48,6 +48,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   const [toast, setToast] = useState<{ message: string; tone: 'ok' | 'bad' } | null>(null);
   const [briefOpen, setBriefOpen] = useState(true);
   const [headerOpen, setHeaderOpen] = useState(true);
+  const [noteOpen, setNoteOpen] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -61,6 +62,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
       const header = sessionStorage.getItem('gdp.taskHeader');
       if (header === 'collapsed') setHeaderOpen(false);
       else if (header === 'open') setHeaderOpen(true);
+      const note = sessionStorage.getItem('gdp.taskReturnNote');
+      if (note === 'open') setNoteOpen(true);
+      else if (note === 'collapsed') setNoteOpen(false);
     } catch {
       if (initial.stability && initial.stability.passes.length > 0) setBriefOpen(false);
     }
@@ -79,6 +83,15 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     setHeaderOpen(open);
     try {
       sessionStorage.setItem('gdp.taskHeader', open ? 'open' : 'collapsed');
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  const toggleNote = useCallback((open: boolean) => {
+    setNoteOpen(open);
+    try {
+      sessionStorage.setItem('gdp.taskReturnNote', open ? 'open' : 'collapsed');
     } catch {
       /* private mode */
     }
@@ -136,11 +149,15 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
     <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-hidden">
       {toast && <Toast message={toast.message} tone={toast.tone} onDone={() => setToast(null)} />}
 
-      {returnNote && !headerOpen ? <ReviewReturnBanner title={returnTitle} message={returnNote.message} /> : null}
+      {returnNote && noteOpen && !headerOpen ? (
+        <ReviewReturnBanner title={returnTitle} message={returnNote.message} onHide={() => toggleNote(false)} />
+      ) : null}
 
       {headerOpen ? (
       <header className="card shrink-0 space-y-3">
-        {returnNote ? <ReviewReturnBanner flush title={returnTitle} message={returnNote.message} /> : null}
+        {returnNote && noteOpen ? (
+          <ReviewReturnBanner flush title={returnTitle} message={returnNote.message} onHide={() => toggleNote(false)} />
+        ) : null}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -172,6 +189,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             </p>
           </div>
           <div className="flex flex-wrap items-start justify-end gap-2">
+            {returnNote && !noteOpen ? (
+              <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
+            ) : null}
             <HeaderActions view={view} refresh={refresh} notify={notify} />
             <button className="btn btn-ghost btn-sm" type="button" aria-expanded={true} onClick={() => toggleHeader(false)}>
               Hide
@@ -190,23 +210,28 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
         </div>
       </header>
       ) : (
-      <button
-        className="card flex shrink-0 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
-        type="button"
-        aria-expanded={false}
-        title="Show seats and scores"
-        onClick={() => toggleHeader(true)}
-      >
-        <StageBadge stage={s.stage} />
-        <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} size="compact" />
-        <ScoreStrip
-          view={view}
-          golden={view.can.seeScoreGolden}
-          stability={view.can.seeScoreStability}
-          compact
-        />
-        <span className="ml-auto shrink-0 text-sm font-semibold text-muted">Show header</span>
-      </button>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <button
+          className="card flex min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
+          type="button"
+          aria-expanded={false}
+          title="Show seats and scores"
+          onClick={() => toggleHeader(true)}
+        >
+          <StageBadge stage={s.stage} />
+          <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} size="compact" />
+          <ScoreStrip
+            view={view}
+            golden={view.can.seeScoreGolden}
+            stability={view.can.seeScoreStability}
+            compact
+          />
+          <span className="shrink-0 text-sm font-semibold text-muted">Show header</span>
+        </button>
+        {returnNote && !noteOpen ? (
+          <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
+        ) : null}
+      </div>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:overflow-hidden">
@@ -251,18 +276,56 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   );
 }
 
-function ReviewReturnBanner({ title, message, flush = false }: { title: string; message: string; flush?: boolean }) {
+function ReturnNotePill({ label, onOpen }: { label: string; onOpen: () => void }) {
+  return (
+    <button
+      className="inline-flex h-8 shrink-0 items-center rounded-full border border-warn bg-warn-soft px-3 text-[13px] font-semibold text-warn hover:bg-warn-soft"
+      type="button"
+      aria-expanded={false}
+      onClick={onOpen}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ReviewReturnBanner({
+  title,
+  message,
+  flush = false,
+  onHide,
+}: {
+  title: string;
+  message: string;
+  flush?: boolean;
+  onHide: () => void;
+}) {
+  const clip = returnNotePreview(message);
+  const [full, setFull] = useState(!clip.collapsed);
+
   return (
     <aside
       className={
         flush
-          ? '-mx-5 -mt-5 rounded-t-[1.4rem] border-b-2 border-warn bg-warn-soft px-5 py-4'
-          : 'shrink-0 rounded-3xl border-2 border-warn bg-warn-soft px-5 py-4'
+          ? '-mx-5 -mt-5 border-b border-line bg-wash px-5 py-3'
+          : 'shrink-0 rounded-3xl border border-line bg-wash px-4 py-3'
       }
       role="status"
     >
-      <p className="text-sm font-bold text-warn">{title}</p>
-      <p className="mt-1 text-xl font-semibold leading-snug text-ink">{message}</p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-bold text-warn">{title}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          {clip.collapsed ? (
+            <button className="btn btn-ghost btn-sm" type="button" aria-expanded={full} onClick={() => setFull((current) => !current)}>
+              {full ? 'Show less' : 'Show full note'}
+            </button>
+          ) : null}
+          <button className="btn btn-ghost btn-sm" type="button" aria-expanded={true} onClick={onHide}>
+            Hide
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 max-w-[72ch] text-sm leading-relaxed text-ink">{full ? message : clip.preview}</p>
     </aside>
   );
 }

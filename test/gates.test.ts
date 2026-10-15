@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed } from '@/domain/gates';
-import { mergeReviewDraft, reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
+import { mergeReviewDraft, returnNotePreview, reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
 const all = (v: boolean) => Object.fromEntries(ids.map((id) => [id, v]));
@@ -44,6 +44,19 @@ describe('review grades', () => {
     expect(reviewerReturnNote({ stage: 'review', feedback: returned })).toBeNull();
     expect(reviewerReturnNote({ stage: 'rubric', feedback: [{ decision: 'approved', feedback: 'ok' }] })).toBeNull();
     expect(reviewerReturnNote({ stage: 'rubric', feedback: [] })).toBeNull();
+  });
+
+  it('collapses a long Catalog return note and leaves a short one open', () => {
+    expect(returnNotePreview('Tighten the fleet hours table.')).toEqual({
+      preview: 'Tighten the fleet hours table.',
+      collapsed: false,
+    });
+    const long = 'TAGGING: there are 6 format and 29 visual seats. '.repeat(8);
+    const clipped = returnNotePreview(long);
+    expect(clipped.collapsed).toBe(true);
+    expect(clipped.preview.endsWith('…')).toBe(true);
+    expect(clipped.preview.length).toBeLessThan(long.length);
+    expect(clipped.preview.length).toBeLessThanOrEqual(180);
   });
 
   it('does not let a thin local draft erase a fuller saved review', () => {

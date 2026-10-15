@@ -35,3 +35,12 @@ export function reviewerReturnNote(input: {
   if (!message) return null;
   return { message };
 }
+
+/** Long Catalog/reviewer notes start collapsed so they do not eat the task page. */
+export const RETURN_NOTE_PREVIEW_CHARS = 160;
+
+export function returnNotePreview(message: string, limit = RETURN_NOTE_PREVIEW_CHARS): { preview: string; collapsed: boolean } {
+  const text = message.trim();
+  if (text.length <= limit) return { preview: text, collapsed: false };
+  return { preview: `${text.slice(0, limit).trimEnd()}…`, collapsed: true };
+}
