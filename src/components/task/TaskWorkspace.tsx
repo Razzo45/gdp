@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } from '@/domain/freshness';
 import { platformReturnNote } from '@/domain/catalogReturn';
-import { returnNotePreview, reviewerReturnNote } from '@/domain/review';
+import { reviewerReturnNote } from '@/domain/review';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
@@ -210,9 +210,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
         </div>
       </header>
       ) : (
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
+      <div className="flex w-full shrink-0 items-stretch gap-2">
         <button
-          className="card flex min-w-0 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
+          className="card flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
           type="button"
           aria-expanded={false}
           title="Show seats and scores"
@@ -229,7 +229,11 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           <span className="shrink-0 text-sm font-semibold text-muted">Show header</span>
         </button>
         {returnNote && !noteOpen ? (
-          <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
+          <ReturnNotePill
+            label={catalogNote ? 'Catalog feedback' : 'Reviewer note'}
+            onOpen={() => toggleNote(true)}
+            stretch
+          />
         ) : null}
       </div>
       )}
@@ -276,10 +280,14 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   );
 }
 
-function ReturnNotePill({ label, onOpen }: { label: string; onOpen: () => void }) {
+function ReturnNotePill({ label, onOpen, stretch = false }: { label: string; onOpen: () => void; stretch?: boolean }) {
   return (
     <button
-      className="inline-flex h-8 shrink-0 items-center rounded-full border border-warn bg-warn-soft px-3 text-[13px] font-semibold text-warn hover:bg-warn-soft"
+      className={
+        stretch
+          ? 'card flex min-w-0 flex-1 items-center justify-center border-2 border-warn bg-warn-soft px-3 py-2 text-sm font-semibold text-warn hover:bg-warn-soft'
+          : 'inline-flex h-8 shrink-0 items-center rounded-full border border-warn bg-warn-soft px-3 text-[13px] font-semibold text-warn hover:bg-warn-soft'
+      }
       type="button"
       aria-expanded={false}
       onClick={onOpen}
@@ -300,32 +308,22 @@ function ReviewReturnBanner({
   flush?: boolean;
   onHide: () => void;
 }) {
-  const clip = returnNotePreview(message);
-  const [full, setFull] = useState(!clip.collapsed);
-
   return (
     <aside
       className={
         flush
-          ? '-mx-5 -mt-5 border-b border-line bg-wash px-5 py-3'
-          : 'shrink-0 rounded-3xl border border-line bg-wash px-4 py-3'
+          ? '-mx-5 -mt-5 rounded-t-[1.4rem] border-b-2 border-warn bg-warn-soft px-5 py-4'
+          : 'shrink-0 rounded-3xl border-2 border-warn bg-warn-soft px-5 py-4'
       }
       role="status"
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-bold text-warn">{title}</p>
-        <div className="flex shrink-0 items-center gap-1">
-          {clip.collapsed ? (
-            <button className="btn btn-ghost btn-sm" type="button" aria-expanded={full} onClick={() => setFull((current) => !current)}>
-              {full ? 'Show less' : 'Show full note'}
-            </button>
-          ) : null}
-          <button className="btn btn-ghost btn-sm" type="button" aria-expanded={true} onClick={onHide}>
-            Hide
-          </button>
-        </div>
+        <button className="btn btn-ghost btn-sm shrink-0" type="button" aria-expanded={true} onClick={onHide}>
+          Hide
+        </button>
       </div>
-      <p className="mt-1 max-w-[72ch] text-sm leading-relaxed text-ink">{full ? message : clip.preview}</p>
+      <p className="mt-1 text-sm font-medium leading-relaxed text-ink">{message}</p>
     </aside>
   );
 }
