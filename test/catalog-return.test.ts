@@ -47,6 +47,30 @@ describe('shouldEnqueueCatalogReturn', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, catalogStatusId: '' })).toBe(false);
   });
 
+  it('does not mark a never-submitted inbound task as Platform returned when Catalog only moves it onto K', () => {
+    // 54fd7011: preparing on GDP, never pushed, Catalog only moved it onto K.Golden Output Approved.
+    expect(
+      shouldEnqueueCatalogReturn({
+        stage: 'rubric',
+        handoffStatus: null,
+        catalogLane: 'preparing',
+        catalogStatusId: WORK,
+        existing: null,
+        previousStatusId: 'pre-k-status',
+      }),
+    ).toBe(false);
+    expect(
+      shouldEnqueueCatalogReturn({
+        stage: 'rubric',
+        handoffStatus: null,
+        catalogLane: 'unassigned',
+        catalogStatusId: WORK,
+        existing: null,
+        previousStatusId: 'pre-k-status',
+      }),
+    ).toBe(false);
+  });
+
   it('applies when a known parked or preparing task is sent back to E', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'parked', handoffStatus: null })).toBe(true);
     expect(shouldEnqueueCatalogReturn({ ...returned, stage: 'rubric', handoffStatus: null })).toBe(true);
@@ -182,7 +206,9 @@ describe('platformReturnNote', () => {
       message: 'Tighten the fleet hours table.',
     });
     expect(platformReturnNote({ handoffStatus: 'client_visible', note: 'Tighten the fleet hours table.' })).toBeNull();
-    expect(platformReturnNote({ handoffStatus: 'bounced', note: '  ' })).toBeNull();
+    expect(platformReturnNote({ handoffStatus: 'bounced', note: '  ' })).toEqual({
+      message: 'Catalog sent this back without a note. The last scores are still on the task.',
+    });
   });
 });
 

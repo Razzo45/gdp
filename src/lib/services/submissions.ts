@@ -124,6 +124,7 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
       catalogStatusId: submission.statusId,
       existing,
       previousStatusId,
+      pushedAt: submission.pushedAt,
     })
   ) {
     return submission;

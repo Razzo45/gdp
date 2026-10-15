@@ -30,8 +30,8 @@ export interface PendingCatalogReturn {
   catalogReturn: CatalogReturnRecord;
 }
 
-export function localIsSubmitted(input: { stage: string; handoffStatus: string | null }): boolean {
-  return input.stage === 'done' || input.handoffStatus === 'client_visible';
+export function localIsSubmitted(input: { stage: string; handoffStatus: string | null; pushedAt?: string | null }): boolean {
+  return input.stage === 'done' || input.handoffStatus === 'client_visible' || Boolean(input.pushedAt?.trim());
 }
 
 /** Last person on the rubric seat. Team-pool assigns are skipped so a return can restore them. */
@@ -60,7 +60,9 @@ export function lastRubricHolder(input: {
 export function platformReturnNote(input: { handoffStatus: string | null; note: string | null | undefined }): { message: string } | null {
   if (input.handoffStatus !== 'bounced') return null;
   const message = input.note?.trim() ?? '';
-  return message ? { message } : null;
+  return {
+    message: message || 'Catalog sent this back without a note. The last scores are still on the task.',
+  };
 }
 
 /** True when this sync should write (or replace) a pending PM queue item. */
@@ -72,6 +74,7 @@ export function shouldEnqueueCatalogReturn(input: {
   existing: CatalogReturnRecord | null;
   /** Catalog status we last stored. Required when the lane is only inbound pickup. */
   previousStatusId?: string | null;
+  pushedAt?: string | null;
 }): boolean {
   if (!catalogLaneReopensSubmitted(input.catalogLane)) return false;
   const statusId = input.catalogStatusId?.trim() ?? '';
@@ -79,7 +82,11 @@ export function shouldEnqueueCatalogReturn(input: {
   if (input.existing?.statusId === statusId && (input.existing.outcome === 'pending' || input.existing.outcome === 'dismissed' || input.existing.outcome === 'applied')) {
     return false;
   }
+  // A revise/reject in the Catalog log is a return even if our local stage drifted.
   if (input.catalogLane === 'platform_return') return true;
+  // Inbound K/E without a return trigger is only a bounce if we had already submitted.
+  // Otherwise a normal move onto K.Golden Output Approved marks empty work as Platform returned.
+  if (!localIsSubmitted(input)) return false;
   const previous = input.previousStatusId?.trim() ?? '';
   return Boolean(previous && previous !== statusId);
 }
