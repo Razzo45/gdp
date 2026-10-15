@@ -210,9 +210,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
         </div>
       </header>
       ) : (
-      <div className="flex w-full shrink-0 items-stretch gap-2">
+      <div className="card flex shrink-0 items-center gap-3 px-3 py-2 hover:bg-wash">
         <button
-          className="card flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left hover:bg-wash"
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
           type="button"
           aria-expanded={false}
           title="Show seats and scores"
@@ -226,15 +226,20 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             stability={view.can.seeScoreStability}
             compact
           />
-          <span className="shrink-0 text-sm font-semibold text-muted">Show header</span>
         </button>
-        {returnNote && !noteOpen ? (
-          <ReturnNotePill
-            label={catalogNote ? 'Catalog feedback' : 'Reviewer note'}
-            onOpen={() => toggleNote(true)}
-            stretch
-          />
-        ) : null}
+        <div className="ml-auto flex items-center gap-2">
+          {returnNote && !noteOpen ? (
+            <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
+          ) : null}
+          <button
+            className="shrink-0 text-sm font-semibold text-muted"
+            type="button"
+            aria-expanded={false}
+            onClick={() => toggleHeader(true)}
+          >
+            Show header
+          </button>
+        </div>
       </div>
       )}
 
@@ -280,14 +285,10 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   );
 }
 
-function ReturnNotePill({ label, onOpen, stretch = false }: { label: string; onOpen: () => void; stretch?: boolean }) {
+function ReturnNotePill({ label, onOpen }: { label: string; onOpen: () => void }) {
   return (
     <button
-      className={
-        stretch
-          ? 'card flex min-w-0 flex-1 items-center justify-center border-2 border-warn bg-warn-soft px-3 py-2 text-sm font-semibold text-warn hover:bg-warn-soft'
-          : 'inline-flex h-8 shrink-0 items-center rounded-full border border-warn bg-warn-soft px-3 text-[13px] font-semibold text-warn hover:bg-warn-soft'
-      }
+      className="inline-flex h-8 shrink-0 items-center rounded-full border border-warn bg-warn-soft px-3 text-[13px] font-semibold text-warn hover:bg-warn-soft"
       type="button"
       aria-expanded={false}
       onClick={onOpen}
