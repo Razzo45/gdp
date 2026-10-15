@@ -7,6 +7,7 @@ import { documentViewKind } from '@/lib/ai/documentView';
 import { errorResponse } from '@/lib/api';
 import {
   browserCanShow,
+  catalogFileBytesUrl,
   catalogUrlStale,
   documentViewResponse,
   downloadPath,
@@ -48,28 +49,29 @@ async function resolveCatalogFile(submission: Awaited<ReturnType<typeof getSubmi
 async function sendCatalogFile(file: { id: string; name: string; mime: string; downloadUrl: string | null; previewUrl: string | null; thumbnailUrl: string | null }, request: Request): Promise<Response> {
   const mime = file.mime || 'application/octet-stream';
   const fallback = { downloadHref: downloadPath(request) };
+  const bytesUrl = catalogFileBytesUrl(file);
   if (wantsThumb(request)) {
     if (file.thumbnailUrl && !catalogUrlStale(file.thumbnailUrl)) return proxyFile(file.thumbnailUrl, request, 'image/jpeg', file.name);
-    if (mime.startsWith('image/') && file.downloadUrl) return proxyFile(file.downloadUrl, request, mime, file.name);
+    if (mime.startsWith('image/') && bytesUrl) return proxyFile(bytesUrl, request, mime, file.name);
     return new Response(null, { status: 404 });
   }
   if (wantsStandaloneView(request)) {
-    if (file.downloadUrl && documentViewKind(file.name, mime)) {
-      const downloaded = await downloadCatalogFile(file.downloadUrl, 80 * 1024 * 1024);
+    if (bytesUrl && documentViewKind(file.name, mime)) {
+      const downloaded = await downloadCatalogFile(bytesUrl, 80 * 1024 * 1024);
       if (!downloaded.ok) throw new ServiceError(downloaded.status === 413 ? 422 : 502, downloaded.error);
       return documentViewResponse(downloaded.bytes, file.name, downloaded.mime || mime, fallback.downloadHref);
     }
     if (file.previewUrl) return proxyFile(file.previewUrl, request, mime, file.name);
-    if (file.downloadUrl && browserCanShow(mime, file.name)) return proxyFile(file.downloadUrl, request, mime, file.name);
-    if (file.downloadUrl) {
-      const downloaded = await downloadCatalogFile(file.downloadUrl, 80 * 1024 * 1024);
+    if (bytesUrl && browserCanShow(mime, file.name)) return proxyFile(bytesUrl, request, mime, file.name);
+    if (bytesUrl) {
+      const downloaded = await downloadCatalogFile(bytesUrl, 80 * 1024 * 1024);
       if (!downloaded.ok) throw new ServiceError(downloaded.status === 413 ? 422 : 502, downloaded.error);
       return documentViewResponse(downloaded.bytes, file.name, downloaded.mime || mime, fallback.downloadHref);
     }
     return previewFallbackPage(file.name, fallback.downloadHref, 'The Catalog has no download address for this file.');
   }
-  if (!file.downloadUrl) throw notFound('A download address for the file');
-  return proxyFile(file.downloadUrl, request, mime, file.name);
+  if (!bytesUrl) throw notFound('A download address for the file');
+  return proxyFile(bytesUrl, request, mime, file.name);
 }
 
 async function sendAiFile(submissionId: string, fileId: string, request: Request): Promise<Response> {

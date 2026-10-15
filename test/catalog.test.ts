@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { catalogAsciiText, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
+import { preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
 import { heroDeliverableFromSource, heroDeliverableOf, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
 
@@ -88,6 +89,25 @@ describe('readCatalogSubmission', () => {
     expect(read.inputFiles[0]?.downloadUrl).toBe('https://s3/ui-checkin.png');
   });
 
+  it('uses the Catalog view URL for preview when no preview URL is sent', () => {
+    const read = readCatalogSubmission(
+      {
+        ...submission,
+        files: [
+          {
+            projectSubmissionFileId: '66666666-7777-8888-9999-000000000000',
+            extension: 'pptx',
+            originalFileName: 'golden.pptx',
+            urls: { download: 'https://s3/golden?X-Amz-Expires=300', view: 'https://s3/golden?X-Amz-Expires=86400' },
+          },
+        ],
+      },
+      project,
+    )!;
+    expect(read.goldenFiles[0]!.downloadUrl).toBe('https://s3/golden?X-Amz-Expires=300');
+    expect(read.goldenFiles[0]!.previewUrl).toBe('https://s3/golden?X-Amz-Expires=86400');
+  });
+
   it('tolerates sparse payloads and rejects non-objects', () => {
     expect(readCatalogSubmission({}, null)).not.toBeNull();
     expect(readCatalogSubmission('nope', null)).toBeNull();
@@ -95,6 +115,20 @@ describe('readCatalogSubmission', () => {
 
   it('reads workflow statuses', () => {
     expect(readProjectStatuses(project)?.statuses.map((s) => s.id)).toEqual(['st-work', 'st-review', 'st-done']);
+  });
+});
+
+describe('catalog file bytes', () => {
+  it('falls back to the view URL when the short download link is stale', () => {
+    const file = { downloadUrl: 'https://s3/golden?exp=300', previewUrl: 'https://s3/golden?exp=86400' };
+    expect(preferredCatalogBytesUrl(file, (url) => url.includes('exp=300'))).toBe('https://s3/golden?exp=86400');
+    expect(preferredCatalogBytesUrl(file, () => false)).toBe('https://s3/golden?exp=300');
+  });
+
+  it('buffers a 31MB Office file for a full download, and streams Range requests', () => {
+    expect(shouldBufferProxiedFile({ hasRange: false, contentLength: 32_403_966 })).toBe(true);
+    expect(shouldBufferProxiedFile({ hasRange: true, contentLength: 32_403_966 })).toBe(false);
+    expect(shouldBufferProxiedFile({ hasRange: false, contentLength: 90 * 1024 * 1024 })).toBe(false);
   });
 });
 

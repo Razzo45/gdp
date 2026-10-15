@@ -4,6 +4,7 @@
  * blank the page for records the source considers valid.
  */
 import { z } from 'zod';
+import { catalogFileUrls } from './fileUrls';
 import type { CatalogField, CatalogFile, CatalogStatus, CatalogSubmission, CatalogTransition } from './types';
 
 const Urls = z.object({
@@ -149,9 +150,7 @@ function readFiles(body: z.infer<typeof SubmissionPayload>): CatalogFile[] {
       name,
       extension,
       mime: mimeForExtension(extension),
-      downloadUrl: entry.urls?.download ?? entry.urls?.view ?? null,
-      previewUrl: entry.urls?.preview ?? null,
-      thumbnailUrl: entry.urls?.thumbnail ?? null,
+      ...catalogFileUrls(entry.urls),
     });
   }
   for (const entry of body.media ?? []) {
@@ -164,9 +163,7 @@ function readFiles(body: z.infer<typeof SubmissionPayload>): CatalogFile[] {
       name,
       extension,
       mime: mimeForExtension(extension),
-      downloadUrl: entry.urls?.download ?? entry.urls?.view ?? null,
-      previewUrl: entry.urls?.preview ?? null,
-      thumbnailUrl: entry.urls?.thumbnail ?? null,
+      ...catalogFileUrls(entry.urls),
     });
   }
   return out;

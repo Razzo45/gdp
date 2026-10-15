@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { sha256 } from '@/domain/fingerprint';
 import { documentViewHtml, documentViewKind } from '@/lib/ai/documentView';
 import { officePreviewKind, officePreviewPdf, rendererAvailable } from '@/lib/ai/media';
+import { preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
 import { env } from '@/lib/env';
 
 const MAX_OFFICE_PREVIEW_BYTES = 80 * 1024 * 1024;
@@ -85,6 +86,10 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] ?? ch);
 }
 
+export function catalogFileBytesUrl(file: { downloadUrl: string | null; previewUrl: string | null }, catalogSubmissionId?: string): string | null {
+  return preferredCatalogBytesUrl(file, (url) => catalogUrlStale(url, catalogSubmissionId));
+}
+
 /** Same-origin stream so the browser can play video / show PDF without S3 CORS. Range is forwarded. */
 export async function proxyFile(url: string, request: Request, fallbackMime: string, filename: string): Promise<Response> {
   const headers = new Headers();
@@ -95,6 +100,12 @@ export async function proxyFile(url: string, request: Request, fallbackMime: str
   out.set('Content-Type', (upstream.headers.get('content-type') ?? fallbackMime).split(';')[0]!.trim() || fallbackMime);
   out.set('Cache-Control', 'private, max-age=60');
   out.set('Content-Disposition', `${wantsDownload(request) ? 'attachment' : 'inline'}; filename="${filename.replace(/"/g, '')}"`);
+  const length = Number(upstream.headers.get('content-length') ?? '0');
+  if (shouldBufferProxiedFile({ hasRange: Boolean(range), contentLength: length })) {
+    const bytes = await upstream.arrayBuffer();
+    out.set('Content-Length', String(bytes.byteLength));
+    return new NextResponse(bytes, { status: upstream.status, headers: out });
+  }
   for (const key of ['content-length', 'content-range', 'accept-ranges']) {
     const value = upstream.headers.get(key);
     if (value) out.set(key, value);
