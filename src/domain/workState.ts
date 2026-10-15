@@ -82,3 +82,15 @@ export function workStateOf(row: {
 export function handoffAfterContinue(status: HandoffStatus | null | undefined): HandoffStatus | null {
   return status === 'bounced' ? null : (status ?? null);
 }
+
+/** After review approve: reuse an accepted passing Stability and skip that stage. */
+export function reviewAdvanceAfterApprove(input: {
+  handoffStatus: HandoffStatus | null | undefined;
+  stabilityAccepted: boolean;
+  stabilityOk: boolean;
+}): { stage: 'stability' | 'handoff'; handoffStatus: HandoffStatus | null } {
+  if (input.stabilityAccepted && input.stabilityOk) {
+    return { stage: 'handoff', handoffStatus: 'stability_pass' };
+  }
+  return { stage: 'stability', handoffStatus: handoffAfterContinue(input.handoffStatus) };
+}

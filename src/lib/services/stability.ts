@@ -77,19 +77,20 @@ export async function acceptStability(actor: Actor, submissionId: string, groupI
     const view = await stabilityView(tx, rubric.id);
     if (view.groupId !== groupId) throw conflict('A newer stability run exists; accept that one.');
     if (!view.gate?.ok) throw conflict(`Stability has not passed: ${view.gate?.reasons.join(' ') ?? 'no passes yet.'}`);
-    if (view.accepted) return;
-    const calibration = await submittedCalibration(tx, rubric.id);
-    await tx.insert(stabilityAcceptances).values({
-      rubricId: rubric.id,
-      groupId,
-      acceptedBy: actor.id,
-      scores: view.gate.scores,
-      spread: view.gate.spread ?? 0,
-      calibrationId: calibration?.id ?? null,
-      basis: { rubricRevision: rubric.revision, passIds: view.passes.map((p) => p.id), calibrationPercent: view.calibrationPercent },
-    });
+    if (!view.accepted) {
+      const calibration = await submittedCalibration(tx, rubric.id);
+      await tx.insert(stabilityAcceptances).values({
+        rubricId: rubric.id,
+        groupId,
+        acceptedBy: actor.id,
+        scores: view.gate.scores,
+        spread: view.gate.spread ?? 0,
+        calibrationId: calibration?.id ?? null,
+        basis: { rubricRevision: rubric.revision, passIds: view.passes.map((p) => p.id), calibrationPercent: view.calibrationPercent },
+      });
+      await recordEvent(tx, submissionId, actor.id, 'stability_accepted', { groupId, scores: view.gate.scores, spread: view.gate.spread });
+    }
     await tx.update(submissions).set({ stage: 'handoff', handoffStatus: 'stability_pass' }).where(eq(submissions.id, submissionId));
-    await recordEvent(tx, submissionId, actor.id, 'stability_accepted', { groupId, scores: view.gate.scores, spread: view.gate.spread });
   });
   scheduleWorkStatusSheet(previous, await getSubmission(db(), submissionId));
   scheduleReap();

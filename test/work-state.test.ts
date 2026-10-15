@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handoffAfterContinue, holdAgeHours, isStaleHold, platformStateChangedAt, seatIsStale, STALE_HOLD_HOURS, workStateOf } from '@/domain/workState';
+import { handoffAfterContinue, holdAgeHours, isStaleHold, platformStateChangedAt, reviewAdvanceAfterApprove, seatIsStale, STALE_HOLD_HOURS, workStateOf } from '@/domain/workState';
 
 describe('hold aging', () => {
   const now = Date.parse('2026-10-10T12:00:00.000Z');
@@ -22,6 +22,23 @@ describe('hold aging', () => {
     const claimed = new Date(now - 72 * 3_600_000).toISOString();
     expect(seatIsStale({ claimedAt: claimed, stage: 'done' }, now)).toBe(false);
     expect(seatIsStale({ claimedAt: claimed, stage: 'rubric' }, now)).toBe(true);
+  });
+});
+
+describe('reviewAdvanceAfterApprove', () => {
+  it('skips Stability and opens Ready to submit when Stability is already accepted and still passing', () => {
+    expect(reviewAdvanceAfterApprove({ handoffStatus: 'bounced', stabilityAccepted: true, stabilityOk: true })).toEqual({
+      stage: 'handoff',
+      handoffStatus: 'stability_pass',
+    });
+    expect(reviewAdvanceAfterApprove({ handoffStatus: null, stabilityAccepted: false, stabilityOk: true })).toEqual({
+      stage: 'stability',
+      handoffStatus: null,
+    });
+    expect(reviewAdvanceAfterApprove({ handoffStatus: 'bounced', stabilityAccepted: true, stabilityOk: false })).toEqual({
+      stage: 'stability',
+      handoffStatus: null,
+    });
   });
 });
 

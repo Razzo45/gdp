@@ -104,6 +104,38 @@ describe('shouldEnqueueCatalogReturn', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'dismissed' } })).toBe(false);
   });
 
+  it('does not bounce a task we just pushed when Catalog still reads as inbound K', () => {
+    // e7553a93: push wrote handoff locally, then a 2s later K sync had no revise trigger.
+    const justPushed = '2026-10-15T16:03:22.344Z';
+    expect(
+      shouldEnqueueCatalogReturn({
+        ...returned,
+        catalogLane: 'preparing',
+        previousStatusId: HANDOFF,
+        pushedAt: justPushed,
+        now: Date.parse('2026-10-15T16:03:24.860Z'),
+      }),
+    ).toBe(false);
+    expect(
+      shouldEnqueueCatalogReturn({
+        ...returned,
+        catalogLane: 'unassigned',
+        previousStatusId: HANDOFF,
+        pushedAt: justPushed,
+        now: Date.parse('2026-10-15T16:03:24.860Z'),
+      }),
+    ).toBe(false);
+    expect(
+      shouldEnqueueCatalogReturn({
+        ...returned,
+        catalogLane: 'platform_return',
+        previousStatusId: HANDOFF,
+        pushedAt: justPushed,
+        now: Date.parse('2026-10-15T16:03:24.860Z'),
+      }),
+    ).toBe(true);
+  });
+
   it('enqueues again when Catalog returns to a different status', () => {
     expect(
       shouldEnqueueCatalogReturn({

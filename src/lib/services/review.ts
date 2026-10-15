@@ -2,7 +2,7 @@ import 'server-only';
 
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { calibrations, reviewFeedback, submissions, type Calibration } from '@/db/schema';
+import { calibrations, reviewFeedback, stabilityAcceptances, submissions, type Calibration, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { mergeReviewDraft, REVIEW_NOTE_MIN_CHARS } from '@/domain/review';
 import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate } from '@/domain/gates';
@@ -14,7 +14,7 @@ import { listAiOutputs } from './files';
 import { currentRubric, goldenState, statementsOf } from './rubric';
 import { latestGroup } from './stability';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
-import { handoffAfterContinue } from '@/domain/workState';
+import { handoffAfterContinue, reviewAdvanceAfterApprove } from '@/domain/workState';
 import { getSubmission, recordEvent } from './submissions';
 
 /**
@@ -149,11 +149,12 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
 
     await tx.insert(reviewFeedback).values({ submissionId, rubricId: rubric.id, reviewerId: actor.id, decision, feedback: feedback.trim(), calibrationId: calibration?.id ?? null });
     await pruneReviewFeedback(tx, submissionId);
+    const approved = decision === 'approved' && calibration ? await reviewAdvanceAfterApprovedCalibration(tx, rubric.id, statements, calibration, submission.handoffStatus) : null;
     await tx
       .update(submissions)
       .set(
-        decision === 'approved'
-          ? { stage: 'stability', reviewStatus: 'approved', handoffStatus: handoffAfterContinue(submission.handoffStatus) }
+        approved
+          ? { stage: approved.stage, reviewStatus: 'approved', handoffStatus: approved.handoffStatus }
           : { stage: 'rubric', reviewStatus: 'changes_requested', rubricAssigneeId: submission.rubricAssigneeId, handoffStatus: handoffAfterContinue(submission.handoffStatus) },
       )
       .where(eq(submissions.id, submissionId));
@@ -161,6 +162,33 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
   });
   const next = await getSubmission(db(), submissionId);
   scheduleWorkStatusSheet(previous, next);
+}
+
+async function reviewAdvanceAfterApprovedCalibration(
+  database: DbOrTx,
+  rubricId: string,
+  statements: { id: string }[],
+  calibration: Calibration,
+  handoffStatus: Submission['handoffStatus'],
+) {
+  const passes = await latestGroup(database, rubricId);
+  const groupId = passes[0]?.groupId ?? null;
+  const accepted = groupId
+    ? ((await database.select({ id: stabilityAcceptances.id }).from(stabilityAcceptances).where(and(eq(stabilityAcceptances.rubricId, rubricId), eq(stabilityAcceptances.groupId, groupId))).limit(1))[0] ?? null)
+    : null;
+  const gate = passes.length
+    ? stabilityGate({
+        passes: passes.map((p) => ({ answers: p.answers, errors: p.errors })),
+        statementIds: statements.map((s) => s.id),
+        calibrationPercent: calibration.scorePercent,
+        calibrationGateActive: true,
+      })
+    : null;
+  return reviewAdvanceAfterApprove({
+    handoffStatus,
+    stabilityAccepted: accepted != null,
+    stabilityOk: gate?.ok === true,
+  });
 }
 
 export async function feedbackFor(database: DbOrTx, submissionId: string) {

@@ -65,6 +65,9 @@ export function platformReturnNote(input: { handoffStatus: string | null; note: 
   };
 }
 
+/** A K echo in this window after our own push is not a Catalog return. */
+export const PUSH_ECHO_MS = 2 * 60 * 1000;
+
 /** True when this sync should write (or replace) a pending PM queue item. */
 export function shouldEnqueueCatalogReturn(input: {
   stage: string;
@@ -75,6 +78,7 @@ export function shouldEnqueueCatalogReturn(input: {
   /** Catalog status we last stored. Required when the lane is only inbound pickup. */
   previousStatusId?: string | null;
   pushedAt?: string | null;
+  now?: number;
 }): boolean {
   if (!catalogLaneReopensSubmitted(input.catalogLane)) return false;
   const statusId = input.catalogStatusId?.trim() ?? '';
@@ -86,6 +90,8 @@ export function shouldEnqueueCatalogReturn(input: {
   // actually submitted. A never-pushed task on K/E is inbound pickup.
   if (!localIsSubmitted(input)) return false;
   if (input.catalogLane === 'platform_return') return true;
+  const pushed = Date.parse(input.pushedAt ?? '');
+  if (Number.isFinite(pushed) && (input.now ?? Date.now()) - pushed < PUSH_ECHO_MS) return false;
   const previous = input.previousStatusId?.trim() ?? '';
   return Boolean(previous && previous !== statusId);
 }

@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { aiOutputFiles, calibrations, goldenRatings, jobs, rubrics, submissions } from '@/db/schema';
+import { aiOutputFiles, calibrations, goldenRatings, jobs, rubrics, stabilityAcceptances, stabilityPasses, submissions } from '@/db/schema';
 import { statementHash } from '@/domain/fingerprint';
 import type { Db } from '@/db/types';
 import type { Actor } from '@/lib/auth/permissions';
@@ -8,6 +8,7 @@ import { JOB_KINDS } from '@/db/schema';
 import { claimNext, complete, enqueue, expireOverdue, fail, heartbeat, JobConflict } from '@/lib/jobs/queue';
 import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
+import { acceptStability } from '@/lib/services/stability';
 import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
 import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
 import { compactBankRow } from '@/domain/bank';
@@ -535,6 +536,74 @@ describe('review flow', () => {
     const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
     expect(after.stage).toBe('rubric');
     expect(after.reviewStatus).toBe('changes_requested');
+  });
+
+  it('skips Stability and opens Ready to submit when the accepted run is still passing', async () => {
+    const { s, statements } = await readyForReview();
+    await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-skip', storagePath: `skip-${s.id}`, uploadedBy: creator.id });
+    await sendToReview(creator, s.id);
+    await claimSeat(reviewer, s.id, 'review');
+    const ids = statements.map((x) => x.id);
+    const answers = yesAnswers(ids, 13);
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
+    await saveCalibration(reviewer, s.id, { answers, evidence: noted, submit: true });
+    await decideReview(reviewer, s.id, 'approved', '');
+
+    const rubric = await currentRubric(db, s.id);
+    const groupId = crypto.randomUUID();
+    await db.insert(stabilityPasses).values(
+      [1, 2, 3].map((passIndex) => ({
+        rubricId: rubric!.id,
+        groupId,
+        passIndex,
+        answers,
+        evidence: noted,
+        errors: {},
+        scorePercent: 26,
+        basis: {},
+      })),
+    );
+    await db.insert(stabilityAcceptances).values({ rubricId: rubric!.id, groupId, acceptedBy: creator.id, scores: [26, 26, 26], spread: 0, basis: {} });
+
+    await db.update(submissions).set({ stage: 'review', reviewStatus: 'pending' }).where(eq(submissions.id, s.id));
+    await decideReview(reviewer, s.id, 'approved', '');
+    const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
+    expect(after.stage).toBe('handoff');
+    expect(after.handoffStatus).toBe('stability_pass');
+    expect(workStateOf(after)).toBe('handoff');
+  });
+
+  it('lets the creator continue to Ready to submit on an already-accepted Stability', async () => {
+    const { s, statements } = await readyForReview();
+    await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-cont', storagePath: `cont-${s.id}`, uploadedBy: creator.id });
+    await sendToReview(creator, s.id);
+    await claimSeat(reviewer, s.id, 'review');
+    const ids = statements.map((x) => x.id);
+    const answers = yesAnswers(ids, 13);
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
+    await saveCalibration(reviewer, s.id, { answers, evidence: noted, submit: true });
+    await decideReview(reviewer, s.id, 'approved', '');
+
+    const rubric = await currentRubric(db, s.id);
+    const groupId = crypto.randomUUID();
+    await db.insert(stabilityPasses).values(
+      [1, 2, 3].map((passIndex) => ({
+        rubricId: rubric!.id,
+        groupId,
+        passIndex,
+        answers,
+        evidence: noted,
+        errors: {},
+        scorePercent: 26,
+        basis: {},
+      })),
+    );
+    await db.insert(stabilityAcceptances).values({ rubricId: rubric!.id, groupId, acceptedBy: creator.id, scores: [26, 26, 26], spread: 0, basis: {} });
+
+    await acceptStability(creator, s.id, groupId);
+    const after = (await db.select().from(submissions).where(eq(submissions.id, s.id)))[0]!;
+    expect(after.stage).toBe('handoff');
+    expect(after.handoffStatus).toBe('stability_pass');
   });
 });
 

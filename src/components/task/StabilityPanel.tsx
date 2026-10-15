@@ -25,6 +25,13 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const canRun = view.can.runStability;
   const canStart = canRun && stabilityRerunAllowed({ acceptedAt: stability?.acceptedAt ?? null });
   const canAccept = official && canStart && view.submission.stage === 'stability';
+  const canContinue =
+    official &&
+    canRun &&
+    view.submission.stage === 'stability' &&
+    Boolean(stability?.acceptedAt) &&
+    Boolean(stability?.gate?.ok) &&
+    Boolean(stability?.groupId);
 
   async function act(path: string, body: Record<string, unknown>, ok: string) {
     setBusy(true);
@@ -63,6 +70,16 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)}
           {stability?.acceptedAt && <Pill tone="ok">accepted {formatDate(stability.acceptedAt)}</Pill>}
+          {canContinue ? (
+            <button
+              className="btn btn-primary"
+              disabled={busy}
+              type="button"
+              onClick={() => act(`/api/submissions/${view.submission.id}/stability/accept`, { groupId: stability!.groupId }, 'Ready to submit.')}
+            >
+              Continue to submit
+            </button>
+          ) : null}
           {canStart && (
             canAccept && gate?.ok && stability?.groupId && !stability.acceptedAt ? (
               <button
