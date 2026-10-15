@@ -120,7 +120,22 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
   if (NATIVE_MIME.test(mime)) {
     if (mime.startsWith('text/')) {
       const text = Buffer.from(file.bytes).toString('utf8');
-      return { ...base, delivery: 'native', parts: [`${label}\n${facts}\n--- file text (${text.length} chars) ---\n${clip(text)}\n--- end ---`] };
+      const html = mime === 'text/html' || /\.html?$/i.test(file.name);
+      // Long text (especially HTML prototypes) must not go in the prompt
+      // string. tightenSendParts clips every string to 12k, which cut this
+      // task's 84k HTML at the Categories label and made raters invent
+      // incomplete_generation. Attach the file like a PDF instead.
+      if (html || text.length > MAX_TEXT_CHARS) {
+        return {
+          ...base,
+          delivery: 'native',
+          parts: [
+            `${label}\n${facts}\n${html ? 'HTML' : 'Text'} attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
+            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label }),
+          ],
+        };
+      }
+      return { ...base, delivery: 'native', parts: [`${label}\n${facts}\n--- file text (${text.length} chars) ---\n${text}\n--- end ---`] };
     }
     return { ...base, delivery: 'native', parts: [`${label}\n${facts}`, await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label })] };
   }

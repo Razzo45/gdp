@@ -10,6 +10,20 @@ describe('prepareFile edge cases', () => {
     expect(prepared.parts.join('')).toMatch(/empty/);
   });
 
+  it('attaches a long HTML file in full instead of clipping it to a text digest', async () => {
+    const body = `<!DOCTYPE html>\n<html><body>${'<p>card</p>'.repeat(8_000)}</body></html>`;
+    const bytes = new TextEncoder().encode(body);
+    expect(bytes.byteLength).toBeGreaterThan(40_000);
+    const prepared = await prepareFile({ id: 'h', name: 'site.html', mime: 'text/html', bytes }, 'CONSIDERED OUTPUT');
+    expect(prepared.delivery).toBe('native');
+    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('');
+    const media = prepared.parts.filter((part) => typeof part !== 'string');
+    expect(text).not.toMatch(/truncated at/);
+    expect(text.length).toBeLessThan(4_000);
+    expect(media).toHaveLength(1);
+    expect(media[0]).toMatchObject({ kind: 'inline', mime: 'text/html' });
+  });
+
   it('sends SVG as markup, not as a native image', async () => {
     const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect fill="#f00" width="8" height="8"/></svg>');
     const prepared = await prepareFile({ id: 's', name: 'mark.svg', mime: 'image/svg+xml', bytes: svg }, 'CONSIDERED OUTPUT');
