@@ -13,7 +13,7 @@ import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autor
 import type { Seed } from '@/lib/engines/rubricFactory';
 import { GeminiError } from '@/lib/ai/gemini';
 import { listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
-import { analyzeHelperSeats, applyFittedScan, packHelperResult, promptFromFields, type HelperSeatInput } from '@/domain/helper';
+import { analyzeHelperSeats, applyFittedScan, packHelperResult, promptFromFields, shouldScanForFitted, type HelperSeatInput } from '@/domain/helper';
 import { currentRubric, goldenState, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
 import { latestGroup } from '@/lib/services/stability';
 import { pruneFinishedJobs, pruneGoldenRatings, pruneStabilityGroups } from '@/lib/services/retention';
@@ -419,7 +419,12 @@ async function runRubricHelper(ctx: JobContext): Promise<Record<string, unknown>
   const analyzed = analyzeHelperSeats(seats, { prompt, inputRoles });
   await ctx.tick({ done: 1, total: 4, note: 'Checking seats that read as written off the golden or AI file' });
   const { draftHelperRows, scanOutputFitted } = await import('@/lib/engines/helperDraft');
-  const fittedIds = await scanOutputFitted({ prompt, inputRoles, seats: analyzed, signal: ctx.signal });
+  const fittedIds = await scanOutputFitted({
+    prompt,
+    inputRoles,
+    seats: analyzed.filter((row) => shouldScanForFitted(row, { prompt, inputRoles })),
+    signal: ctx.signal,
+  });
   const scanned = applyFittedScan(analyzed, fittedIds);
   await ctx.tick({ done: 2, total: 4, note: `Keep ${scanned.filter((row) => row.action === 'keep').length} · act ${scanned.filter((row) => row.action !== 'keep').length}` });
   const drafts = await draftHelperRows({ prompt, inputRoles, seats: scanned, signal: ctx.signal });

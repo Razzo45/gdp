@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeHelperSeats, applyFittedScan, helperConfidence, helperGate, looksCheated, packHelperResult, promptFromFields, seatGroundingOf, type HelperDraft, type HelperSeatInput } from '@/domain/helper';
+import { analyzeHelperSeats, applyFittedScan, helperConfidence, helperGate, looksCheated, packHelperResult, promptFromFields, seatGroundingOf, shouldScanForFitted, type HelperDraft, type HelperSeatInput } from '@/domain/helper';
 
 const CANVAS =
   'Every text box, chart, shape, and image across all slides in the delivered presentation is positioned entirely within the 16:9 slide canvas boundaries.';
@@ -77,6 +77,37 @@ describe('analyzeHelperSeats', () => {
     expect(byId.cheat?.action).toBe('rewrite');
   });
 
+  it('keeps media-proportion and type-emphasis seats as craft, not written off the file', () => {
+    const videos = 'All videos are displayed at their original proportions without stretching or squashing.';
+    const type = 'Bold and italic styles are used to emphasize key words and important messages.';
+    const rows = analyzeHelperSeats(
+      [
+        seat({ id: 'videos', statement: videos, tag: 'Visual - Branding', family: 'visual', stability: [false, false, false] }),
+        seat({ id: 'type', statement: type, tag: 'Visual - Branding', family: 'visual', stability: [false, false, false] }),
+      ],
+      { prompt: 'Deliver a 16:9 staff deck.' },
+    );
+    const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+    expect(byId.videos?.bucket).toBe('discriminator');
+    expect(byId.videos?.action).toBe('keep');
+    expect(byId.type?.bucket).toBe('discriminator');
+    expect(byId.type?.action).toBe('keep');
+
+    const scanned = applyFittedScan(rows, ['videos', 'type']);
+    const after = Object.fromEntries(scanned.map((row) => [row.id, row]));
+    expect(after.videos?.bucket).toBe('discriminator');
+    expect(after.type?.bucket).toBe('discriminator');
+  });
+
+  it('keeps a Golden-yes AI-no seat that is not file-specific, even without a craft name', () => {
+    const rows = analyzeHelperSeats(
+      [seat({ id: 'weight', statement: 'Charts use the same stroke weight on every slide.', tag: 'Visual - Layout', family: 'visual', stability: [false, false, false] })],
+      { prompt: 'Deliver a 16:9 staff deck.' },
+    );
+    expect(rows[0]?.bucket).toBe('discriminator');
+    expect(rows[0]?.action).toBe('keep');
+  });
+
   it('lets a second read mark a brief-sounding seat as written off the output', () => {
     const sneak = 'Westbridge staff see a teal penguin on the access card.';
     const rows = analyzeHelperSeats(
@@ -106,8 +137,34 @@ describe('seatGroundingOf', () => {
     expect(seatGroundingOf('The delivered presentation uses a 16:9 page size.', grounding)).toBe('prompt');
     expect(seatGroundingOf('Palette tokens follow the brand guidelines.', grounding)).toBe('input:brand guidelines');
     expect(seatGroundingOf(CANVAS, grounding)).toBe('craft:slides-canvas');
+    expect(seatGroundingOf('All videos are displayed at their original proportions without stretching or squashing.', grounding)).toBe(
+      'craft:media-undistorted',
+    );
+    expect(seatGroundingOf('Bold and italic styles are used to emphasize key words and important messages.', grounding)).toBe(
+      'craft:type-emphasis',
+    );
     expect(seatGroundingOf('The penguin mascot wears glasses on the teal card.', grounding)).toBeNull();
     expect(seatGroundingOf('The golden video shows Darren on a brown sofa.', grounding)).toBeNull();
+  });
+});
+
+describe('shouldScanForFitted', () => {
+  it('sends only leftover Golden-yes AI-no seats, not craft or already-fitted rows', () => {
+    const grounding = { prompt: PROMPT };
+    const rows = analyzeHelperSeats(
+      [
+        seat({ id: 'sneak', statement: 'Westbridge staff see a teal penguin on the access card.', tag: 'Content - Semantics', family: 'content', stability: [true, false, false] }),
+        seat({ id: 'videos', statement: 'All videos are displayed at their original proportions without stretching or squashing.', tag: 'Visual - Branding', family: 'visual', stability: [false, false, false] }),
+        seat({ id: 'fitted', statement: 'The penguin mascot wears glasses on the teal card.', tag: 'Visual - Branding', family: 'visual', stability: [false, false, false] }),
+        seat({ id: 'hygiene', statement: 'The delivered presentation uses a 16:9 page size.', tag: 'Format/File', family: 'format' }),
+      ],
+      grounding,
+    );
+    const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+    expect(shouldScanForFitted(byId.sneak!, grounding)).toBe(true);
+    expect(shouldScanForFitted(byId.videos!, grounding)).toBe(false);
+    expect(shouldScanForFitted(byId.fitted!, grounding)).toBe(false);
+    expect(shouldScanForFitted(byId.hygiene!, grounding)).toBe(false);
   });
 });
 
@@ -183,6 +240,36 @@ describe('packHelperResult', () => {
     expect(packed.mix.predictedCalibration).toBeGreaterThanOrEqual(20);
     expect(packed.mix.ready).toBe(true);
     expect(packed.mix.refuse).toBeNull();
+  });
+
+  it('drops a rewrite or add that names slides or a hex the brief never locked', () => {
+    const packed = packHelperResult({
+      seats: [
+        seat({ id: 'keep', statement: NARRATION, tag: 'Content - Semantics', family: 'content', stability: [true, false, false] }),
+        seat({ id: 'fitted', statement: 'The penguin mascot wears glasses on the teal card.', tag: 'Visual - Branding', family: 'visual', stability: [false, false, false] }),
+      ],
+      prompt: PROMPT,
+      inputRoles: [],
+      drafts: [
+        {
+          seatId: 'fitted',
+          statement: 'The presentation file contains exactly three embedded video media objects across slides 7, 9, and 11.',
+          tag: 'Visual - Branding',
+          grounding: 'prompt',
+          golden: true,
+          ai: false,
+        },
+        {
+          statement: 'The cover uses #3A6B4F on the title bar.',
+          tag: 'Visual - Branding',
+          grounding: 'prompt',
+          golden: true,
+          ai: false,
+        },
+      ],
+    });
+    expect(packed.act.find((row) => row.id === 'fitted')?.rewrite).toBeNull();
+    expect(packed.add).toEqual([]);
   });
 
   it('surfaces output-fitted and duplicate seats before the rest of Act', () => {

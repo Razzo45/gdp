@@ -89,6 +89,8 @@ const GENERIC_BAR = /\b(every|across all slides|slide canvas|canvas boundaries|a
 const RATER_NOISE =
   /\b(96\s*dpi|xres\s*=\s*96|page\s*\/\s*3|equal 99\s*mm|thin column|only a rule|ocean blue|no ocean|sea photo|placed ppi|fold widths?)\b/i;
 const HAPPENSTANCE = /\b(unique crop|wraps at|bronze column|this pixel|near-black)\b/i;
+const FILE_TELL = /\b(mascot|sofa|this crop)\b/i;
+const SLIDE_INDEX = /\bslides?\s+\d+/i;
 const REQUIRED_LOCK = /\b(16:9 page size|page size|cta|lockup|exactly as written)\b/i;
 const RANK: Record<HelperBucket, number> = {
   output_fitted: 0,
@@ -148,7 +150,9 @@ const CRAFT_ANCHOR: Record<string, RegExp> = {
   'slides-canvas': /\b(slide canvas|canvas boundaries|inside the (?:slide )?canvas)\b/i,
   'slides-title-safe': /\btitle[- ]safe\b/i,
   'logo-undistorted': /\b(aspect ratio|undistorted)\b/i,
+  'media-undistorted': /\b(original proportions|stretching or squashing|without (?:stretching|squashing))\b/i,
   'live-text': /\blive text\b/i,
+  'type-emphasis': /\b(bold and italic|italic styles|emphasize key words)\b/i,
   'video-sync': /\b(in sync with the mouth|lip[- ]sync|speech stays in sync)\b/i,
 };
 
@@ -194,6 +198,16 @@ function looksHappenstance(statement: string, prompt: string): boolean {
   if (HAPPENSTANCE.test(statement)) return true;
   if (/\bbronze\b/i.test(statement) && !/\bbronze\b/i.test(prompt)) return true;
   return false;
+}
+
+function hexesOf(text: string): string[] {
+  return [...text.toLowerCase().matchAll(/#[0-9a-f]{3,8}\b/g)].map((match) => match[0]);
+}
+
+function looksFileSpecific(statement: string, prompt: string): boolean {
+  if (FILE_TELL.test(statement)) return true;
+  if (SLIDE_INDEX.test(statement) && !SLIDE_INDEX.test(prompt)) return true;
+  return hexesOf(statement).some((hex) => !prompt.toLowerCase().includes(hex));
 }
 
 function looksRaterNoise(seat: HelperSeatInput): boolean {
@@ -296,7 +310,7 @@ export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding:
       reason = 'Both files pass this. Keep it only if the brief requires it (page size, locked line, named type).';
     } else if (seat.golden === true && ai === false) {
       const origin = { prompt: grounding.prompt, inputRoles: grounding.inputRoles ?? [] };
-      if (looksCheated(seat.statement, origin) || !seatGroundingOf(seat.statement, origin)) {
+      if (looksCheated(seat.statement, origin) || looksFileSpecific(seat.statement, grounding.prompt)) {
         bucket = 'output_fitted';
         action = 'rewrite';
         reason = 'This seat is written off the golden or AI file, not the brief, an input, or a named craft implicit. Retarget it — or drop it.';
@@ -315,12 +329,19 @@ export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding:
   return rankHelperRows(rows);
 }
 
+export function shouldScanForFitted(row: HelperAnalysisRow, grounding: HelperGroundingInput): boolean {
+  if (row.golden !== true || row.ai !== false || row.action !== 'keep') return false;
+  const origin = seatGroundingOf(row.statement, grounding);
+  return !origin?.startsWith('craft:') && !origin?.startsWith('input:');
+}
+
 export function applyFittedScan(rows: readonly HelperAnalysisRow[], fittedIds: readonly string[]): HelperAnalysisRow[] {
   const flagged = new Set(fittedIds);
   return rankHelperRows(
     rows.map((row) => {
       if (!flagged.has(row.id) || FITTED_LOCKED.has(row.bucket)) return row;
       if (row.bucket === 'hygiene' && row.action === 'drop') return row;
+      if (seatGroundingOf(row.statement, { prompt: '' })?.startsWith('craft:')) return row;
       return {
         ...row,
         bucket: 'output_fitted' as const,
@@ -412,7 +433,7 @@ export function packHelperResult(input: {
     if (!tag || statement.length < 8) continue;
     const lint = lintStatement({ statement, tag });
     const cheated = looksCheated(statement, grounding);
-    if (lint.overall !== 'pass' || cheated) continue;
+    if (lint.overall !== 'pass' || cheated || looksFileSpecific(statement, input.prompt)) continue;
     if (!draft.grounding) continue;
     if (isGenericBar(statement)) continue;
     if (seatedTexts.some((text) => nearDuplicate(text, statement)) || accepted.some((row) => nearDuplicate(row.statement, statement))) {

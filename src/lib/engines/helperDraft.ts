@@ -37,8 +37,8 @@ the brief or craft. For output_fitted: the current seat is written off the golde
 to fail this pack. Offer one grounded replacement from the brief, a named input, or a named
 craft implicit. Drop the output-specific detail (this mascot, this sofa, this crop).
 Do not dumb a contrast seat into “the logo is present”. Do not sample a hex the guide never
-named. Do not stack a second claim. Do not propose canvas catch-alls, “hierarchy exists”,
-or generic contrast.
+named. Do not name slide numbers. Do not stack a second claim. Do not propose canvas
+catch-alls, “hierarchy exists”, or generic contrast.
 
 Add drafts have no seatId. They must be brief requirements, one claim, predicted golden true
 and AI false. Do not mention Golden or AI in the statement text.

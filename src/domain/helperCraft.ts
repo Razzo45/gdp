@@ -3,7 +3,9 @@ export const HELPER_CRAFT = {
   'slides-canvas': 'On-screen objects stay inside the slide canvas.',
   'slides-title-safe': 'Required titles stay inside title-safe margins.',
   'logo-undistorted': 'The logo keeps its aspect ratio.',
+  'media-undistorted': 'Placed media keep their original proportions without stretching or squashing.',
   'live-text': 'Print or deck type stays as live text, not outlines, unless the brief says otherwise.',
+  'type-emphasis': 'Bold and italic are used to emphasize key words.',
   'video-sync': 'On-camera speech stays in sync with the mouth.',
 } as const;
 
