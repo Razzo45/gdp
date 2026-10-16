@@ -162,7 +162,7 @@ function HelperPanel() {
               Need a hand
             </h2>
             <p className="mt-1 text-sm leading-6 text-muted">
-              We look at each seat against the golden file and this AI pack. You stay in charge — copy what you want.
+              First we catch seats written off the golden or AI file, then duplicates, then the rest. You stay in charge — copy what you want.
             </p>
           </div>
           <button className="btn btn-ghost btn-sm shrink-0" type="button" onClick={actions.closePanel}>
@@ -223,10 +223,26 @@ function ScoreCard({ label, value, hint, ok }: { label: string; value: number; h
 
 function HelperResultList({ result }: { result: HelperResult }) {
   const { actions } = useHelper();
+  const fitted = result.act.filter((row) => row.bucket === 'output_fitted');
+  const duplicates = result.act.filter((row) => row.bucket === 'duplicate');
+  const rest = result.act.filter((row) => row.bucket !== 'output_fitted' && row.bucket !== 'duplicate');
   return (
     <div className="space-y-8">
-      <KeepSection rows={result.keep} onJump={actions.jump} />
-      <ActSection rows={result.act} onCopy={actions.copy} onJump={actions.jump} />
+      <ActSection
+        rows={fitted}
+        title="Written off this output"
+        note="These read like they were written from the golden or AI file. Do this instead — or drop them."
+        onCopy={actions.copy}
+        onJump={actions.jump}
+      />
+      <ActSection
+        rows={duplicates}
+        title="Same seat twice"
+        note="Drop one of these. Two seats that say the same thing do not make a stronger rubric."
+        onCopy={actions.copy}
+        onJump={actions.jump}
+      />
+      <ActSection rows={rest} title="Fix these" note="Override the grade, reword the seat, or drop it." onCopy={actions.copy} onJump={actions.jump} />
       {result.add.length > 0 ? (
         <section className="space-y-3">
           <SectionHead title="Add these" count={result.add.length} note="The golden file has this and this AI pack missed it." />
@@ -235,6 +251,7 @@ function HelperResultList({ result }: { result: HelperResult }) {
           ))}
         </section>
       ) : null}
+      <KeepSection rows={result.keep} onJump={actions.jump} />
     </div>
   );
 }
@@ -263,22 +280,26 @@ function KeepSection({ rows, onJump }: { rows: HelperAnalysisRow[]; onJump: (sea
 
 function ActSection({
   rows,
+  title,
+  note,
   onCopy,
   onJump,
 }: {
   rows: HelperActRow[];
+  title: string;
+  note: string;
   onCopy: (statement: string) => Promise<void>;
   onJump: (seatId: string) => void;
 }) {
   if (rows.length === 0) return null;
   return (
     <section className="space-y-3">
-      <SectionHead title="Fix these" count={rows.length} note="Override the grade, reword the seat, or drop it." />
+      <SectionHead title={title} count={rows.length} note={note} />
       {rows.map((row) => (
         <article key={row.id} className="rounded-2xl border border-line bg-wash px-4 py-3">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <p className="text-xs font-medium text-muted">{row.tag}</p>
-            <p className="text-xs font-semibold text-ink">{actionOf(row.action)}</p>
+            <p className="text-xs font-semibold text-ink">{actionOf(row)}</p>
           </div>
           <p className="mt-1 text-sm leading-6 break-words text-ink">{row.statement}</p>
           <Verdicts golden={row.golden} ai={row.ai} />
@@ -286,7 +307,7 @@ function ActSection({
           {row.goldenEvidence ? <p className="mt-2 text-sm leading-6 text-muted">On the golden file: {row.goldenEvidence}</p> : null}
           {row.rewrite ? (
             <div className="mt-3 rounded-xl border border-line bg-surface px-3 py-2">
-              <p className="text-xs font-medium text-muted">Suggested wording</p>
+              <p className="text-xs font-medium text-muted">{row.bucket === 'output_fitted' ? 'Do this instead' : 'Suggested wording'}</p>
               <p className="mt-1 text-sm leading-6 break-words text-ink">{row.rewrite}</p>
             </div>
           ) : null}
@@ -348,10 +369,11 @@ function markOf(value: boolean | null): string {
   return 'not graded';
 }
 
-function actionOf(action: HelperActRow['action']): string {
-  if (action === 'drop') return 'Drop';
-  if (action === 'override') return 'Override the grade';
-  if (action === 'rewrite') return 'Reword';
+function actionOf(row: HelperActRow): string {
+  if (row.action === 'drop') return 'Drop';
+  if (row.action === 'override') return 'Override the grade';
+  if (row.bucket === 'output_fitted') return 'Do this instead';
+  if (row.action === 'rewrite') return 'Reword';
   return 'Leave';
 }
 

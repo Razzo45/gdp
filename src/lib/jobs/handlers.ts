@@ -13,7 +13,7 @@ import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autor
 import type { Seed } from '@/lib/engines/rubricFactory';
 import { GeminiError } from '@/lib/ai/gemini';
 import { listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
-import { analyzeHelperSeats, packHelperResult, promptFromFields, type HelperSeatInput } from '@/domain/helper';
+import { analyzeHelperSeats, applyFittedScan, packHelperResult, promptFromFields, type HelperSeatInput } from '@/domain/helper';
 import { currentRubric, goldenState, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
 import { latestGroup } from '@/lib/services/stability';
 import { pruneFinishedJobs, pruneGoldenRatings, pruneStabilityGroups } from '@/lib/services/retention';
@@ -398,7 +398,7 @@ async function runRubricHelper(ctx: JobContext): Promise<Record<string, unknown>
   const { prompt } = taskContextOf(submission);
   const source = readSource(submission);
   const inputRoles = (source?.inputFiles ?? []).flatMap((file) => (file.role ? [file.role] : []));
-  await ctx.tick({ done: 0, total: 3, note: 'Classifying seats from Golden and this AI pack' });
+  await ctx.tick({ done: 0, total: 4, note: 'Classifying seats from Golden and this AI pack' });
   const seats: HelperSeatInput[] = statements.map((row) => ({
     id: row.id,
     statement: row.statement,
@@ -410,12 +410,15 @@ async function runRubricHelper(ctx: JobContext): Promise<Record<string, unknown>
     stability: passes.map((pass) => pass.answers[row.id] ?? null),
     stabilityEvidence: passes.map((pass) => pass.evidence[row.id] ?? ''),
   }));
-  const analyzed = analyzeHelperSeats(seats, { prompt });
-  await ctx.tick({ done: 1, total: 3, note: `Keep ${analyzed.filter((row) => row.action === 'keep').length} · act ${analyzed.filter((row) => row.action !== 'keep').length}` });
-  const { draftHelperRows } = await import('@/lib/engines/helperDraft');
-  const drafts = await draftHelperRows({ prompt, inputRoles, seats: analyzed, signal: ctx.signal });
-  await ctx.tick({ done: 2, total: 3, note: 'Packing Keep / Act / Add' });
-  const packed = packHelperResult({ seats, prompt, inputRoles, drafts });
+  const analyzed = analyzeHelperSeats(seats, { prompt, inputRoles });
+  await ctx.tick({ done: 1, total: 4, note: 'Checking seats that read as written off the golden or AI file' });
+  const { draftHelperRows, scanOutputFitted } = await import('@/lib/engines/helperDraft');
+  const fittedIds = await scanOutputFitted({ prompt, inputRoles, seats: analyzed, signal: ctx.signal });
+  const scanned = applyFittedScan(analyzed, fittedIds);
+  await ctx.tick({ done: 2, total: 4, note: `Keep ${scanned.filter((row) => row.action === 'keep').length} · act ${scanned.filter((row) => row.action !== 'keep').length}` });
+  const drafts = await draftHelperRows({ prompt, inputRoles, seats: scanned, signal: ctx.signal });
+  await ctx.tick({ done: 3, total: 4, note: 'Packing Keep / Act / Add' });
+  const packed = packHelperResult({ seats, prompt, inputRoles, drafts, fittedIds });
   await recordEvent(database, job.submissionId, job.createdBy, 'helper_finished', {
     jobId: job.id,
     keep: packed.mix.keep,

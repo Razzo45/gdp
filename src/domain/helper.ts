@@ -1,5 +1,6 @@
 import { isSoftSeat } from './discrimination';
 import { describeNamedFiles } from './fileLanguage';
+import { HELPER_CRAFT } from './helperCraft';
 import { lintStatement, nearDuplicate } from './lint';
 import { isRubricTag, type Family, type RubricTag } from './rubric';
 
@@ -9,10 +10,12 @@ export type HelperBucket =
   | 'hygiene'
   | 'rater_noise'
   | 'false_on_golden'
+  | 'output_fitted'
   | 'happenstance'
   | 'soft'
   | 'duplicate'
   | 'ungraded';
+export type HelperGroundingInput = { prompt: string; inputRoles?: readonly string[] };
 export type HelperAction = 'keep' | 'drop' | 'override' | 'rewrite';
 export type HelperGrounding = 'prompt' | `input:${string}` | `craft:${string}`;
 
@@ -88,14 +91,65 @@ const RATER_NOISE =
 const HAPPENSTANCE = /\b(unique crop|wraps at|bronze column|this pixel|near-black)\b/i;
 const REQUIRED_LOCK = /\b(16:9 page size|page size|cta|lockup|exactly as written)\b/i;
 const RANK: Record<HelperBucket, number> = {
-  false_on_golden: 0,
-  rater_noise: 1,
-  happenstance: 2,
-  duplicate: 3,
-  soft: 4,
-  hygiene: 5,
-  ungraded: 6,
-  discriminator: 7,
+  output_fitted: 0,
+  duplicate: 1,
+  false_on_golden: 2,
+  rater_noise: 3,
+  happenstance: 4,
+  soft: 5,
+  hygiene: 6,
+  ungraded: 7,
+  discriminator: 8,
+};
+const REWRITABLE = new Set<HelperBucket>(['output_fitted', 'false_on_golden', 'soft']);
+const FITTED_LOCKED = new Set<HelperBucket>(['output_fitted', 'duplicate', 'happenstance', 'false_on_golden', 'rater_noise']);
+const STOP = new Set([
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'of',
+  'to',
+  'in',
+  'on',
+  'for',
+  'is',
+  'that',
+  'this',
+  'with',
+  'uses',
+  'use',
+  'as',
+  'by',
+  'at',
+  'from',
+  'it',
+  'be',
+  'are',
+  'was',
+  'were',
+  'has',
+  'have',
+  'its',
+  'into',
+  'than',
+  'then',
+  'also',
+  'only',
+  'each',
+  'all',
+  'any',
+  'not',
+  'but',
+  'if',
+]);
+const CRAFT_ANCHOR: Record<string, RegExp> = {
+  'slides-canvas': /\b(slide canvas|canvas boundaries|inside the (?:slide )?canvas)\b/i,
+  'slides-title-safe': /\btitle[- ]safe\b/i,
+  'logo-undistorted': /\b(aspect ratio|undistorted)\b/i,
+  'live-text': /\blive text\b/i,
+  'video-sync': /\b(in sync with the mouth|lip[- ]sync|speech stays in sync)\b/i,
 };
 
 const PROMPT_FIELD = /^(prompt|instruction|brief|task|description)$/i;
@@ -146,7 +200,62 @@ function looksRaterNoise(seat: HelperSeatInput): boolean {
   return RATER_NOISE.test(seat.statement) || RATER_NOISE.test(seat.goldenEvidence ?? '') || (seat.stabilityEvidence ?? []).some((line) => RATER_NOISE.test(line));
 }
 
-export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding: { prompt: string } = { prompt: '' }): HelperAnalysisRow[] {
+function significantTokens(text: string): { words: Set<string>; locks: Set<string> } {
+  const words = new Set<string>();
+  const locks = new Set<string>();
+  for (const match of text.toLowerCase().matchAll(/\d+:\d+|#[0-9a-f]{3,8}|\b[a-z][a-z0-9-]{3,}\b/g)) {
+    const token = match[0];
+    if (/\d+:\d+|#[0-9a-f]{3,8}/.test(token)) locks.add(token);
+    else if (!STOP.has(token)) words.add(token);
+  }
+  return { words, locks };
+}
+
+function promptOverlap(statement: string, prompt: string): boolean {
+  if (!prompt.trim()) return false;
+  const left = significantTokens(statement);
+  const right = significantTokens(prompt);
+  for (const lock of left.locks) {
+    if (right.locks.has(lock)) return true;
+  }
+  let hits = 0;
+  for (const word of left.words) {
+    if (right.words.has(word)) hits += 1;
+    if (hits >= 2) return true;
+  }
+  return false;
+}
+
+function craftOf(statement: string): HelperGrounding | null {
+  const lower = statement.toLowerCase();
+  for (const [id, phrase] of Object.entries(HELPER_CRAFT)) {
+    if (nearDuplicate(statement, phrase) || lower.includes(phrase.toLowerCase())) return `craft:${id}`;
+    if (CRAFT_ANCHOR[id]?.test(statement)) return `craft:${id}`;
+  }
+  return null;
+}
+
+function inputOf(statement: string, roles: readonly string[]): HelperGrounding | null {
+  const lower = statement.toLowerCase();
+  for (const role of [...roles].toSorted((a, b) => b.length - a.length)) {
+    const trimmed = role.trim();
+    if (trimmed.length >= 3 && lower.includes(trimmed.toLowerCase())) return `input:${trimmed}`;
+  }
+  return null;
+}
+
+export function seatGroundingOf(statement: string, grounding: HelperGroundingInput): HelperGrounding | null {
+  const inputRoles = grounding.inputRoles ?? [];
+  if (looksCheated(statement, { prompt: grounding.prompt, inputRoles })) return null;
+  const craft = craftOf(statement);
+  if (craft) return craft;
+  const namedInput = inputOf(statement, inputRoles);
+  if (namedInput) return namedInput;
+  if (promptOverlap(statement, grounding.prompt)) return 'prompt';
+  return null;
+}
+
+export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding: HelperGroundingInput = { prompt: '' }): HelperAnalysisRow[] {
   const rows = seats.map((seat) => {
     const ai = aiOf(seat.stability);
     let bucket: HelperBucket = 'ungraded';
@@ -186,9 +295,16 @@ export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding:
       action = 'keep';
       reason = 'Both files pass this. Keep it only if the brief requires it (page size, locked line, named type).';
     } else if (seat.golden === true && ai === false) {
-      bucket = 'discriminator';
-      action = 'keep';
-      reason = 'The golden file passes and this AI pack fails. Keep this seat as written.';
+      const origin = { prompt: grounding.prompt, inputRoles: grounding.inputRoles ?? [] };
+      if (looksCheated(seat.statement, origin) || !seatGroundingOf(seat.statement, origin)) {
+        bucket = 'output_fitted';
+        action = 'rewrite';
+        reason = 'This seat is written off the golden or AI file, not the brief, an input, or a named craft implicit. Retarget it — or drop it.';
+      } else {
+        bucket = 'discriminator';
+        action = 'keep';
+        reason = 'The golden file passes and this AI pack fails. Keep this seat as written.';
+      }
     } else {
       bucket = 'ungraded';
       action = 'keep';
@@ -196,6 +312,26 @@ export function analyzeHelperSeats(seats: readonly HelperSeatInput[], grounding:
     }
     return { ...seat, bucket, action, reason, ai };
   });
+  return rankHelperRows(rows);
+}
+
+export function applyFittedScan(rows: readonly HelperAnalysisRow[], fittedIds: readonly string[]): HelperAnalysisRow[] {
+  const flagged = new Set(fittedIds);
+  return rankHelperRows(
+    rows.map((row) => {
+      if (!flagged.has(row.id) || FITTED_LOCKED.has(row.bucket)) return row;
+      if (row.bucket === 'hygiene' && row.action === 'drop') return row;
+      return {
+        ...row,
+        bucket: 'output_fitted' as const,
+        action: 'rewrite' as const,
+        reason: 'This seat reads as written off the golden or AI file, not the brief, an input, or a named craft implicit. Retarget it — or drop it.',
+      };
+    }),
+  );
+}
+
+function rankHelperRows<T extends { bucket: HelperBucket; statement: string }>(rows: readonly T[]): T[] {
   return rows.toSorted((a, b) => RANK[a.bucket] - RANK[b.bucket] || a.statement.localeCompare(b.statement));
 }
 
@@ -262,8 +398,9 @@ export function packHelperResult(input: {
   prompt: string;
   inputRoles: readonly string[];
   drafts?: readonly HelperDraft[];
+  fittedIds?: readonly string[];
 }): HelperResult {
-  const analyzed = analyzeHelperSeats(input.seats, { prompt: input.prompt });
+  const analyzed = applyFittedScan(analyzeHelperSeats(input.seats, { prompt: input.prompt, inputRoles: input.inputRoles }), input.fittedIds ?? []);
   const seatedTexts = analyzed.map((row) => row.statement);
   const accepted: HelperPackedRow[] = [];
   const rewriteBySeat = new Map<string, HelperPackedRow>();
@@ -299,7 +436,7 @@ export function packHelperResult(input: {
     };
     if (draft.seatId) {
       const seat = analyzed.find((item) => item.id === draft.seatId);
-      if (!seat || (seat.bucket !== 'false_on_golden' && seat.bucket !== 'soft')) continue;
+      if (!seat || !REWRITABLE.has(seat.bucket)) continue;
       if (row.golden === false) continue;
       rewriteBySeat.set(draft.seatId, row);
     } else if (row.golden === true && row.ai === false) {

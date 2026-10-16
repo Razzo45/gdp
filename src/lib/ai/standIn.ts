@@ -124,6 +124,8 @@ export function standInValue<T>(input: { system: string; parts: (string | MediaP
   } else if (/rewrite ONE rubric statement/i.test(system)) {
     const statement = text.match(/statement:\s*(.+)/i)?.[1]?.trim() || 'The deliverable matches the brief.';
     raw = { statement, rationale: 'Stand-in rewrite after a free-tier 429.' };
+  } else if (/You only scan\. Do not rewrite/i.test(system)) {
+    raw = { fittedIds: [] };
   } else if (/rubric writer/i.test(system)) {
     raw = mockHelperDrafts(text);
   } else {

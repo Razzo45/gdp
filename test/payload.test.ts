@@ -79,6 +79,15 @@ describe('429 stand-in', () => {
     expect(drafted.drafts.every((row) => row.statement.length > 8 && !row.statement.includes('?'))).toBe(true);
   });
 
+  it('returns an empty fitted-id list for the helper output scan', () => {
+    const scanned = standInValue({
+      system: 'You only scan. Do not rewrite. Do not classify Golden vs AI grades.',
+      parts: ['--- Seated rows ---\nkeep-1 | Content - Semantics\nThe spoken narration names the card.'],
+      schema: z.object({ fittedIds: z.array(z.string()) }),
+    });
+    expect(scanned.fittedIds).toEqual([]);
+  });
+
   it('expands a seed into lint-shaped rows', () => {
     const rows = standInValue({
       system: 'You are a senior practitioner turning ONE expert human seed into GRANULAR Precise Boolean Yes/No rows. Emit UP TO 3 rows',
