@@ -2,20 +2,24 @@
 
 import { useMemo, useState } from 'react';
 import { parsePasteLines, pastedSeatDisagreements, preparePastedSeats } from '@/domain/import';
-import { countFamilies, FAMILY_LABELS, quotaSpread, RUBRIC_TAGS, type RubricTag } from '@/domain/rubric';
+import { aliasTag, countFamilies, familyLabels, quotaCaption, quotaSpread, tagsForStyle, type RubricTag, type TagStyle } from '@/domain/rubric';
 import { Modal } from '../ui/Modal';
 
 type DraftRow = { statement: string; tag: RubricTag | '' };
 
 export function PasteRubricModal({
   busy,
+  style = 'visual',
   onClose,
   onReplace,
 }: {
   busy: boolean;
+  style?: TagStyle;
   onClose: () => void;
   onReplace: (rows: { tag: RubricTag; statement: string }[]) => void;
 }) {
+  const labels = familyLabels(style);
+  const tags = tagsForStyle(style);
   const [text, setText] = useState('');
   const [rows, setRows] = useState<DraftRow[]>([]);
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -28,16 +32,16 @@ export function PasteRubricModal({
       const prev = new Map(current.map((row) => [row.statement, row.tag]));
       return parsed.rows.map((row) => ({
         statement: row.statement,
-        tag: row.suggestedTag ?? prev.get(row.statement) ?? '',
+        tag: row.suggestedTag ? aliasTag(row.suggestedTag, style) ?? row.suggestedTag : prev.get(row.statement) ?? '',
       }));
     });
   }
 
   const tagged = rows.filter((row): row is { statement: string; tag: RubricTag } => row.tag !== '');
   const untagged = rows.length - tagged.length;
-  const prepared = useMemo(() => preparePastedSeats(tagged), [tagged]);
+  const prepared = useMemo(() => preparePastedSeats(tagged, style), [tagged, style]);
   const seated = useMemo(() => countFamilies(prepared), [prepared]);
-  const spread = useMemo(() => quotaSpread(seated), [seated]);
+  const spread = useMemo(() => quotaSpread(seated, undefined, style), [seated, style]);
   const disagreements = useMemo(() => pastedSeatDisagreements(tagged), [tagged]);
   const ready = rows.length > 0 && untagged === 0 && spread.ready;
 
@@ -46,7 +50,7 @@ export function PasteRubricModal({
       <p className="rounded-xl border border-warn bg-warn-soft px-3 py-2 text-sm text-warn">
         Saving replaces the current rubric. That rubric is gone.
       </p>
-      <p className="mt-3 text-sm text-muted">One statement per line. Choose a tag for each. The save needs 5 Format, 15 Content, and 30 Visual.</p>
+      <p className="mt-3 text-sm text-muted">One statement per line. Choose a tag for each. The save needs {quotaCaption(style)}.</p>
       <textarea
         className="input mt-3 min-h-32 font-mono text-xs"
         value={text}
@@ -58,7 +62,7 @@ export function PasteRubricModal({
       {rows.length > 0 && (
         <div className="mt-4 space-y-2">
           <p className="text-sm">
-            {FAMILY_LABELS.format} {seated.format}/5 · {FAMILY_LABELS.content} {seated.content}/15 · {FAMILY_LABELS.visual} {seated.visual}/30
+            {labels.format} {seated.format}/5 · {labels.content} {seated.content}/15 · {labels.visual} {seated.visual}/30
           </p>
           {!ready && (
             <p className="text-sm text-warn">
@@ -72,7 +76,7 @@ export function PasteRubricModal({
             </p>
           )}
           {ready && disagreements === 0 && (
-            <p className="text-xs text-muted">5 Format, 15 Content, 30 Visual — ready to replace.</p>
+            <p className="text-xs text-muted">{quotaCaption(style)} — ready to replace.</p>
           )}
           <div className="max-h-64 space-y-2 overflow-y-auto">
             {rows.map((row, index) => (
@@ -86,7 +90,7 @@ export function PasteRubricModal({
                   }}
                 >
                   <option value="">Choose tag</option>
-                  {RUBRIC_TAGS.map((tag) => (
+                  {tags.map((tag) => (
                     <option key={tag} value={tag}>
                       {tag}
                     </option>

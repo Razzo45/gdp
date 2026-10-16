@@ -1,6 +1,6 @@
 import { describeNamedFiles } from './fileLanguage';
 import { toAffirmativeStatement } from './lint';
-import { correctTag, familyOfTag, guessTag, honorSeatedTag, isRubricTag, RUBRIC_TAGS, type Family, type RubricTag } from './rubric';
+import { aliasTag, correctTag, familyOfTag, guessTag, honorSeatedTag, isRubricTag, RUBRIC_TAGS, type Family, type RubricTag, type TagStyle } from './rubric';
 
 /**
  * Parses pasted text into statements. One per line; an optional leading
@@ -45,10 +45,11 @@ export function parsePasteLines(text: string): { rows: { statement: string; sugg
  * the same wording Format (px, 16:9, carousel) but Replace must not steal
  * a Visual/Content seat the modal already counted.
  */
-export function preparePastedSeats(rows: readonly { tag: RubricTag; statement: string }[]): { statement: string; tag: RubricTag; family: Family }[] {
+export function preparePastedSeats(rows: readonly { tag: RubricTag; statement: string }[], style?: TagStyle): { statement: string; tag: RubricTag; family: Family }[] {
   return rows.map((row) => {
     const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
-    const tag = honorSeatedTag(statement, row.tag);
+    const chosen = style ? aliasTag(row.tag, style) ?? row.tag : row.tag;
+    const tag = honorSeatedTag(statement, chosen);
     return { statement, tag, family: familyOfTag(tag) };
   });
 }

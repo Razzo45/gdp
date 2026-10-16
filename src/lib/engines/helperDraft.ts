@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { HELPER_CRAFT } from '@/domain/helperCraft';
 import type { HelperAnalysisRow, HelperDraft, HelperGrounding } from '@/domain/helper';
 import { isHelperGrounding } from '@/domain/helper';
+import { aliasTag, tagStyleOf } from '@/domain/rubric';
 import { env } from '@/lib/env';
 import { generateJson } from '@/lib/ai/gemini';
 
@@ -92,6 +93,7 @@ export async function draftHelperRows(input: {
   signal?: AbortSignal;
 }): Promise<HelperDraft[]> {
   const rewrite = input.seats.filter((row) => row.bucket === 'false_on_golden' || row.bucket === 'soft' || row.bucket === 'output_fitted');
+  const style = tagStyleOf({ tags: input.seats.map((row) => row.tag), hasCurrentRubric: true });
   const craft = Object.entries(HELPER_CRAFT)
     .map(([id, phrase]) => `${id}: ${phrase}`)
     .join('\n');
@@ -118,7 +120,7 @@ export async function draftHelperRows(input: {
       {
         seatId: row.seatId?.trim() || undefined,
         statement: row.statement,
-        tag: row.tag,
+        tag: aliasTag(row.tag, style) ?? row.tag,
         grounding: row.grounding as HelperGrounding,
         evidence: row.evidence,
         golden: row.golden,

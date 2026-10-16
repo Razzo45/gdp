@@ -192,7 +192,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     if (!read) throw new ServiceError(502, 'The Catalog payload could not be read.');
 
     const items = catalogRubricItems(
-      statements.map((s) => ({ id: s.id, statement: s.statement, family: s.family, position: s.position, answer: golden.verdicts[s.id] === false ? 'No' : 'Yes' })),
+      statements.map((s) => ({ id: s.id, statement: s.statement, family: s.family, tag: s.tag, position: s.position, answer: golden.verdicts[s.id] === false ? 'No' : 'Yes' })),
       fresh.project,
     );
     if (!items.ok) throw invalid(items.error);

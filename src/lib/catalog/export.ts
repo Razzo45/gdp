@@ -8,7 +8,7 @@
  *  - outbound human text is converted to ASCII where the upstream requires it,
  *    while ids, enums and file references are never rewritten.
  */
-import { deliveryId, FAMILY_LABELS, seatsInDisplayOrder, type Family } from '@/domain/rubric';
+import { deliveryId, familyLabels, seatsInDisplayOrder, tagStyleOf, type Family } from '@/domain/rubric';
 import { viewTaskHref, viewTaskToken } from '@/domain/viewTask';
 import { pct } from '@/components/format';
 import { STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
@@ -42,6 +42,7 @@ export interface DeliveryRow {
   id?: string;
   statement: string;
   family: Family;
+  tag?: string;
   position?: number;
   /** The Golden verdict ("Yes"/"No"); every row is Yes once the gate passes. */
   answer: 'Yes' | 'No';
@@ -57,13 +58,14 @@ export function catalogRubricItems(rows: readonly DeliveryRow[], project: unknow
       error: `This project's rubric fields (${[...wanted].sort().join(', ')}) cannot carry ${wording ? 'a verdict' : 'a statement'}, so the rubric was not sent.`,
     };
   }
+  const labels = familyLabels(tagStyleOf({ tags: rows.map((row) => row.tag ?? ''), hasCurrentRubric: true }));
   const ordered = seatsInDisplayOrder(rows.map((row, index) => ({ ...row, id: row.id ?? String(index), position: row.position ?? index })));
   const items = ordered.map((row, index) => {
     const item: Record<string, string> = {};
     if (wanted.has('id')) item['id'] = deliveryId(index);
     if (wanted.has('statement')) item['statement'] = catalogAsciiText(row.statement);
     if (wanted.has('question')) item['question'] = catalogAsciiText(row.statement);
-    if (wanted.has('tag')) item['tag'] = FAMILY_LABELS[row.family];
+    if (wanted.has('tag')) item['tag'] = labels[row.family];
     item['answer'] = row.answer;
     return item;
   });

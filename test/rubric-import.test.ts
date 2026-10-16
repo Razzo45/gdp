@@ -34,6 +34,14 @@ describe('preparePastedSeats', () => {
     expect(rows[1]).toMatchObject({ tag: 'Format/File', family: 'format' });
     expect(quotaSpread(countFamilies(rows)).extra.format).toBe(0);
   });
+
+  it('aliases a Visual paste onto Craft when that is the channel', () => {
+    const rows = preparePastedSeats(
+      [{ tag: 'Visual - Layout', statement: 'The title band stays inside the slide canvas.' }],
+      'craft',
+    );
+    expect(rows[0]).toMatchObject({ tag: 'Craft - Composition', family: 'visual' });
+  });
 });
 
 describe('parsePasteLines', () => {

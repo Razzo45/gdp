@@ -12,7 +12,7 @@ import { parseBank, rewriteBank, type BankCandidate } from '@/domain/bank';
 import { lintStatement, nearDuplicate, type LintResult } from '@/domain/lint';
 import { applyInferredScope } from '@/domain/fileScope';
 import { preparePastedSeats } from '@/domain/import';
-import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, honorSeatedTag, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder } from '@/domain/rubric';
+import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, familyWord, honorSeatedTag, quotaCaption, quotaSpread, RUBRIC_TAGS, seatsInDisplayOrder, tagStyleOf } from '@/domain/rubric';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import type { FactoryStatement } from '@/lib/engines/rubricFactory';
 import { conflict, forbidden, invalid, notFound } from './errors';
@@ -374,11 +374,13 @@ export async function addFromBank(actor: Actor, submissionId: string, input: { c
     if (locked.revision !== input.revision) throw conflict('Someone saved a newer version of this rubric. Your view has been refreshed.', { revision: locked.revision, statements: await statementsOf(tx, rubric.id) });
     const rows = await statementsOf(tx, rubric.id);
     const candidate = unusedCandidate(rubric, rows, input.claimKey);
-    const tag = correctTag(candidate.statement, candidate.tag);
+    const style = tagStyleOf({ tags: rows.map((row) => row.tag), hasCurrentRubric: true });
+    const tag = correctTag(candidate.statement, candidate.tag, style);
     const family = familyOfTag(tag);
-    const spread = quotaSpread(countFamilies(rows));
+    const spread = quotaSpread(countFamilies(rows), familyQuotas(), style);
     if (!spread.canAdd[family]) {
-      throw conflict(`Delete a ${family === 'format' ? 'Format' : family === 'content' ? 'Content' : 'Visual'} seat before adding another. ${spread.warning}`.trim());
+      const word = family === 'format' ? 'Format' : family === 'content' ? 'Content' : familyWord(style);
+      throw conflict(`Delete a ${word} seat before adding another. ${spread.warning}`.trim());
     }
     const lint = lintStatement({ statement: candidate.statement, tag });
     const scoped = scopeFromCatalog({ statement: candidate.statement, scope: 'output' as const, inputFileIds: [], outputFile: null }, submission);
@@ -418,12 +420,13 @@ export async function replaceRubricFromPaste(
 ): Promise<SaveResult & { imported: number }> {
   if (input.rows.length === 0) throw invalid('Paste at least one statement.');
   if (input.rows.length > 200) throw invalid('Import at most 200 statements at a time.');
-  const prepared = preparePastedSeats(input.rows);
+  const style = tagStyleOf({ tags: input.rows.map((row) => row.tag), hasCurrentRubric: true });
+  const prepared = preparePastedSeats(input.rows, style);
   if (prepared.some((row) => row.statement.length < 8 || row.statement.length > 600)) {
     throw invalid('Every statement must be between 8 and 600 characters.');
   }
-  const spread = quotaSpread(countFamilies(prepared), familyQuotas());
-  if (!spread.ready) throw invalid(`Seat the rubric at 5 Format, 15 Content, 30 Visual first. ${spread.warning}`);
+  const spread = quotaSpread(countFamilies(prepared), familyQuotas(), style);
+  if (!spread.ready) throw invalid(`Seat the rubric at ${quotaCaption(style)} first. ${spread.warning}`);
 
   const result = await db().transaction(async (tx) => {
     const submission = await requireRubricSeat(tx, actor, submissionId);

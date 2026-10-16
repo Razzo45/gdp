@@ -9,7 +9,7 @@ import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
-import { FAMILY_LABELS, MAX_ROUGH_CHARS, honorSeatedTag, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { MAX_ROUGH_CHARS, familyLabels, familyWord, honorSeatedTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
 import { PasteRubricModal } from './PasteRubricModal';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
@@ -45,7 +45,9 @@ const toDraft = (s: RubricStatement): Draft => ({
   claimKey: s.claimKey,
 });
 const FAMILY_ORDER: Family[] = ['format', 'content', 'visual'];
-const FAMILY_HEADING: Record<Family, string> = { format: 'Format & File', content: 'Content', visual: 'Visual' };
+function familyHeading(style: ReturnType<typeof tagStyleOf>): Record<Family, string> {
+  return { format: 'Format & File', content: 'Content', visual: familyWord(style) };
+}
 
 export function RubricEditor({ view, refresh, notify }: PanelProps) {
   const rubric = view.rubric;
@@ -229,7 +231,13 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
     return c;
   }, [drafts]);
   const quotas = rubric?.quotas ?? { format: 5, content: 15, visual: 30 };
-  const spread = quotaSpread(counts, quotas);
+  const style = tagStyleOf({
+    tags: (drafts.length ? drafts : rubric?.statements ?? []).map((row) => row.tag),
+    hasCurrentRubric: Boolean(rubric),
+  });
+  const labels = familyLabels(style);
+  const headings = familyHeading(style);
+  const spread = quotaSpread(counts, quotas, style);
   const golden = view.golden;
   const genJob = view.jobs.find((j) => j.kind === 'rubric_generate' && (j.status === 'queued' || j.status === 'running'));
   const rateJob = view.jobs.find((j) => j.kind === 'golden_autorate' && (j.status === 'queued' || j.status === 'running'));
@@ -257,7 +265,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       <section className="card space-y-3" id="rubrics-generated">
         <h2 className="font-semibold">Rubric Review</h2>
         <p className="text-sm text-muted">Read-only rubric the Reviewer Team is scoring against the AI output.</p>
-        <StatementGroups groups={groups} drafts={drafts} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
+        <StatementGroups groups={groups} drafts={drafts} headings={headings} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
       </section>
     );
   }
@@ -286,7 +294,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                   ? 'Each check becomes a seed, the bank is ranked, then the strongest rows are seated.'
                   : 'Empty notes: the model proposes every distinct check from the brief.')}
             </span>
-            <span className="ml-auto">{Number(quotas.format) + Number(quotas.content) + Number(quotas.visual)} statements · {quotas.format} Format · {quotas.content} Content · {quotas.visual} Visual</span>
+            <span className="ml-auto">{Number(quotas.format) + Number(quotas.content) + Number(quotas.visual)} statements · {quotas.format} Format · {quotas.content} Content · {quotas.visual} {familyWord(style)}</span>
           </div>
         </div>
       )}
@@ -337,7 +345,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
       {editable && drafts.length > 0 && !spread.ready && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
-          <strong>Seat 5 Format, 15 Content, 30 Visual</strong>
+          <strong>Seat {quotaCaption(style)}</strong>
           <p className="mt-1 text-xs">{spread.warning}</p>
         </div>
       )}
@@ -380,7 +388,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         </p>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span>
-            {drafts.length} statements · {formatWeight(liveScore.totalWeight)} total · {FAMILY_ORDER.map((f) => `${FAMILY_LABELS[f]} ${counts[f]}/${quotas[f]}`).join(' · ')}
+            {drafts.length} statements · {formatWeight(liveScore.totalWeight)} total · {FAMILY_ORDER.map((f) => `${labels[f]} ${counts[f]}/${quotas[f]}`).join(' · ')}
           </span>
           {liveScore.graded > 0 && (
             <>
@@ -433,6 +441,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       <StatementGroups
         groups={groups}
         drafts={drafts}
+        headings={headings}
         view={view}
         editable={editable && !autorateLocked}
         golden={golden}
@@ -483,6 +492,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
                   onAdd={addBankRow}
                   onSwap={swapFromBank}
                   canAddFamily={(family) => spread.canAdd[family]}
+                  labels={labels}
                 />
               </>
             )}
@@ -494,6 +504,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       {pasteOpen && editable && (
         <PasteRubricModal
           busy={busy === 'import'}
+          style={style}
           onClose={() => setPasteOpen(false)}
           onReplace={(rows) => {
             void run('import', `/api/submissions/${view.submission.id}/rubric/import`, { revision, rows }, 'Rubric replaced.').then(() => setPasteOpen(false));
@@ -560,6 +571,7 @@ function catalogFiles(view: PanelProps['view']) {
 function StatementGroups(props: {
   groups: { family: Family; rows: Draft[] }[];
   drafts: Draft[];
+  headings: Record<Family, string>;
   view: PanelProps['view'];
   editable: boolean;
   golden: PanelProps['view']['golden'];
@@ -593,7 +605,7 @@ function StatementGroups(props: {
         return (
           <div key={family}>
             <h3 className="mb-1 text-sm font-semibold">
-              {FAMILY_HEADING[family]}{' '}
+              {props.headings[family]}{' '}
               <span className="font-normal text-muted">
                 {seatLabel(start)}
                 {end !== start ? `–${end}` : ''}
@@ -613,7 +625,7 @@ function StatementGroups(props: {
   );
 }
 
-function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard, onDelete, onApplySwap, swapPick }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts'>) {
+function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard, onDelete, onApplySwap, swapPick }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts' | 'headings'>) {
   const lint = lintOf(d, view.rubric);
   const verdict = golden?.verdicts[d.id];
   const source = golden?.sources[d.id];

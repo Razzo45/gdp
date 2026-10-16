@@ -1,5 +1,5 @@
 import { INTERROGATIVE_OPENER, toAffirmativeStatement } from './lint';
-import { MAX_SEED_CHARS, MAX_SEEDS, guessTag, isRubricTag, type RubricTag } from './rubric';
+import { aliasTag, MAX_SEED_CHARS, MAX_SEEDS, guessTag, isRubricTag, type RubricTag, type TagStyle } from './rubric';
 
 /**
  * Pipeline: collect every distinct expert check → expand each into a candidate
@@ -33,7 +33,7 @@ function looksLikeHeading(line: string): boolean {
  * Pull every distinct check out of pasted notes. Section headings become
  * themes; questions become affirmative seed statements. Caps at MAX_SEEDS.
  */
-export function extractSeedsFromNotes(text: string, max: number = MAX_SEEDS): ExtractedSeed[] {
+export function extractSeedsFromNotes(text: string, max: number = MAX_SEEDS, style: TagStyle = 'visual'): ExtractedSeed[] {
   const seeds: ExtractedSeed[] = [];
   const seen = new Set<string>();
   let theme = 'General';
@@ -56,7 +56,7 @@ export function extractSeedsFromNotes(text: string, max: number = MAX_SEEDS): Ex
     const key = statement.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    seeds.push({ theme: theme.slice(0, 80), statement, tag: tag ?? guessTag(statement) });
+    seeds.push({ theme: theme.slice(0, 80), statement, tag: tag ? aliasTag(tag, style) ?? tag : guessTag(statement, style) });
     if (seeds.length >= max) break;
   }
   return seeds;

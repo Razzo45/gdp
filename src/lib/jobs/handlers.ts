@@ -8,7 +8,7 @@ import { scoreBreakdown, STABILITY_PASSES } from '@/domain/gates';
 import { applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
 import { analyzeDiscrimination } from '@/domain/discrimination';
 import { isStatementLane } from '@/domain/jobs';
-import { seatIndexById } from '@/domain/rubric';
+import { seatIndexById, tagStyleForGenerate } from '@/domain/rubric';
 import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autorater';
 import type { Seed } from '@/lib/engines/rubricFactory';
 import { GeminiError } from '@/lib/ai/gemini';
@@ -112,6 +112,7 @@ export async function runRubricGenerate(ctx: JobContext): Promise<Record<string,
   const notes = (payload.source ?? '').trim();
   const seeds: Seed[] = [];
   const { prompt, context } = taskContextOf(submission);
+  const tagStyle = tagStyleForGenerate();
   const log = new StageLog(ctx);
 
   log.begin('Reading task inputs');
@@ -130,6 +131,7 @@ export async function runRubricGenerate(ctx: JobContext): Promise<Record<string,
     inputs: prepared,
     deliverables,
     target: payload.target,
+    tagStyle,
     onStage: async (stage, detail) => {
       switch (stage) {
         case 'reading':

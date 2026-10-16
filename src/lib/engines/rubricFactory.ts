@@ -6,7 +6,7 @@ import { allPass, lintStatement, nearDuplicate, toAffirmativeStatement, type Lin
 import { enhancerRowsPerSeed, extractSeedsFromNotes, shouldExtractNotes } from '@/domain/seeds';
 import { inferFileScope } from '@/domain/fileScope';
 import { describeNamedFiles } from '@/domain/fileLanguage';
-import { correctTag, familyOfTag, familyQuotas, isRubricTag, MAX_SEEDS, RUBRIC_TAGS, RUBRIC_TARGET, type Family } from '@/domain/rubric';
+import { aliasTag, correctTag, familyOfTag, familyQuotas, isRubricTag, MAX_SEEDS, RUBRIC_TARGET, tagsForStyle, type Family, type TagStyle } from '@/domain/rubric';
 import { env } from '@/lib/env';
 import { GeminiError, generateJson, type MediaPart } from '@/lib/ai/gemini';
 import type { PreparedFile } from '@/lib/ai/media';
@@ -58,6 +58,7 @@ export interface FactoryInput {
   target?: number;
   model?: string;
   onStage?: (stage: FactoryStage, detail: Record<string, unknown>) => Promise<void> | void;
+  tagStyle?: TagStyle;
 }
 
 export type { BankRow };
@@ -128,16 +129,26 @@ const Strength = z.object({
   scores: z.array(z.object({ id: z.string(), strength: z.number().int().min(0).max(100) })),
 });
 
-const TAG_LIST = RUBRIC_TAGS.join('|');
+function tagList(style: TagStyle): string {
+  return tagsForStyle(style).join('|');
+}
 
-const ENHANCER_SYSTEM = `You are a senior practitioner in the TASK ROLE turning ONE expert human
+function familyWord(style: TagStyle): string {
+  return style === 'craft' ? 'Craft' : 'Visual';
+}
+
+function enhancerSystem(style: TagStyle): string {
+  const list = tagList(style);
+  const family = familyWord(style);
+  const how = style === 'craft' ? 'how it is made' : 'how it looks';
+  return `You are a senior practitioner in the TASK ROLE turning ONE expert human
 seed into many GRANULAR Precise Boolean Yes/No rubric rows for foundation-model eval.
 
 Think like that professional on a real job — not like a student checking only what
 the client typed. The expert seed is the INTENT. Expand it into falsifiable
 production-QA checks peers in THIS ROLE would run (any industry).
 
-Return JSON only: { "rows": [ { "claim_key": "kebab-case-unique-id", "statement": "…", "tag": "${TAG_LIST}", "notes": "short why" } ] }
+Return JSON only: { "rows": [ { "claim_key": "kebab-case-unique-id", "statement": "…", "tag": "${list}", "notes": "short why" } ] }
 
 === HARD RULES ===
 - Emit UP TO {{TARGET_COUNT}} rows (aim for {{TARGET_COUNT}}). Each row is a distinct failure mode of THIS seed.
@@ -171,20 +182,30 @@ Return JSON only: { "rows": [ { "claim_key": "kebab-case-unique-id", "statement"
   drop one and cover a new failure mode instead.
 - Tags: Format/File rows test the file itself (type, size, dimensions, page/slide count,
   fonts embedded, naming, validity). Slide count and file type are NEVER Content.
-  Named font/typeface is Visual (brand), not Format — unless the claim is that fonts
-  are embedded in the file. Content rows test what it says/contains. Visual rows
-  test how it looks.`;
+  Named font/typeface is ${family} (brand), not Format — unless the claim is that fonts
+  are embedded in the file. Content rows test what it says/contains. ${family} rows
+  test ${how}.`;
+}
 
-const SEEDER_SYSTEM = `You are a senior practitioner in the TASK ROLE. Read the CLIENT PROMPT, the
+function seederSystem(style: TagStyle): string {
+  const list = tagList(style);
+  const cover = style === 'craft' ? 'the craft of this medium' : 'the visual craft of this medium';
+  return `You are a senior practitioner in the TASK ROLE. Read the CLIENT PROMPT, the
 TASK CONTEXT, and OPERATOR ROUGH NOTES (when present) and write EVERY distinct
 EXPERT SEED a peer in this role would QA before handoff — as many as the material
 supports, up to ${MAX_SEEDS}. One seed per distinct check. Do NOT collapse a
 numbered or bulleted list into a handful of themes. When notes are present, turn
 those notes into seeds; do not invent a different rubric. Cover format/delivery,
-the content the brief demands, and the visual craft of this medium. Each seed is
+the content the brief demands, and ${cover}. Each seed is
 one theme with one representative affirmative statement (no question marks, no filenames).
 
-Return JSON only: { "seeds": [ { "theme": "short theme", "statement": "affirmative statement", "tag": "${TAG_LIST}" } ] }`;
+Return JSON only: { "seeds": [ { "theme": "short theme", "statement": "affirmative statement", "tag": "${list}" } ] }`;
+}
+
+function tagOnChannel(statement: string, suggested: string | undefined, style: TagStyle): string {
+  const aliased = suggested && isRubricTag(suggested) ? aliasTag(suggested, style) ?? suggested : undefined;
+  return correctTag(statement, aliased, style);
+}
 
 const SEEN_SYSTEM = `You are looking at work somebody delivered, so that precise checks can be written about it afterwards.
 
@@ -416,18 +437,25 @@ function uniqueClaimKey(raw: string, used: Set<string>): string {
   return next;
 }
 
-export async function deriveSeeds(input: Pick<FactoryInput, 'prompt' | 'taskContext' | 'notes' | 'observed' | 'inputs' | 'model'>): Promise<Seed[]> {
-  const result = await generateJson({ model: input.model ?? env().GEMINI_FACTORY_MODEL ?? env().GEMINI_MODEL, system: SEEDER_SYSTEM, parts: contextParts({ ...input, seeds: [] }), schema: Seeds, temperature: 0.4 });
-  return result.value.seeds.map((s, i) => ({ id: `seed-${i + 1}`, theme: s.theme.trim(), statement: toAffirmativeStatement(s.statement), tag: isRubricTag(s.tag) ? s.tag : undefined }));
+export async function deriveSeeds(input: Pick<FactoryInput, 'prompt' | 'taskContext' | 'notes' | 'observed' | 'inputs' | 'model' | 'tagStyle'>): Promise<Seed[]> {
+  const style = input.tagStyle ?? 'craft';
+  const result = await generateJson({ model: input.model ?? env().GEMINI_FACTORY_MODEL ?? env().GEMINI_MODEL, system: seederSystem(style), parts: contextParts({ ...input, seeds: [] }), schema: Seeds, temperature: 0.4 });
+  return result.value.seeds.map((s, i) => ({
+    id: `seed-${i + 1}`,
+    theme: s.theme.trim(),
+    statement: toAffirmativeStatement(s.statement),
+    tag: isRubricTag(s.tag) ? aliasTag(s.tag, style) ?? s.tag : undefined,
+  }));
 }
 
 export async function runFactory(input: FactoryInput): Promise<{ statements: FactoryStatement[]; bank: BankRow[]; report: FactoryReport }> {
   const model = input.model ?? env().GEMINI_FACTORY_MODEL ?? env().GEMINI_MODEL;
   const target = input.target ?? RUBRIC_TARGET;
+  const style = input.tagStyle ?? 'craft';
   const quotas = familyQuotas(target);
   let calls = 0;
   let totalTokens = 0;
-  const work: FactoryInput = { ...input };
+  const work: FactoryInput = { ...input, tagStyle: style };
 
   if (work.inputs.length > 0) {
     await input.onStage?.('reading', { files: work.inputs.length });
@@ -440,7 +468,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
 
   let seeds = work.seeds.filter((s) => s.statement.trim());
   if (seeds.length === 0 && work.notes?.trim() && shouldExtractNotes(work.notes)) {
-    const extracted = extractSeedsFromNotes(work.notes);
+    const extracted = extractSeedsFromNotes(work.notes, MAX_SEEDS, style);
     await input.onStage?.('seeding', { source: 'notes', count: extracted.length });
     seeds = extracted.map((s, i) => ({ id: `seed-${i + 1}`, theme: s.theme, statement: s.statement, tag: s.tag }));
   }
@@ -458,7 +486,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
   const usedKeys = new Set<string>();
   for (const seed of seeds) {
     const statement = describeNamedFiles(toAffirmativeStatement(seed.statement));
-    const tag = correctTag(statement, seed.tag && isRubricTag(seed.tag) ? seed.tag : undefined);
+    const tag = tagOnChannel(statement, seed.tag, style);
     const key = uniqueClaimKey(seed.statement || seed.id, usedKeys);
     bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: 'expert seed' });
     usedKeys.add(key);
@@ -470,7 +498,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
   let fatal: GeminiError | undefined;
   await poolMap(seeds, 8, async (seed) => {
       if (fatal) return;
-      const system = ENHANCER_SYSTEM.replaceAll('{{TARGET_COUNT}}', String(perSeed));
+      const system = enhancerSystem(style).replaceAll('{{TARGET_COUNT}}', String(perSeed));
       const parts: (string | MediaPart)[] = [
         ...grounding,
         `=== EXPERT SEED ===\nseed_id: ${seed.id}\ntheme: ${seed.theme}\nsuggested_tag: ${seed.tag ?? '(choose)'}\nstatement: ${seed.statement}`,
@@ -492,7 +520,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
         let kept = 0;
         for (const row of result.value.rows) {
           const statement = describeNamedFiles(toAffirmativeStatement(row.statement));
-          const tag = correctTag(statement, isRubricTag(row.tag) ? row.tag : seed.tag);
+          const tag = tagOnChannel(statement, isRubricTag(row.tag) ? row.tag : seed.tag, style);
           const key = uniqueClaimKey(row.claim_key || row.statement, usedKeys);
           bank.push({ seedId: seed.id, claimKey: key, statement, tag, family: familyOfTag(tag), notes: row.notes.trim() });
           usedKeys.add(key);

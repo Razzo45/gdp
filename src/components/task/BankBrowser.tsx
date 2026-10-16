@@ -5,6 +5,8 @@ import type { BankCandidate } from '@/domain/bank';
 import { tokenJaccard } from '@/domain/lint';
 import { FAMILY_LABELS, type Family } from '@/domain/rubric';
 
+const DEFAULT_LABELS = FAMILY_LABELS;
+
 export type BankFocus = { rowId: string; family: Family; statement: string };
 
 export type SeatedRow = {
@@ -45,6 +47,7 @@ export function BankBrowser({
   onAdd,
   onSwap,
   canAddFamily,
+  labels = DEFAULT_LABELS,
 }: {
   bank: BankCandidate[];
   seated: SeatedRow[];
@@ -55,6 +58,7 @@ export function BankBrowser({
   onAdd: (c: BankCandidate) => void;
   onSwap: (rowId: string, c: BankCandidate) => void;
   canAddFamily: (family: Family) => boolean;
+  labels?: Record<Family, string>;
 }) {
   const [family, setFamily] = useState<FamilyFilter>('all');
   const [tag, setTag] = useState('all');
@@ -134,7 +138,7 @@ export function BankBrowser({
         <div className="flex items-start justify-between gap-2 rounded-xl border border-accent bg-accent-soft p-2 text-xs">
           <div>
             <span className="font-medium">Alternatives for this seat</span>{' '}
-            <span className="text-muted">({FAMILY_LABELS[focus.family]}) — closest unused claims first. Swap in replaces the seated wording.</span>
+            <span className="text-muted">({labels[focus.family]}) — closest unused claims first. Swap in replaces the seated wording.</span>
             <p className="mt-1 line-clamp-2 italic">{focus.statement}</p>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClearFocus}>
@@ -146,9 +150,9 @@ export function BankBrowser({
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <select className="input" value={family} onChange={(e) => { setFamily(e.target.value as FamilyFilter); setLimit(PAGE); }}>
           <option value="all">All families</option>
-          <option value="format">{FAMILY_LABELS.format}</option>
-          <option value="content">{FAMILY_LABELS.content}</option>
-          <option value="visual">{FAMILY_LABELS.visual}</option>
+          <option value="format">{labels.format}</option>
+          <option value="content">{labels.content}</option>
+          <option value="visual">{labels.visual}</option>
         </select>
         <select className="input" value={tag} onChange={(e) => { setTag(e.target.value); setLimit(PAGE); }}>
           <option value="all">All tags</option>
@@ -186,7 +190,7 @@ export function BankBrowser({
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex flex-wrap items-center gap-1">
-                    <span className="rounded-md border border-line px-1.5 py-0.5 text-[10px]">{FAMILY_LABELS[it.family]}</span>
+                    <span className="rounded-md border border-line px-1.5 py-0.5 text-[10px]">{labels[it.family]}</span>
                     {it.tag && <span className="text-muted">{it.tag}</span>}
                     {it.inRubric && <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] text-ok">in rubric</span>}
                     {it.strength !== undefined && <span className="tabular-nums text-muted">· strength {it.strength}</span>}
@@ -210,7 +214,7 @@ export function BankBrowser({
                       type="button"
                       className="btn btn-sm"
                       disabled={busy || !familyOpen}
-                      title={familyOpen ? 'Add as a new seat' : `Delete a ${FAMILY_LABELS[it.family]} seat first`}
+                      title={familyOpen ? 'Add as a new seat' : `Delete a ${labels[it.family]} seat first`}
                       onClick={() => onAdd(it.candidate!)}
                     >
                       Add

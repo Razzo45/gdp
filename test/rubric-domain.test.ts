@@ -6,7 +6,7 @@ import { compactBankRow, parseBank, rewriteBank } from '@/domain/bank';
 import { formatDate } from '@/components/format';
 import { lintStatement, looksLikeInterrogative, nearDuplicate, toAffirmativeStatement, tokenJaccard } from '@/domain/lint';
 import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
-import { correctTag, countFamilies, familyOfStatement, familyOfTag, familyQuotas, guessTag, honorSeatedTag, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, withSeatLabels, type Family } from '@/domain/rubric';
+import { correctTag, countFamilies, familyLabels, familyOfStatement, familyOfTag, familyQuotas, guessTag, honorSeatedTag, isRubricTag, quotaCaption, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, tagStyleForGenerate, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
 import { workStateOf } from '@/domain/workState';
@@ -70,6 +70,35 @@ describe('factory bank compact form', () => {
   });
 });
 
+describe('tag channel', () => {
+  it('stays Visual when a current rubric exists, and opens Craft only on a first write', () => {
+    expect(tagStyleOf({ tags: ['Visual - Layout'], hasCurrentRubric: true })).toBe('visual');
+    expect(tagStyleOf({ tags: ['Format/File', 'Visual - Branding'], hasCurrentRubric: true })).toBe('visual');
+    expect(tagStyleOf({ tags: [], hasCurrentRubric: true })).toBe('visual');
+    expect(tagStyleOf({ tags: ['Craft - Composition'], hasCurrentRubric: true })).toBe('craft');
+    expect(tagStyleOf({ tags: [], hasCurrentRubric: false })).toBe('craft');
+  });
+
+  it('writes Craft on a full Generate / Regenerate even when the current seats are Visual', () => {
+    expect(tagStyleForGenerate({ tags: ['Visual - Layout'], hasCurrentRubric: true })).toBe('craft');
+    expect(tagStyleForGenerate({ tags: ['Format/File', 'Visual - Branding'], hasCurrentRubric: true })).toBe('craft');
+    expect(tagStyleOf({ tags: ['Visual - Layout'], hasCurrentRubric: true })).toBe('visual');
+  });
+
+  it('accepts both vocabularies and emits through the channel', () => {
+    expect(isRubricTag('Visual - Layout')).toBe(true);
+    expect(isRubricTag('Craft - Composition')).toBe(true);
+    expect(familyOfTag('Craft - Composition')).toBe('visual');
+    expect(familyLabels('visual').visual).toBe('Visual');
+    expect(familyLabels('craft').visual).toBe('Craft');
+    expect(guessTag('The title slide shows the client logo.')).toBe('Visual - Branding');
+    expect(guessTag('The title slide shows the client logo.', 'craft')).toBe('Craft - Branding');
+    expect(RUBRIC_TAGS).toContain('Craft - Clarity');
+    expect(correctTag('The title slide shows the client logo.', 'Visual - Branding', 'craft')).toBe('Craft - Branding');
+    expect(correctTag('The title slide shows the client logo.', 'Craft - Branding', 'visual')).toBe('Visual - Branding');
+  });
+});
+
 describe('quota spread', () => {
   it('is ready only at 5 Format, 15 Content, 30 Visual', () => {
     const ready = quotaSpread({ format: 5, content: 15, visual: 30 });
@@ -86,6 +115,9 @@ describe('quota spread', () => {
     expect(over.ready).toBe(false);
     expect(over.canAdd.format).toBe(false);
     expect(over.warning).toBe('Format has 6 of 5.');
+
+    expect(quotaCaption('craft')).toBe('5 Format, 15 Content, 30 Craft');
+    expect(quotaSpread({ format: 5, content: 15, visual: 29 }, undefined, 'craft').warning).toBe('Craft short by 1 (29 of 30).');
   });
 
   it('counts seated families from tags', () => {

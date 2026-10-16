@@ -10,11 +10,17 @@ import { describeNamedFiles } from './fileLanguage';
 export const FAMILIES = ['format', 'content', 'visual'] as const;
 export type Family = (typeof FAMILIES)[number];
 
+export type TagStyle = 'visual' | 'craft';
+
 export const FAMILY_LABELS: Record<Family, string> = {
   format: 'Format/File',
   content: 'Content',
   visual: 'Visual',
 };
+
+export function familyLabels(style: TagStyle): Record<Family, string> {
+  return { format: 'Format/File', content: 'Content', visual: style === 'craft' ? 'Craft' : 'Visual' };
+}
 
 export const RUBRIC_TAGS = [
   'Format/File',
@@ -27,6 +33,11 @@ export const RUBRIC_TAGS = [
   'Visual - Consistency',
   'Visual - Balance/Density',
   'Visual - Language & Readability',
+  'Craft - Branding',
+  'Craft - Composition',
+  'Craft - Consistency',
+  'Craft - Balance',
+  'Craft - Clarity',
 ] as const;
 export type RubricTag = (typeof RUBRIC_TAGS)[number];
 
@@ -41,7 +52,51 @@ export const TAG_FAMILY: Record<RubricTag, Family> = {
   'Visual - Consistency': 'visual',
   'Visual - Balance/Density': 'visual',
   'Visual - Language & Readability': 'visual',
+  'Craft - Branding': 'visual',
+  'Craft - Composition': 'visual',
+  'Craft - Consistency': 'visual',
+  'Craft - Balance': 'visual',
+  'Craft - Clarity': 'visual',
 };
+
+const TO_CRAFT: Record<string, RubricTag> = {
+  'Visual - Branding': 'Craft - Branding',
+  'Visual - Layout': 'Craft - Composition',
+  'Visual - Consistency': 'Craft - Consistency',
+  'Visual - Balance/Density': 'Craft - Balance',
+  'Visual - Language & Readability': 'Craft - Clarity',
+};
+const TO_VISUAL: Record<string, RubricTag> = {
+  'Craft - Branding': 'Visual - Branding',
+  'Craft - Composition': 'Visual - Layout',
+  'Craft - Consistency': 'Visual - Consistency',
+  'Craft - Balance': 'Visual - Balance/Density',
+  'Craft - Clarity': 'Visual - Language & Readability',
+};
+
+export function tagStyleOf(input: { tags?: readonly string[]; hasCurrentRubric?: boolean }): TagStyle {
+  if ((input.tags ?? []).some((tag) => tag.startsWith('Craft - '))) return 'craft';
+  if (input.hasCurrentRubric) return 'visual';
+  return 'craft';
+}
+
+/** Full Generate / Regenerate. Current Visual seats do not keep the factory on Visual. */
+export function tagStyleForGenerate(_current?: { tags?: readonly string[]; hasCurrentRubric?: boolean }): TagStyle {
+  return 'craft';
+}
+
+export function tagsForStyle(style: TagStyle): RubricTag[] {
+  const family = style === 'craft'
+    ? (['Craft - Branding', 'Craft - Composition', 'Craft - Consistency', 'Craft - Balance', 'Craft - Clarity'] as const)
+    : (['Visual - Branding', 'Visual - Layout', 'Visual - Consistency', 'Visual - Balance/Density', 'Visual - Language & Readability'] as const);
+  return ['Format/File', 'Content - Exact', 'Content - Structural', 'Content - Semantics', 'Content - Quantitative', ...family];
+}
+
+export function aliasTag(tag: string, style: TagStyle): RubricTag | null {
+  if (style === 'craft' && TO_CRAFT[tag]) return TO_CRAFT[tag]!;
+  if (style === 'visual' && TO_VISUAL[tag]) return TO_VISUAL[tag]!;
+  return isRubricTag(tag) ? tag : null;
+}
 
 export function familyOfTag(tag: string): Family {
   return TAG_FAMILY[tag as RubricTag] ?? 'content';
@@ -57,24 +112,23 @@ const WORD_COUNT = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twel
  * File/delivery claims belong in Format even when the model tagged them
  * Content. Content is what the work says; Format is the container.
  */
-export function guessTag(statement: string): RubricTag {
+export function guessTag(statement: string, style: TagStyle = 'visual'): RubricTag {
   const q = describeNamedFiles(statement).toLowerCase();
-  if (isFormatClaim(q)) return 'Format/File';
-  if (isTypefaceClaim(q) || /\b(hex|#|logo|crest|lockup|brand(?:ing)?|palette|color|colour|font style|font size|typography|wordmark|typefaces?|fonts?|visual design)\b/.test(q)) return 'Visual - Branding';
-  if (/\b(hierarchy|header|subheader|titles?|subtitle|placement|layout|space|breathe|bleed|lower-thirds?|graphic cards?|camera movement|handheld|shaky-cam|drone shot|aerial|b-roll|medium shot|close-up|close up|opens with|places the shot|shots? of)\b/.test(q)) return 'Visual - Layout';
-  if (/\b(consistent|similar across|same brand|connected|lip movements?|wardrobe|headshot|on-camera presenter|sunglasses|polo shirt)\b/.test(q)) return 'Visual - Consistency';
-  if (/\b(pixelat|legib|read on a mobile|morph artifacts?|melting faces?|facial distortion|conversational pace|visual footage|visual effects|visual treatment|visual detail|visual motion|motion graphics|natural imagery|natural texture)\b/.test(q)) return 'Visual - Language & Readability';
-  if (/\b(matte|occlusion|keying|halos?|fringes?|chatter|buzzing|composite|foreground alpha|silhouettes?|spatial (?:drift|sliding)|cutout seams?|lens blur|optical (?:glow|focus)|rim lighting|film grain|image noise|desaturated|glow bloom|dense opacity|billowing|luminous highlight|highlight detail|impact flash|diffused outer edges)\b/.test(q)) {
-    return 'Visual - Language & Readability';
-  }
-  if (/\bprovided in the input files\b/.test(q) || /\breference landscape style\b/.test(q)) return 'Visual - Branding';
-  if (/\bremain completely static\b/.test(q) && /\bconsecutive frames\b/.test(q)) return 'Visual - Consistency';
-  if (/\b(drop shadows?|gradient fills?|3d extrusion|bevels?|arial|background fills?|slide canvas|overlap or collide|numerical scales|slide number|solid fills?|playable audio|audio media object|fully legible|closing section|source note|competitive phrasing|winning language)\b/.test(q)) {
-    return 'Visual - Layout';
-  }
-  if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) return 'Content - Exact';
-  if (/\b(\d+|three|two|one)\b/.test(q) && /\b(posts?|mockups?|images?)\b/.test(q)) return 'Content - Quantitative';
-  return 'Content - Semantics';
+  let tag: RubricTag = 'Content - Semantics';
+  if (isFormatClaim(q)) tag = 'Format/File';
+  else if (isTypefaceClaim(q) || /\b(hex|#|logo|crest|lockup|brand(?:ing)?|palette|color|colour|font style|font size|typography|wordmark|typefaces?|fonts?|visual design)\b/.test(q)) tag = 'Visual - Branding';
+  else if (/\b(hierarchy|header|subheader|titles?|subtitle|placement|layout|space|breathe|bleed|lower-thirds?|graphic cards?|camera movement|handheld|shaky-cam|drone shot|aerial|b-roll|medium shot|close-up|close up|opens with|places the shot|shots? of)\b/.test(q)) tag = 'Visual - Layout';
+  else if (/\b(consistent|similar across|same brand|connected|lip movements?|wardrobe|headshot|on-camera presenter|sunglasses|polo shirt)\b/.test(q)) tag = 'Visual - Consistency';
+  else if (/\b(pixelat|legib|read on a mobile|morph artifacts?|melting faces?|facial distortion|conversational pace|visual footage|visual effects|visual treatment|visual detail|visual motion|motion graphics|natural imagery|natural texture)\b/.test(q)) tag = 'Visual - Language & Readability';
+  else if (/\b(matte|occlusion|keying|halos?|fringes?|chatter|buzzing|composite|foreground alpha|silhouettes?|spatial (?:drift|sliding)|cutout seams?|lens blur|optical (?:glow|focus)|rim lighting|film grain|image noise|desaturated|glow bloom|dense opacity|billowing|luminous highlight|highlight detail|impact flash|diffused outer edges)\b/.test(q)) {
+    tag = 'Visual - Language & Readability';
+  } else if (/\bprovided in the input files\b/.test(q) || /\breference landscape style\b/.test(q)) tag = 'Visual - Branding';
+  else if (/\bremain completely static\b/.test(q) && /\bconsecutive frames\b/.test(q)) tag = 'Visual - Consistency';
+  else if (/\b(drop shadows?|gradient fills?|3d extrusion|bevels?|arial|background fills?|slide canvas|overlap or collide|numerical scales|slide number|solid fills?|playable audio|audio media object|fully legible|closing section|source note|competitive phrasing|winning language)\b/.test(q)) {
+    tag = 'Visual - Layout';
+  } else if (/\b(exactly as written|spell|caption|copy read|words spelled)\b/.test(q)) tag = 'Content - Exact';
+  else if (/\b(\d+|three|two|one)\b/.test(q) && /\b(posts?|mockups?|images?)\b/.test(q)) tag = 'Content - Quantitative';
+  return aliasTag(tag, style) ?? tag;
 }
 
 /** Imported Format tags are untrusted — a cited .png/.pptx is not a file-type claim. */
@@ -83,11 +137,11 @@ export function reseatImportedTag(statement: string, storedTag?: string): Rubric
   return correctTag(statement, suggested);
 }
 
-function tagInFamily(family: Family, statement: string): RubricTag {
-  const guessed = guessTag(statement);
+function tagInFamily(family: Family, statement: string, style: TagStyle = 'visual'): RubricTag {
+  const guessed = guessTag(statement, style);
   if (familyOfTag(guessed) === family) return guessed;
   if (family === 'format') return 'Format/File';
-  if (family === 'visual') return 'Visual - Layout';
+  if (family === 'visual') return style === 'craft' ? 'Craft - Composition' : 'Visual - Layout';
   return 'Content - Semantics';
 }
 
@@ -99,6 +153,7 @@ export function reseatOverQuotaFamilies<T extends { family: Family; tag: string;
   rows: readonly T[],
   quotas: Record<Family, number> = { format: 5, content: 15, visual: 30 },
 ): T[] {
+  const style = tagStyleOf({ tags: rows.map((row) => row.tag), hasCurrentRubric: true });
   const current = rows.map((row) => ({ ...row, family: seatedFamily(row) }));
   const counts = countFamilies(current);
   const extra: Record<Family, number> = { format: 0, content: 0, visual: 0 };
@@ -149,17 +204,28 @@ export function reseatOverQuotaFamilies<T extends { family: Family; tag: string;
       if (dest === row.family || missing[dest] <= 0) continue;
       missing[dest] -= 1;
       extra[family] -= 1;
-      next[index] = { ...row, family: dest, tag: tagInFamily(dest, row.statement) };
+      next[index] = { ...row, family: dest, tag: tagInFamily(dest, row.statement, style) };
     }
   }
   return next;
 }
 
-export function correctTag(statement: string, suggested?: string): RubricTag {
-  const inferred = guessTag(statement);
+export function familyWord(style: TagStyle): string {
+  return familyLabels(style).visual;
+}
+
+export function quotaCaption(style: TagStyle = 'visual'): string {
+  return `5 Format, 15 Content, 30 ${familyWord(style)}`;
+}
+
+export function correctTag(statement: string, suggested?: string, style?: TagStyle): RubricTag {
+  const channel = style ?? (suggested?.startsWith('Craft - ') ? 'craft' : 'visual');
+  const inferred = guessTag(statement, channel);
   if (inferred === 'Format/File') return inferred;
-  if (isTypefaceClaim(statement.toLowerCase()) && (!suggested || familyOfTag(suggested) === 'content')) return 'Visual - Branding';
-  if (suggested && isRubricTag(suggested)) return suggested;
+  if (isTypefaceClaim(statement.toLowerCase()) && (!suggested || familyOfTag(suggested) === 'content')) {
+    return channel === 'craft' ? 'Craft - Branding' : 'Visual - Branding';
+  }
+  if (suggested && isRubricTag(suggested)) return aliasTag(suggested, channel) ?? suggested;
   return inferred;
 }
 
@@ -234,7 +300,9 @@ export function familyQuotas(n: number = RUBRIC_TARGET): Record<Family, number> 
   return { format, content, visual };
 }
 
-const FAMILY_SHORT: Record<Family, string> = { format: 'Format', content: 'Content', visual: 'Visual' };
+function familyShort(style: TagStyle): Record<Family, string> {
+  return { format: 'Format', content: 'Content', visual: familyWord(style) };
+}
 
 export function countFamilies(rows: readonly { family?: Family | null; tag?: string; statement?: string }[]): Record<Family, number> {
   const counts: Record<Family, number> = { format: 0, content: 0, visual: 0 };
@@ -245,6 +313,7 @@ export function countFamilies(rows: readonly { family?: Family | null; tag?: str
 export function quotaSpread(
   counts: Record<Family, number>,
   quotas: Record<Family, number> = familyQuotas(),
+  style: TagStyle = 'visual',
 ): {
   ready: boolean;
   missing: Record<Family, number>;
@@ -256,14 +325,15 @@ export function quotaSpread(
   const extra: Record<Family, number> = { format: 0, content: 0, visual: 0 };
   const canAdd: Record<Family, boolean> = { format: false, content: false, visual: false };
   const parts: string[] = [];
+  const short = familyShort(style);
   for (const family of FAMILIES) {
     const have = counts[family] ?? 0;
     const want = quotas[family] ?? 0;
     missing[family] = Math.max(0, want - have);
     extra[family] = Math.max(0, have - want);
     canAdd[family] = have < want;
-    if (missing[family] > 0) parts.push(`${FAMILY_SHORT[family]} short by ${missing[family]} (${have} of ${want})`);
-    else if (extra[family] > 0) parts.push(`${FAMILY_SHORT[family]} has ${have} of ${want}`);
+    if (missing[family] > 0) parts.push(`${short[family]} short by ${missing[family]} (${have} of ${want})`);
+    else if (extra[family] > 0) parts.push(`${short[family]} has ${have} of ${want}`);
   }
   return { ready: parts.length === 0, missing, extra, canAdd, warning: parts.length ? `${parts.join('. ')}.` : '' };
 }

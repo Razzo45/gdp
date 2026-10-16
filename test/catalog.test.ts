@@ -153,6 +153,17 @@ describe('export', () => {
     expect(r).toEqual({ ok: true, items: [{ id: 's001', statement: 'The deck has twelve slides.', tag: 'Format/File', answer: 'Yes' }] });
   });
 
+  it('labels the visual family from the seat channel', () => {
+    expect(catalogRubricItems([{ statement: 'The logo keeps its aspect ratio.', family: 'visual', tag: 'Visual - Branding', answer: 'Yes' }], project)).toEqual({
+      ok: true,
+      items: [{ id: 's001', statement: 'The logo keeps its aspect ratio.', tag: 'Visual', answer: 'Yes' }],
+    });
+    expect(catalogRubricItems([{ statement: 'The logo keeps its aspect ratio.', family: 'visual', tag: 'Craft - Branding', answer: 'Yes' }], project)).toEqual({
+      ok: true,
+      items: [{ id: 's001', statement: 'The logo keeps its aspect ratio.', tag: 'Craft', answer: 'Yes' }],
+    });
+  });
+
   it('refuses when the project cannot carry a verdict', () => {
     const bad = { formSchema: { properties: { rubrics: { items: { properties: { statement: {} } } } } } };
     expect(catalogRubricItems([], bad).ok).toBe(false);
