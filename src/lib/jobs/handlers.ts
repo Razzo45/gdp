@@ -222,7 +222,8 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
   const only = (job.payload as { statementIds?: string[] }).statementIds;
   const statements = only?.length ? all.filter((s) => only.includes(s.id)) : all;
   if (statements.length === 0) return { graded: 0 };
-  const { gradeContext } = taskContextOf(submission);
+  const { gradeContext, prompt, context } = taskContextOf(submission);
+  const taskBody = prompt || context;
 
   const catalog = readSource(submission);
   const goldenMeta = catalog?.goldenFiles ?? [];
@@ -283,6 +284,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
     outputs,
     inputs: refs,
     taskContext: gradeContext,
+    taskBody,
     onBatch: persist,
   });
   await persist(result);
@@ -306,7 +308,8 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const official = calibration != null;
   const statements = await statementsOf(database, rubric.id);
   const groupId = (job.payload as { groupId?: string }).groupId ?? crypto.randomUUID();
-  const { gradeContext } = taskContextOf(submission);
+  const { gradeContext, prompt, context } = taskContextOf(submission);
+  const taskBody = prompt || context;
 
   await ctx.tick({ done: 0, total: STABILITY_PASSES, note: 'Reading the AI output' });
   const ai = await prepareAiOutputs(database, job.submissionId, 'CONSIDERED OUTPUT');
@@ -325,7 +328,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const refs = inputs.files;
 
   await ctx.tick({ done: 0, total: STABILITY_PASSES, note: 'Scanning for defects' });
-  const inventoryByKey = await inventoriesForObservations({ statements: grade, outputs, inputs: refs, taskContext: gradeContext });
+  const inventoryByKey = await inventoriesForObservations({ statements: grade, outputs, inputs: refs, taskContext: gradeContext, taskBody });
 
   const existing = await database.select().from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId));
   const donePasses = new Set(existing.map((p) => p.passIndex));
@@ -341,6 +344,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       outputs,
       inputs: refs,
       taskContext: gradeContext,
+      taskBody,
       inventoryByKey,
       onBatch: async (partial) => {
         graded[passIndex] = Object.keys(partial.answers).length + Object.keys(partial.errors).length;

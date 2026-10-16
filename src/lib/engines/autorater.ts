@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { z } from 'zod';
-import { applyInferredScope, observationKey, resolveGradeFiles } from '@/domain/fileScope';
+import { applyInferredScope, observationKey, resolveGradeFiles, taskBodyPromptBlock } from '@/domain/fileScope';
 import { env } from '@/lib/env';
 import { GeminiError, generateJson, tightenSendParts, type MediaPart } from '@/lib/ai/gemini';
 import type { PreparedFile } from '@/lib/ai/media';
@@ -36,6 +36,8 @@ export interface GradeInput {
   /** Task inputs that statements may reference by file id. */
   inputs: PreparedFile[];
   taskContext: string;
+  /** Full Catalog brief, attached only when a seat links the task body. */
+  taskBody?: string;
   /** Pre-computed defect inventory, shared across stability passes. */
   defectInventory?: string[];
   /** Per-observation inventory reused across Stability passes. */
@@ -175,10 +177,18 @@ Include a defect only when it is clearly visible, for example:
 Do NOT invent defects. Do NOT praise. Judge only from what is actually evidenced;
 a text digest is a partial view, not proof of truncation or missing content.`;
 
-function evidenceParts(files: { outputs: PreparedFile[]; inputs: PreparedFile[] }, taskContext: string, inventory: string[], allOutputs: boolean): (string | MediaPart)[] {
+function evidenceParts(
+  files: { outputs: PreparedFile[]; inputs: PreparedFile[] },
+  taskContext: string,
+  inventory: string[],
+  allOutputs: boolean,
+  taskBody?: string,
+): (string | MediaPart)[] {
   const parts: (string | MediaPart)[] = [];
   const context = taskContext.trim();
   if (context) parts.push(`TASK CONTEXT:\n${context.length > GRADE_CONTEXT_CHARS ? `${context.slice(0, GRADE_CONTEXT_CHARS)}\n…` : context}`);
+  const body = taskBody ? taskBodyPromptBlock(taskBody) : null;
+  if (body) parts.push(body);
   parts.push(`CONSIDERED_OUTPUTS${allOutputs ? ' (every current deliverable; any one fail → No)' : ''}: ${files.outputs.map((f) => f.name).join(', ') || '(none)'}`);
   if (files.inputs.length) parts.push(`SUBMITTED_INPUTS: ${files.inputs.map((f) => f.name).join(', ')}`);
   const inventoryBlock = inventoryPromptBlock(inventory);
@@ -212,19 +222,25 @@ export async function inventoriesForObservations(input: GradeInput): Promise<Rec
     if (!selection.ok) continue;
     const key = observationKey(selection);
     if (byKey[key]) continue;
-    byKey[key] = await defectInventory({ outputs: selection.outputs, inputs: selection.inputs, taskContext: input.taskContext, model: input.model });
+    byKey[key] = await defectInventory({
+      outputs: selection.outputs,
+      inputs: selection.inputs,
+      taskContext: input.taskContext,
+      taskBody: selection.taskBody ? input.taskBody : undefined,
+      model: input.model,
+    });
   }
   return byKey;
 }
 
-export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'inputs' | 'taskContext' | 'model'>): Promise<string[]> {
+export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'inputs' | 'taskContext' | 'taskBody' | 'model'>): Promise<string[]> {
   if (input.outputs.length === 0) return [];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const result = await generateJson({
         model: input.model,
         system: INVENTORY_SYSTEM,
-        parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1),
+        parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1, input.taskBody),
         schema: Inventory,
         temperature: 0.1,
         maxOutputTokens: 2048,
@@ -257,7 +273,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
 
   const outputRefs = input.outputs.map((f) => ({ id: f.id, name: f.name }));
   const inputRefs = input.inputs.map((f) => ({ id: f.id, name: f.name }));
-  const resolved = new Map<string, { statement: GradeStatement; files: { outputs: PreparedFile[]; inputs: PreparedFile[] }; allOutputs: boolean; key: string }>();
+  const resolved = new Map<string, { statement: GradeStatement; files: { outputs: PreparedFile[]; inputs: PreparedFile[] }; allOutputs: boolean; taskBody: boolean; key: string }>();
   for (const raw of input.statements) {
     const statement = applyInferredScope(raw, inputRefs, outputRefs);
     const selection = resolveGradeFiles(statement, input.outputs, input.inputs);
@@ -266,7 +282,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
       continue;
     }
     const key = observationKey(selection);
-    resolved.set(raw.id, { statement, files: { outputs: selection.outputs, inputs: selection.inputs }, allOutputs: selection.allOutputs, key });
+    resolved.set(raw.id, { statement, files: { outputs: selection.outputs, inputs: selection.inputs }, allOutputs: selection.allOutputs, taskBody: selection.taskBody, key });
   }
 
   const groups = new Map<string, GradeStatement[]>();
@@ -282,11 +298,11 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     const entry = resolved.get(batch[0]!.id)!;
     const files = entry.files;
     if (!result.inventoryByKey[entry.key]) {
-      result.inventoryByKey[entry.key] = input.defectInventory ?? (await defectInventory({ outputs: files.outputs, inputs: files.inputs, taskContext: input.taskContext, model }));
+      result.inventoryByKey[entry.key] = input.defectInventory ?? (await defectInventory({ outputs: files.outputs, inputs: files.inputs, taskContext: input.taskContext, taskBody: entry.taskBody ? input.taskBody : undefined, model }));
     }
     const inventory = result.inventoryByKey[entry.key] ?? [];
     result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
-    const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs), statementsBlock(batch)];
+    const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs, entry.taskBody ? input.taskBody : undefined), statementsBlock(batch)];
     const wanted = new Set(batch.map((s) => s.id));
     try {
       const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 8192, thinkingBudget: AUTORATE_THINKING_BUDGET });

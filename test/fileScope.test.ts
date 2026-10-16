@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_OUTPUTS,
   applyInferredScope,
+  describeSeatScope,
   inferFileScope,
   isDefaultScope,
   observationKey,
   resolveGradeFiles,
   statementNamesFile,
+  TASK_BODY,
+  taskBodyPromptBlock,
 } from '@/domain/fileScope';
 import { describeNamedFiles } from '@/domain/fileLanguage';
 
@@ -81,6 +84,32 @@ describe('inferFileScope', () => {
       inputFileIds: [],
     });
   });
+
+  it('links the task body when the brief is no longer a file', () => {
+    expect(inferFileScope('Colours follow the brief.', [], [deck])).toEqual({
+      scope: 'inputs',
+      outputFile: null,
+      inputFileIds: [TASK_BODY],
+    });
+  });
+
+  it('still pins a brief file when one exists', () => {
+    expect(inferFileScope('Colours follow the brief.', [brief], [deck])).toEqual({
+      scope: 'inputs',
+      outputFile: null,
+      inputFileIds: ['in-2'],
+    });
+  });
+
+  it('does not attach video inputs just because the seat mentions the brief', () => {
+    const flat = { id: 'in-v1', name: 'Flat2 H264.mp4' };
+    const grade = { id: 'in-v2', name: 'Fishing_Farm.mp4' };
+    expect(inferFileScope('The grade matches the brief.', [flat, grade], [deck])).toEqual({
+      scope: 'inputs',
+      outputFile: null,
+      inputFileIds: [TASK_BODY],
+    });
+  });
 });
 
 describe('applyInferredScope', () => {
@@ -145,6 +174,35 @@ describe('resolveGradeFiles', () => {
   it('never attaches inputs on an output-only seat', () => {
     const resolved = resolveGradeFiles({ scope: 'output', outputFile: deck.name, inputFileIds: [guide.id] }, [deck], [guide]);
     expect(resolved.ok).toBe(false);
+  });
+
+  it('treats the task body as a virtual input, not a Catalog file', () => {
+    const onlyTask = resolveGradeFiles({ scope: 'inputs', outputFile: null, inputFileIds: [TASK_BODY] }, [deck], []);
+    expect(onlyTask).toMatchObject({ ok: true, taskBody: true, allOutputs: false });
+    if (onlyTask.ok) {
+      expect(onlyTask.outputs.map((f) => f.id)).toEqual(['out-1']);
+      expect(onlyTask.inputs).toEqual([]);
+      expect(observationKey(onlyTask)).toBe('o:out-1#i:#t:1');
+    }
+
+    const withFile = resolveGradeFiles({ scope: 'inputs', outputFile: null, inputFileIds: [TASK_BODY, guide.id] }, [deck], [guide]);
+    expect(withFile).toMatchObject({ ok: true, taskBody: true });
+    if (withFile.ok) {
+      expect(withFile.inputs.map((f) => f.id)).toEqual(['in-1']);
+      expect(observationKey(withFile)).toBe('o:out-1#i:in-1#t:1');
+    }
+  });
+});
+
+describe('describeSeatScope', () => {
+  it('names the task body instead of the raw token', () => {
+    expect(describeSeatScope({ scope: 'inputs', outputFile: null, inputFileIds: [TASK_BODY] }, [deck], [])).toContain('task body');
+  });
+});
+
+describe('taskBodyPromptBlock', () => {
+  it('sends the brief when a seat links the task', () => {
+    expect(taskBodyPromptBlock('  Recover the two drone cuts.  ')).toBe('TASK BODY:\nRecover the two drone cuts.');
   });
 });
 

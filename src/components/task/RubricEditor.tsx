@@ -7,7 +7,7 @@ import { EVIDENCE_MIN_CHARS } from '@/domain/gates';
 import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
-import { AUTO_OUTPUT, applyInferredScope, inferFileScope } from '@/domain/fileScope';
+import { AUTO_OUTPUT, applyInferredScope, inferFileScope, TASK_BODY, taskBodySelected } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
 import { MAX_ROUGH_CHARS, familyLabels, familyWord, honorSeatedTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
 import { PasteRubricModal } from './PasteRubricModal';
@@ -837,25 +837,38 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
   );
 }
 
+function scopeFromInputs(d: Draft, inputFileIds: string[]): Partial<Draft> {
+  const linked = inputFileIds.length > 0;
+  return {
+    scope: linked ? 'inputs' : 'output',
+    inputFileIds,
+    outputFile: linked ? (d.outputFile === AUTO_OUTPUT ? null : d.outputFile) : AUTO_OUTPUT,
+  };
+}
+
 function SeatScopeLine({ d, view, onUpdate }: { d: Draft; view: PanelProps['view']; onUpdate: (id: string, patch: Partial<Draft>) => void }) {
   const files = catalogFiles(view);
-  if (files.inputs.length === 0) return null;
   const live = applyLiveScope(d, files);
+  const toggle = (id: string, on: boolean) => {
+    const inputFileIds = on ? [...live.inputFileIds.filter((item) => item !== id), id] : live.inputFileIds.filter((item) => item !== id);
+    onUpdate(d.id, scopeFromInputs(d, inputFileIds));
+  };
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+      <label className="flex items-center gap-1">
+        <input
+          type="checkbox"
+          checked={live.scope === 'inputs' && taskBodySelected(live.inputFileIds)}
+          onChange={(e) => toggle(TASK_BODY, e.target.checked)}
+        />
+        Task body
+      </label>
       {files.inputs.map((file) => (
         <label key={file.id} className="flex items-center gap-1">
           <input
             type="checkbox"
             checked={live.scope === 'inputs' && live.inputFileIds.includes(file.id)}
-            onChange={(e) => {
-              const inputFileIds = e.target.checked ? [...live.inputFileIds.filter((id) => id !== file.id), file.id] : live.inputFileIds.filter((id) => id !== file.id);
-              onUpdate(d.id, {
-                scope: inputFileIds.length ? 'inputs' : 'output',
-                inputFileIds,
-                outputFile: inputFileIds.length ? (d.outputFile === AUTO_OUTPUT ? null : d.outputFile) : AUTO_OUTPUT,
-              });
-            }}
+            onChange={(e) => toggle(file.id, e.target.checked)}
           />
           {file.name}
         </label>

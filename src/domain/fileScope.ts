@@ -26,6 +26,27 @@ export interface SeatScope {
 export const ALL_OUTPUTS = '*';
 /** Output-only, current file — do not infer submitted inputs again. */
 export const AUTO_OUTPUT = 'auto';
+/** Virtual input: the Catalog task body (prompt/brief), not a file. */
+export const TASK_BODY = 'task';
+export const TASK_BODY_CHARS = 8_000;
+
+export function isTaskBody(id: string): boolean {
+  return id === TASK_BODY;
+}
+
+export function taskBodySelected(ids: readonly string[]): boolean {
+  return ids.some(isTaskBody);
+}
+
+export function fileInputIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => !isTaskBody(id));
+}
+
+export function taskBodyPromptBlock(text: string): string | null {
+  const body = text.trim();
+  if (!body) return null;
+  return body.length > TASK_BODY_CHARS ? `TASK BODY:\n${body.slice(0, TASK_BODY_CHARS)}\n…` : `TASK BODY:\n${body}`;
+}
 
 export function isDefaultScope(seat: SeatScope): boolean {
   return seat.scope === 'output' && !seat.outputFile && seat.inputFileIds.length === 0;
@@ -96,12 +117,19 @@ function matchInputsByKind(statement: string, inputs: readonly ScopeFile[]): Sco
   });
 }
 
+function needsTaskBody(statement: string): boolean {
+  return /\b(the brief|task body|the prompt|the instructions|as specified in the (task|brief|prompt))\b/i.test(statement);
+}
+
 function inferInputIds(statement: string, inputs: readonly ScopeFile[]): string[] {
   const named = uniqueMatches(statement, inputs);
   if (named.length > 0) return named.map((file) => file.id);
-  if (!needsSubmittedInput(statement) || inputs.length === 0) return [];
+  const wantsInput = needsSubmittedInput(statement) || needsTaskBody(statement);
+  if (!wantsInput) return [];
   const byKind = matchInputsByKind(statement, inputs);
   if (byKind.length > 0) return byKind.map((file) => file.id);
+  if (needsTaskBody(statement) || /\bbrief\b/i.test(statement)) return [TASK_BODY];
+  if (inputs.length === 0) return [];
   if (inputs.length === 1 || inputs.length <= 3) return inputs.map((file) => file.id);
   return [];
 }
@@ -168,40 +196,42 @@ export function resolveGradeFiles<T extends ScopeFile>(
   seat: SeatScope & { statement?: string },
   outputs: readonly T[],
   inputs: readonly T[],
-): { ok: true; outputs: T[]; inputs: T[]; allOutputs: boolean } | { ok: false; error: string } {
+): { ok: true; outputs: T[]; inputs: T[]; allOutputs: boolean; taskBody: boolean } | { ok: false; error: string } {
   const selectedOutputs = consideredOutputs(seat, outputs);
   if (selectedOutputs.length === 0) {
     return { ok: false, error: 'No deliverable files were available to grade against.' };
   }
   const allOutputs = selectedOutputs.length > 1 && selectedOutputs.length === outputs.length;
+  const taskBody = taskBodySelected(seat.inputFileIds);
+  const requiredFiles = fileInputIds(seat.inputFileIds);
 
   if (seat.scope === 'output') {
-    if (seat.inputFileIds.length > 0) {
+    if (requiredFiles.length > 0 || taskBody) {
       return { ok: false, error: 'An output-only statement cannot require submitted inputs.' };
     }
-    return { ok: true, outputs: selectedOutputs, inputs: [], allOutputs };
+    return { ok: true, outputs: selectedOutputs, inputs: [], allOutputs, taskBody: false };
   }
 
-  if (seat.inputFileIds.length === 0) {
+  if (requiredFiles.length === 0 && !taskBody) {
     return { ok: false, error: 'This statement requires at least one submitted input.' };
   }
   if (new Set(seat.inputFileIds).size !== seat.inputFileIds.length) {
     return { ok: false, error: 'A submitted input is selected more than once.' };
   }
   const selectedInputs: T[] = [];
-  for (const id of seat.inputFileIds) {
+  for (const id of requiredFiles) {
     const matches = matchScopeFile(inputs, id);
     if (matches.length !== 1) {
       return { ok: false, error: `Required input "${id}" is unavailable or ambiguous.` };
     }
     selectedInputs.push(matches[0]!);
   }
-  return { ok: true, outputs: selectedOutputs, inputs: selectedInputs, allOutputs };
+  return { ok: true, outputs: selectedOutputs, inputs: selectedInputs, allOutputs, taskBody };
 }
 
-export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: readonly ScopeFile[] }): string {
+export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: readonly ScopeFile[]; taskBody?: boolean }): string {
   const ids = (list: readonly ScopeFile[]) => list.map((file) => file.id).sort().join(',');
-  return `o:${ids(files.outputs)}#i:${ids(files.inputs)}`;
+  return `o:${ids(files.outputs)}#i:${ids(files.inputs)}${files.taskBody ? '#t:1' : ''}`;
 }
 
 export function describeSeatScope(seat: SeatScope & { statement?: string }, outputs: readonly ScopeFile[], inputs: readonly ScopeFile[]): string {
@@ -212,7 +242,7 @@ export function describeSeatScope(seat: SeatScope & { statement?: string }, outp
       : 'Golden autorate uses the Golden file. Stability uses the AI output.';
   if (seat.scope !== 'inputs' || seat.inputFileIds.length === 0) return lane;
   const refs = seat.inputFileIds
-    .map((id) => matchScopeFile(inputs, id)[0]?.name ?? id)
+    .map((id) => (isTaskBody(id) ? 'the task body' : (matchScopeFile(inputs, id)[0]?.name ?? id)))
     .filter(Boolean)
     .join(', ');
   return `${lane} Also reads ${refs || 'submitted inputs'}.`;
