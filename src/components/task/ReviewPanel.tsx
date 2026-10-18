@@ -17,7 +17,7 @@ import type { PanelProps } from './TaskWorkspace';
  * Human AI evaluation. Write when there is no eval yet. After a return from
  * the rubric team, rescore the existing answers, then approve or send back.
  */
-export function ReviewPanel({ view, refresh, notify }: PanelProps) {
+export function ReviewPanel({ view, refresh, notify, onLiveScore }: PanelProps & { onLiveScore?: (percent: number | null) => void }) {
   const statements = seatsInDisplayOrder(view.rubric?.statements ?? []);
   const seats = seatIndexById(statements);
   const weights = useMemo(() => normalisedWeights(statements.length), [statements.length]);
@@ -85,6 +85,10 @@ export function ReviewPanel({ view, refresh, notify }: PanelProps) {
     const thin = statements.filter((s) => answers[s.id] !== undefined && (evidence[s.id] ?? '').trim().length < EVIDENCE_MIN_CHARS).length;
     return { yes, no, answered: yes + no, thin, percent: yes + no === 0 ? null : (yes / (yes + no)) * 100 };
   }, [answers, evidence, statements]);
+
+  useEffect(() => {
+    onLiveScore?.(score.percent);
+  }, [onLiveScore, score.percent]);
 
   const schedule = () => {
     setDirty(true);

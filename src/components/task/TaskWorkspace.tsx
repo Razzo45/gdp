@@ -49,6 +49,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   const [briefOpen, setBriefOpen] = useState(true);
   const [headerOpen, setHeaderOpen] = useState(true);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [liveReviewPercent, setLiveReviewPercent] = useState<number | null>(initial.review.latest?.scorePercent ?? null);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -206,6 +207,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             view={view}
             golden={view.can.seeScoreGolden}
             stability={view.can.seeScoreStability}
+            livePercent={view.can.lens === 'reviewer' ? liveReviewPercent : undefined}
           />
         </div>
       </header>
@@ -224,6 +226,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             view={view}
             golden={view.can.seeScoreGolden}
             stability={view.can.seeScoreStability}
+            livePercent={view.can.lens === 'reviewer' ? liveReviewPercent : undefined}
             compact
           />
         </button>
@@ -265,7 +268,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
           {view.can.seeStability && <StabilityPanel {...panel} />}
           {view.can.seeReviewPanel &&
-            (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && <ReviewPanel {...panel} />}
+            (s.stage === 'review' || view.review.submittedPercent !== null || view.review.feedback.length > 0 || view.can.review) && (
+              <ReviewPanel {...panel} onLiveScore={view.can.lens === 'reviewer' ? setLiveReviewPercent : undefined} />
+            )}
           {view.can.seeHandoff && (s.stage === 'handoff' || s.stage === 'done' || s.handoffStatus) && <HandoffPanel {...panel} />}
           {s.stage === 'done' && (
             <p className="card text-sm text-muted">

@@ -1,4 +1,5 @@
 import { CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, STABILITY_CALIBRATION_TOLERANCE_POINTS, STABILITY_MAX_SPREAD_POINTS } from '@/domain/gates';
+import { reviewDisplayScore } from '@/domain/review';
 import { pct } from './format';
 import type { SubmissionView } from '@/lib/services/view';
 
@@ -11,14 +12,20 @@ export function ScoreStrip({
   golden: showGolden = true,
   stability: showStability = true,
   compact = false,
+  livePercent,
 }: {
   view: SubmissionView;
   golden?: boolean;
   stability?: boolean;
   compact?: boolean;
+  livePercent?: number | null;
 }) {
   const golden = view.golden?.gate;
-  const cal = view.handoff.calibrationPercent;
+  const cal = reviewDisplayScore({
+    reviewer: view.can.lens === 'reviewer',
+    latestPercent: livePercent !== undefined ? livePercent : view.review.latest?.scorePercent ?? null,
+    submittedPercent: view.handoff.calibrationPercent,
+  });
   const stability = view.stability?.gate;
   const scores = view.handoff.stabilityScores;
 

@@ -23,6 +23,15 @@ export function reviewApprovalScore(input: { latestCompletePercent: number | nul
   return input.latestCompletePercent ?? input.submittedPercent;
 }
 
+/** Reviewer score tile follows the live pass. Other seats keep the submitted lock. */
+export function reviewDisplayScore(input: {
+  reviewer: boolean;
+  latestPercent: number | null;
+  submittedPercent: number | null;
+}): number | null {
+  return input.reviewer ? input.latestPercent : input.submittedPercent;
+}
+
 /** The creator sees the latest return note only while the task is back on the rubric. */
 export function reviewerReturnNote(input: {
   stage: string;

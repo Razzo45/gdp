@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed } from '@/domain/gates';
-import { mergeReviewDraft, reviewApprovalScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
+import { mergeReviewDraft, reviewApprovalScore, reviewDisplayScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
 const all = (v: boolean) => Object.fromEntries(ids.map((id) => [id, v]));
@@ -36,6 +36,14 @@ describe('review grades', () => {
     expect(reviewApprovalScore({ latestCompletePercent: 25, submittedPercent: 75 })).toBe(25);
     expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: 40 })).toBe(40);
     expect(reviewApprovalScore({ latestCompletePercent: null, submittedPercent: null })).toBeNull();
+  });
+
+  it('shows the reviewer the live pass, not a prior submitted lock', () => {
+    expect(reviewDisplayScore({ reviewer: true, latestPercent: 48, submittedPercent: null })).toBe(48);
+    expect(reviewDisplayScore({ reviewer: true, latestPercent: 48, submittedPercent: 32 })).toBe(48);
+    expect(reviewDisplayScore({ reviewer: true, latestPercent: null, submittedPercent: 32 })).toBeNull();
+    expect(reviewDisplayScore({ reviewer: false, latestPercent: 48, submittedPercent: 32 })).toBe(32);
+    expect(reviewDisplayScore({ reviewer: false, latestPercent: 48, submittedPercent: null })).toBeNull();
   });
 
   it('surfaces the reviewer note only while the rubric is back with the creator', () => {
