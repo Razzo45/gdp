@@ -99,9 +99,9 @@ export function parseAudioLevels(log: string): AudioLevels | null {
       const dc = raw.match(/DC offset:\s+(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/i);
       const bits = raw.match(/Bit depth:\s+(\d+(?:\/\d+)+)/i);
       const peaks = raw.match(/(?<!Abs )Peak count:\s+(\d+(?:\.\d+)?)/i);
-      if (dc) dcOffset = Number(dc[1]);
-      if (bits) bitDepth = bits[1];
-      if (peaks) peakCount = Math.round(Number(peaks[1]));
+      if (dc?.[1]) dcOffset = Number(dc[1]);
+      if (bits?.[1]) bitDepth = bits[1];
+      if (peaks?.[1]) peakCount = Math.round(Number(peaks[1]));
     }
   }
   const left = channels.get(1);
