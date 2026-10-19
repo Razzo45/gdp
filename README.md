@@ -70,7 +70,7 @@ font, hidden draft slide, typo). `curl -X POST localhost:4010/emit/<id>` sends
 a signed webhook; `localhost:4010/state` shows what was saved and moved by a
 push. On Cloud Run the image already ships LibreOffice and ffmpeg/ffprobe; the
 worker renders each PPTX slide to a still and measures video/audio for FILE
-FACTS. This laptop does not need soffice. `/api/health` returns `renderer: true`
+FACTS, including loudness and left-right channel level. This laptop does not need soffice. `/api/health` returns `renderer: true`
 when the image is wired.
 
 ## GCP

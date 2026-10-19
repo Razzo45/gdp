@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeFileFacts, formatFfprobe } from '@/lib/ai/fileFacts';
+import { describeFileFacts, formatAudioLevels, formatFfprobe, parseAudioLevels } from '@/lib/ai/fileFacts';
 import { preparedFromUri } from '@/lib/ai/media';
 
 const PNG_1X1 = Uint8Array.from(
@@ -67,6 +67,110 @@ describe('describeFileFacts', () => {
     expect(facts).toContain('Pixel format: yuva444p10le');
     expect(facts).toContain('Frames: 300');
     expect(facts).toContain('Audio: pcm_s24le, 48000 Hz, 2 ch, stereo, 2304000 bps');
+  });
+});
+
+const FFMPEG_LEVELS = `
+[Parsed_astats_0 @ 0x1] Channel: 1
+[Parsed_astats_0 @ 0x1] Peak level dB: -1.20
+[Parsed_astats_0 @ 0x1] RMS level dB: -18.30
+[Parsed_astats_0 @ 0x1] Channel: 2
+[Parsed_astats_0 @ 0x1] Peak level dB: -1.40
+[Parsed_astats_0 @ 0x1] RMS level dB: -18.50
+[Parsed_astats_0 @ 0x1] Overall
+[Parsed_astats_0 @ 0x1] Peak level dB: -1.20
+[Parsed_astats_0 @ 0x1] RMS level dB: -18.40
+[Parsed_ebur128_0 @ 0x2] Summary:
+
+  Integrated loudness:
+    I:         -16.3 LUFS
+    Threshold: -26.2 LUFS
+
+  Loudness range:
+    LRA:         5.2 LU
+    Threshold: -36.1 LUFS
+    LRA low:   -21.2 LUFS
+    LRA high:  -16.0 LUFS
+
+  True peak:
+    Peak:       -1.1 dBFS
+`;
+
+describe('audio level FILE FACTS', () => {
+  it('reads peak, RMS, left-right difference, LUFS and true peak from ffmpeg', () => {
+    const levels = parseAudioLevels(FFMPEG_LEVELS);
+    expect(levels).toEqual({
+      peakDbfs: -1.2,
+      rmsDbfs: -18.4,
+      leftRmsDbfs: -18.3,
+      rightRmsDbfs: -18.5,
+      channelDifferenceDb: 0.2,
+      integratedLufs: -16.3,
+      loudnessRangeLu: 5.2,
+      truePeakDbfs: -1.1,
+      dcOffset: null,
+      bitDepth: null,
+      peakCount: null,
+      clipping: false,
+      leadingSilenceSec: null,
+      trailingSilenceSec: null,
+      internalSilenceGaps: null,
+      longestSilenceSec: null,
+      stereoCorrelation: null,
+      stereoImage: null,
+    });
+    const text = formatAudioLevels(levels!);
+    expect(text).toContain('Peak level: -1.2 dBFS');
+    expect(text).toContain('RMS level: -18.4 dBFS');
+    expect(text).toContain('Left RMS: -18.3 dBFS; Right RMS: -18.5 dBFS');
+    expect(text).toContain('Channel level difference: 0.2 dB');
+    expect(text).toContain('Integrated loudness: -16.3 LUFS');
+    expect(text).toContain('Loudness range: 5.2 LU');
+    expect(text).toContain('True peak: -1.1 dBTP');
+    expect(text).toContain('Clipping: no');
+  });
+
+  it('reads clipping, silence gaps, stereo correlation, DC offset and bit depth', () => {
+    const levels = parseAudioLevels(`
+Duration: 00:00:10.00, start: 0.000000, bitrate: 2304 kb/s
+[Parsed_astats_0 @ 0x1] Overall
+[Parsed_astats_0 @ 0x1] DC offset: 0.000012
+[Parsed_astats_0 @ 0x1] Peak level dB: 0.00
+[Parsed_astats_0 @ 0x1] RMS level dB: -12.00
+[Parsed_astats_0 @ 0x1] Peak count: 48.000000
+[Parsed_astats_0 @ 0x1] Abs Peak count: 48.000000
+[Parsed_astats_0 @ 0x1] Bit depth: 24/24/24/24
+[silencedetect @ 0x3] silence_start: 0
+[silencedetect @ 0x3] silence_end: 0.40 | silence_duration: 0.40
+[silencedetect @ 0x3] silence_start: 4.00
+[silencedetect @ 0x3] silence_end: 4.80 | silence_duration: 0.80
+[silencedetect @ 0x3] silence_start: 9.50
+[silencedetect @ 0x3] silence_end: 10.00 | silence_duration: 0.50
+[Parsed_ametadata_1 @ 0x4] lavfi.aphasemeter.phase=0.12
+[Parsed_ametadata_1 @ 0x4] lavfi.aphasemeter.phase=0.14
+`);
+    expect(levels).toMatchObject({
+      clipping: true,
+      dcOffset: 0.000012,
+      bitDepth: '24/24/24/24',
+      peakCount: 48,
+      leadingSilenceSec: 0.4,
+      trailingSilenceSec: 0.5,
+      internalSilenceGaps: 1,
+      longestSilenceSec: 0.8,
+      stereoCorrelation: 0.13,
+      stereoImage: 'stereo',
+    });
+    const text = formatAudioLevels(levels!);
+    expect(text).toContain('Clipping: yes');
+    expect(text).toContain('DC offset: 0.000012');
+    expect(text).toContain('Bit depth: 24/24/24/24');
+    expect(text).toContain('Peak count: 48');
+    expect(text).toContain('Leading silence: 0.40 s');
+    expect(text).toContain('Trailing silence: 0.50 s');
+    expect(text).toContain('Internal silence gaps: 1');
+    expect(text).toContain('Longest silence: 0.80 s');
+    expect(text).toContain('Stereo correlation: 0.13 (stereo)');
   });
 });
 

@@ -35,13 +35,14 @@ STORAGE_BUCKET=your-private-bucket
 RUN_WORKER=0
 LIBREOFFICE_BIN=/usr/bin/soffice
 FFPROBE_BIN=/usr/bin/ffprobe
+FFMPEG_BIN=/usr/bin/ffmpeg
 PUBLIC_APP_URL=https://your-cloud-run-url
 GEMINI_API_KEY=
 WIRESTOCK_API_TOKEN=
 WIRESTOCK_WEBHOOK_SECRET=
 ```
 
-Worker env: same `DATABASE_URL`, Gemini, Catalog, `STORAGE_DRIVER=gcs`, `LIBREOFFICE_BIN=/usr/bin/soffice`, `FFPROBE_BIN=/usr/bin/ffprobe`. No `RUN_WORKER` needed. The image already has Impress and ffprobe; `/api/health` reports `renderer: true` when soffice is live.
+Worker env: same `DATABASE_URL`, Gemini, Catalog, `STORAGE_DRIVER=gcs`, `LIBREOFFICE_BIN=/usr/bin/soffice`, `FFPROBE_BIN=/usr/bin/ffprobe`, `FFMPEG_BIN=/usr/bin/ffmpeg`. No `RUN_WORKER` needed. The image already has Impress, ffmpeg and ffprobe; `/api/health` reports `renderer: true` when soffice is live.
 
 ## Data move (never writes to live Supabase)
 

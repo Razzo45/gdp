@@ -6,7 +6,8 @@ import { join } from 'node:path';
 /**
  * Deterministic FILE FACTS for whatever deliverable we have.
  * Size is always measured from the stored bytes. Images, PDFs and
- * Office packages add header facts. Video/audio add ffprobe when present.
+ * Office packages add header facts. Video/audio add ffprobe plus ffmpeg
+ * level / loudness stats when present.
  */
 
 export interface FileFactInput {
@@ -36,8 +37,247 @@ export function describeFileFacts(input: FileFactInput): string {
 export async function describeFileFactsAsync(input: FileFactInput): Promise<string> {
   const base = describeFileFacts(input);
   if (!input.bytes || !isAv(input.mime, input.name)) return base;
-  const probed = await ffprobeFacts(input.bytes, input.name);
+  const probed = await avFacts(input.bytes, input.name);
   return probed ? `${base}\n${probed}` : base;
+}
+
+export interface AudioLevels {
+  peakDbfs: number | null;
+  rmsDbfs: number | null;
+  leftRmsDbfs: number | null;
+  rightRmsDbfs: number | null;
+  channelDifferenceDb: number | null;
+  integratedLufs: number | null;
+  loudnessRangeLu: number | null;
+  truePeakDbfs: number | null;
+  dcOffset: number | null;
+  bitDepth: string | null;
+  peakCount: number | null;
+  clipping: boolean | null;
+  leadingSilenceSec: number | null;
+  trailingSilenceSec: number | null;
+  internalSilenceGaps: number | null;
+  longestSilenceSec: number | null;
+  stereoCorrelation: number | null;
+  stereoImage: 'dual-mono' | 'stereo' | 'out of phase' | null;
+}
+
+export function parseAudioLevels(log: string): AudioLevels | null {
+  const channels = new Map<number, { peak: number | null; rms: number | null }>();
+  let current: number | 'overall' | null = null;
+  let overallPeak: number | null = null;
+  let overallRms: number | null = null;
+  let dcOffset: number | null = null;
+  let bitDepth: string | null = null;
+  let peakCount: number | null = null;
+  for (const raw of log.split(/\r?\n/)) {
+    const channel = raw.match(/Channel:\s+(\d+)\s*$/);
+    if (channel) {
+      current = Number(channel[1]);
+      if (!channels.has(current)) channels.set(current, { peak: null, rms: null });
+      continue;
+    }
+    if (/\bOverall\s*$/.test(raw)) {
+      current = 'overall';
+      continue;
+    }
+    const peak = raw.match(/Peak level dB:\s+(-?(?:\d+(?:\.\d+)?|inf))\b/i);
+    const rms = raw.match(/RMS level dB:\s+(-?(?:\d+(?:\.\d+)?|inf))\b/i);
+    if (peak && current === 'overall') overallPeak = finiteDb(peak[1]);
+    else if (peak && typeof current === 'number') {
+      const row = channels.get(current) ?? { peak: null, rms: null };
+      row.peak = finiteDb(peak[1]);
+      channels.set(current, row);
+    }
+    if (rms && current === 'overall') overallRms = finiteDb(rms[1]);
+    else if (rms && typeof current === 'number') {
+      const row = channels.get(current) ?? { peak: null, rms: null };
+      row.rms = finiteDb(rms[1]);
+      channels.set(current, row);
+    }
+    if (current === 'overall') {
+      const dc = raw.match(/DC offset:\s+(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/i);
+      const bits = raw.match(/Bit depth:\s+(\d+(?:\/\d+)+)/i);
+      const peaks = raw.match(/(?<!Abs )Peak count:\s+(\d+(?:\.\d+)?)/i);
+      if (dc) dcOffset = Number(dc[1]);
+      if (bits) bitDepth = bits[1];
+      if (peaks) peakCount = Math.round(Number(peaks[1]));
+    }
+  }
+  const left = channels.get(1);
+  const right = channels.get(2);
+  const leftRms = left?.rms ?? null;
+  const rightRms = right?.rms ?? null;
+  const channelDifferenceDb = leftRms !== null && rightRms !== null ? round1(Math.abs(leftRms - rightRms)) : null;
+  const integratedLufs = firstNumber(log, /\bI:\s+(-?\d+(?:\.\d+)?)\s+LUFS\b/);
+  const loudnessRangeLu = firstNumber(log, /\bLRA:\s+(-?\d+(?:\.\d+)?)\s+LU\b/);
+  const trueBlock = log.match(/True peak:[\s\S]*?Peak:\s+(-?\d+(?:\.\d+)?)\s+dBFS/i);
+  const truePeakDbfs = trueBlock ? round1(Number(trueBlock[1])) : null;
+  const peakDbfs = overallPeak ?? left?.peak ?? null;
+  const rmsDbfs = overallRms ?? left?.rms ?? null;
+  const silence = parseSilence(log);
+  const stereo = parseStereo(log);
+  if (
+    peakDbfs === null &&
+    rmsDbfs === null &&
+    channelDifferenceDb === null &&
+    integratedLufs === null &&
+    truePeakDbfs === null &&
+    dcOffset === null &&
+    silence.leadingSilenceSec === null &&
+    stereo.stereoCorrelation === null
+  ) {
+    return null;
+  }
+  return {
+    peakDbfs,
+    rmsDbfs,
+    leftRmsDbfs: leftRms,
+    rightRmsDbfs: rightRms,
+    channelDifferenceDb,
+    integratedLufs,
+    loudnessRangeLu,
+    truePeakDbfs,
+    dcOffset,
+    bitDepth,
+    peakCount,
+    clipping: peakDbfs === null ? null : peakDbfs >= -0.05,
+    ...silence,
+    ...stereo,
+  };
+}
+
+export function formatAudioLevels(levels: AudioLevels): string {
+  const lines: string[] = [];
+  if (levels.peakDbfs !== null) lines.push(`Peak level: ${fmt1(levels.peakDbfs)} dBFS`);
+  if (levels.rmsDbfs !== null) lines.push(`RMS level: ${fmt1(levels.rmsDbfs)} dBFS`);
+  if (levels.leftRmsDbfs !== null && levels.rightRmsDbfs !== null) {
+    lines.push(`Left RMS: ${fmt1(levels.leftRmsDbfs)} dBFS; Right RMS: ${fmt1(levels.rightRmsDbfs)} dBFS`);
+  }
+  if (levels.channelDifferenceDb !== null) lines.push(`Channel level difference: ${fmt1(levels.channelDifferenceDb)} dB`);
+  if (levels.integratedLufs !== null) lines.push(`Integrated loudness: ${fmt1(levels.integratedLufs)} LUFS`);
+  if (levels.loudnessRangeLu !== null) lines.push(`Loudness range: ${fmt1(levels.loudnessRangeLu)} LU`);
+  if (levels.truePeakDbfs !== null) lines.push(`True peak: ${fmt1(levels.truePeakDbfs)} dBTP`);
+  if (levels.clipping !== null) lines.push(`Clipping: ${levels.clipping ? 'yes' : 'no'}`);
+  if (levels.dcOffset !== null) lines.push(`DC offset: ${levels.dcOffset.toFixed(6)}`);
+  if (levels.bitDepth) lines.push(`Bit depth: ${levels.bitDepth}`);
+  if (levels.peakCount !== null) lines.push(`Peak count: ${levels.peakCount}`);
+  if (levels.leadingSilenceSec !== null) lines.push(`Leading silence: ${fmt2(levels.leadingSilenceSec)} s`);
+  if (levels.trailingSilenceSec !== null) lines.push(`Trailing silence: ${fmt2(levels.trailingSilenceSec)} s`);
+  if (levels.internalSilenceGaps !== null) lines.push(`Internal silence gaps: ${levels.internalSilenceGaps}`);
+  if (levels.longestSilenceSec !== null) lines.push(`Longest silence: ${fmt2(levels.longestSilenceSec)} s`);
+  if (levels.stereoCorrelation !== null && levels.stereoImage) {
+    lines.push(`Stereo correlation: ${fmt2(levels.stereoCorrelation)} (${levels.stereoImage})`);
+  }
+  return lines.join('\n');
+}
+
+function finiteDb(raw: string | undefined): number | null {
+  if (!raw || /inf/i.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? round1(value) : null;
+}
+
+function firstNumber(text: string, pattern: RegExp): number | null {
+  const match = text.match(pattern);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? round1(value) : null;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function fmt1(value: number): string {
+  return value.toFixed(1);
+}
+
+function fmt2(value: number): string {
+  return value.toFixed(2);
+}
+
+function parseDurationSec(log: string): number | null {
+  const match = log.match(/Duration:\s+(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return Number.isFinite(total) ? total : null;
+}
+
+function parseSilence(log: string): Pick<
+  AudioLevels,
+  'leadingSilenceSec' | 'trailingSilenceSec' | 'internalSilenceGaps' | 'longestSilenceSec'
+> {
+  const empty = {
+    leadingSilenceSec: null,
+    trailingSilenceSec: null,
+    internalSilenceGaps: null,
+    longestSilenceSec: null,
+  };
+  const durationSec = parseDurationSec(log);
+  if (durationSec === null) return empty;
+  const gaps: { start: number; end: number; duration: number }[] = [];
+  let pendingStart: number | null = null;
+  for (const raw of log.split(/\r?\n/)) {
+    const start = raw.match(/silence_start:\s+(-?\d+(?:\.\d+)?)/);
+    if (start) {
+      pendingStart = Number(start[1]);
+      continue;
+    }
+    const end = raw.match(/silence_end:\s+(-?\d+(?:\.\d+)?)(?:.*silence_duration:\s+(-?\d+(?:\.\d+)?))?/);
+    if (end && pendingStart !== null) {
+      const endSec = Number(end[1]);
+      const length = end[2] !== undefined ? Number(end[2]) : endSec - pendingStart;
+      gaps.push({ start: pendingStart, end: endSec, duration: length });
+      pendingStart = null;
+    }
+  }
+  if (pendingStart !== null) {
+    gaps.push({ start: pendingStart, end: durationSec, duration: durationSec - pendingStart });
+  }
+  if (gaps.length === 0) {
+    return {
+      leadingSilenceSec: 0,
+      trailingSilenceSec: 0,
+      internalSilenceGaps: 0,
+      longestSilenceSec: 0,
+    };
+  }
+  const edge = 0.05;
+  const leading = gaps.find((gap) => gap.start <= edge);
+  const trailing = [...gaps].reverse().find((gap) => gap.end >= durationSec - edge);
+  const internal = gaps.filter((gap) => gap !== leading && gap !== trailing);
+  let longest = gaps[0]!.duration;
+  for (const gap of gaps) {
+    if (gap.duration > longest) longest = gap.duration;
+  }
+  return {
+    leadingSilenceSec: round2(leading?.duration ?? 0),
+    trailingSilenceSec: round2(trailing?.duration ?? 0),
+    internalSilenceGaps: internal.length,
+    longestSilenceSec: round2(longest),
+  };
+}
+
+function parseStereo(log: string): Pick<AudioLevels, 'stereoCorrelation' | 'stereoImage'> {
+  const samples: number[] = [];
+  for (const match of log.matchAll(/phase[=:]\s*(-?\d+(?:\.\d+)?)/gi)) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) samples.push(value);
+  }
+  if (!samples.length) return { stereoCorrelation: null, stereoImage: null };
+  const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+  const stereoCorrelation = round2(mean);
+  const stereoImage =
+    stereoCorrelation < 0 ? 'out of phase' : stereoCorrelation >= 0.9 ? 'dual-mono' : 'stereo';
+  return { stereoCorrelation, stereoImage };
 }
 
 function kindOf(input: FileFactInput): string {
@@ -206,15 +446,26 @@ export interface FfprobeJson {
   streams?: FfprobeStream[];
 }
 
-async function ffprobeFacts(bytes: Uint8Array, name: string): Promise<string | null> {
+async function avFacts(bytes: Uint8Array, name: string): Promise<string | null> {
   const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? 'bin';
   const dir = await mkdtemp(join(tmpdir(), 'gdp-probe-'));
   const input = join(dir, `source.${ext}`);
   try {
     await writeFile(input, bytes);
-    const raw = await runFfprobe(input);
-    if (!raw) return null;
-    return formatFfprobe(JSON.parse(raw) as FfprobeJson);
+    const [probeRaw, levelLog, phaseLog] = await Promise.all([
+      runFfprobe(input),
+      runFfmpegLevels(input),
+      runFfmpegPhase(input),
+    ]);
+    const lines: string[] = [];
+    if (probeRaw) {
+      const formatted = formatFfprobe(JSON.parse(probeRaw) as FfprobeJson);
+      if (formatted) lines.push(formatted);
+    }
+    const combinedLog = [levelLog, phaseLog].filter(Boolean).join('\n');
+    const levels = combinedLog ? parseAudioLevels(combinedLog) : null;
+    if (levels) lines.push(formatAudioLevels(levels));
+    return lines.length ? lines.join('\n') : null;
   } catch {
     return null;
   } finally {
@@ -265,22 +516,44 @@ function fpsOf(rate?: string): string | null {
 }
 
 function runFfprobe(path: string): Promise<string | null> {
+  return spawnText(process.env['FFPROBE_BIN']?.trim() || 'ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', path], 'stdout', 15_000);
+}
+
+function runFfmpegLevels(path: string): Promise<string | null> {
+  return spawnText(
+    process.env['FFMPEG_BIN']?.trim() || 'ffmpeg',
+    ['-hide_banner', '-nostats', '-i', path, '-af', 'astats=metadata=1:reset=1,ebur128,silencedetect=noise=-40dB:duration=0.25', '-f', 'null', '-'],
+    'stderr',
+    45_000,
+  );
+}
+
+function runFfmpegPhase(path: string): Promise<string | null> {
+  return spawnText(
+    process.env['FFMPEG_BIN']?.trim() || 'ffmpeg',
+    ['-hide_banner', '-nostats', '-i', path, '-af', 'aphasemeter=video=0,ametadata=print:key=lavfi.aphasemeter.phase', '-f', 'null', '-'],
+    'stderr',
+    45_000,
+  );
+}
+
+function spawnText(bin: string, args: string[], stream: 'stdout' | 'stderr', timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
-    const bin = process.env['FFPROBE_BIN']?.trim() || 'ffprobe';
-    const child = spawn(/* turbopackIgnore: true */ bin, ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', path], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(/* turbopackIgnore: true */ bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
-    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child[stream]?.on('data', (chunk: Buffer) => chunks.push(chunk));
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve(null);
-    }, 15_000);
+    }, timeoutMs);
     child.once('error', () => {
       clearTimeout(timer);
       resolve(null);
     });
-    child.once('exit', (code) => {
+    child.once('exit', () => {
       clearTimeout(timer);
-      resolve(code === 0 ? Buffer.concat(chunks).toString('utf8') : null);
+      const text = Buffer.concat(chunks).toString('utf8');
+      resolve(text.trim() ? text : null);
     });
   });
 }
