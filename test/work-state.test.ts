@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handoffAfterContinue, holdAgeHours, isStaleHold, platformStateChangedAt, reviewAdvanceAfterApprove, seatIsStale, STALE_HOLD_HOURS, workStateOf } from '@/domain/workState';
+import { boardListRows, handoffAfterContinue, holdAgeHours, isStaleHold, platformStateChangedAt, reviewAdvanceAfterApprove, seatIsStale, STALE_HOLD_HOURS, workStateOf } from '@/domain/workState';
 
 describe('hold aging', () => {
   const now = Date.parse('2026-10-10T12:00:00.000Z');
@@ -55,5 +55,21 @@ describe('platform state changed', () => {
   it('uses the last upstream move, or landed if the status has not moved', () => {
     expect(platformStateChangedAt({ landedAt: '2026-10-01T00:00:00.000Z', upstreamChangedAt: null })).toBe('2026-10-01T00:00:00.000Z');
     expect(platformStateChangedAt({ landedAt: '2026-10-01T00:00:00.000Z', upstreamChangedAt: '2026-10-08T12:00:00.000Z' })).toBe('2026-10-08T12:00:00.000Z');
+  });
+});
+
+describe('boardListRows', () => {
+  const rows = [
+    { id: 'prep', workState: 'preparing' as const },
+    { id: 'rev', workState: 'in_review' as const },
+    { id: 'ret', workState: 'platform_returned' as const },
+  ];
+
+  it('keeps a panel filter when there is no search', () => {
+    expect(boardListRows(rows, { workState: 'platform_returned' }).map((r) => r.id)).toEqual(['ret']);
+  });
+
+  it('returns every match when searching, even if a panel is still selected', () => {
+    expect(boardListRows(rows, { workState: 'platform_returned', q: '86856d80' }).map((r) => r.id)).toEqual(['prep', 'rev', 'ret']);
   });
 });

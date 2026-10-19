@@ -13,7 +13,7 @@ import { CollapsibleCopy, TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStateChips } from '@/components/WorkStateChips';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
-import { BOARD_STATES, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
+import { BOARD_STATES, boardListRows, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +30,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
     pm ? listPendingCatalogReturns(actor) : Promise.resolve([]),
   ]);
   const scoped = pm ? listedQuery : listedQuery.filter((r) => !r.blinded);
-  const listed = workState ? scoped.filter((r) => r.workState === workState) : scoped;
+  const listed = boardListRows(scoped, { workState, q });
   const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
 
@@ -43,7 +43,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
         actions={
           pm ? (
             <>
-              <Link href="/submissions" className={`chip ${!workState && !mine && !q ? 'chip-on' : ''}`}>
+              <Link href="/submissions" className={`chip ${!mine && (q || !workState) ? 'chip-on' : ''}`}>
                 All
               </Link>
               <Link href="/submissions?mine=1" className={`chip ${mine ? 'chip-on' : ''}`}>
@@ -53,18 +53,19 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
           ) : undefined
         }
       >
-        {workState
-          ? WORK_STATE_HINT[workState]
-          : pm
-            ? 'This project’s board. Claim and personal status live on the dashboard when more projects land.'
-            : 'This project’s tasks you already hold. Claim from the dashboard.'}
+        {q
+          ? 'Search looks across every panel. Work status says where each match sits.'
+          : workState
+            ? WORK_STATE_HINT[workState]
+            : pm
+              ? 'This project’s board. Claim and personal status live on the dashboard when more projects land.'
+              : 'This project’s tasks you already hold. Claim from the dashboard.'}
       </PageHeader>
 
-      {pm && <WorkStateChips counts={counts} active={workState} />}
+      {pm && <WorkStateChips counts={counts} active={q ? undefined : workState} />}
 
       {pm && (
         <form className="flex flex-wrap items-end gap-2" action="/submissions" method="get">
-          {workState && <input type="hidden" name="state" value={workState} />}
           <label className="flex min-w-64 flex-1 flex-col gap-1 text-sm">
             Full or partial submission ID
             <input className="input" name="q" defaultValue={q ?? ''} placeholder="Catalog submission id or title" />
@@ -73,7 +74,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
             Search
           </button>
           {q && (
-            <Link href={workState ? `/submissions?state=${workState}` : '/submissions'} className="btn">
+            <Link href="/submissions" className="btn">
               Clear
             </Link>
           )}

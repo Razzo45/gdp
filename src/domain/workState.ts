@@ -60,6 +60,16 @@ export function seatIsStale(row: { claimedAt: string | null | undefined; stage: 
   return isStaleHold(row.claimedAt, now);
 }
 
+/** Board rows for the PM list. A search looks across every panel. */
+export function boardListRows<T extends { workState: WorkState }>(
+  rows: T[],
+  filter: { workState?: WorkState; q?: string },
+): T[] {
+  if (filter.q?.trim()) return rows;
+  if (filter.workState) return rows.filter((row) => row.workState === filter.workState);
+  return rows;
+}
+
 export function workStateOf(row: {
   stage: Stage;
   rubricAssigneeId: string | null;
