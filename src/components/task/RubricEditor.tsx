@@ -10,6 +10,7 @@ import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrim
 import { AUTO_OUTPUT, applyInferredScope, inferFileScope, TASK_BODY, taskBodySelected } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
 import { MAX_ROUGH_CHARS, familyLabels, familyWord, honorSeatedTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
+import { afterRubricSave, beginRubricSave, leftoverDirty, quietRubricConflict, type RubricSaveSource } from '@/domain/rubricSave';
 import { PasteRubricModal } from './PasteRubricModal';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
 import { Choice } from '../Choice';
@@ -67,53 +68,107 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   const [bankFocus, setBankFocus] = useState<BankFocus | null>(null);
   const [swapPick, setSwapPick] = useState<{ rowId: string; candidates: BankCandidate[] } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveRef = useRef<() => Promise<number | undefined>>(async () => undefined);
+  const saveRef = useRef<(source?: RubricSaveSource) => Promise<number>>(async () => 0);
+  const revisionRef = useRef(revision);
+  const dirtyRef = useRef(dirty);
+  const deletedRef = useRef(deleted);
+  const draftsRef = useRef(drafts);
+  const sendingRef = useRef<Promise<number> | null>(null);
+  const queuedRef = useRef(false);
   const browserRef = useRef<HTMLDivElement | null>(null);
   const bank = useMemo(() => parseBank(rubric?.generation), [rubric?.generation]);
+  revisionRef.current = revision;
+  dirtyRef.current = dirty;
+  deletedRef.current = deleted;
+  draftsRef.current = drafts;
 
   useEffect(() => {
     if (!rubric) return;
     if (dirty.size === 0 && deleted.size === 0 && (rubric.revision !== revision || rubric.statements.length !== drafts.length)) {
       setDrafts(rubric.statements.map(toDraft));
       setRevision(rubric.revision);
+      revisionRef.current = rubric.revision;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rubric?.id, rubric?.revision, rubric?.statements.length]);
 
-  const save = useCallback(async () => {
-    if (!rubric || (dirty.size === 0 && deleted.size === 0)) return revision;
-    setSaving('saving');
-    const upserts = drafts.filter((d) => dirty.has(d.id)).map(({ isNew: _isNew, ...rest }) => rest);
-    const deletes = [...deleted];
-    try {
-      const result = await api<{ revision: number; statements: RubricStatement[]; warnings: { statementId: string; reasons: string[] }[] }>(`/api/submissions/${view.submission.id}/rubric`, {
-        method: 'PUT',
-        body: { revision, upserts, deletes, order: drafts.map((d) => d.id) },
-      });
-      setRevision(result.revision);
-      setDrafts((current) => {
+  const save = useCallback(async (source: RubricSaveSource = 'autosave'): Promise<number> => {
+    if (!rubric) return revisionRef.current;
+    if (beginRubricSave(sendingRef.current !== null) === 'queue') {
+      queuedRef.current = true;
+      return sendingRef.current ?? revisionRef.current;
+    }
+
+    const flush = async (): Promise<number> => {
+      const dirtyNow = dirtyRef.current;
+      const deletedNow = deletedRef.current;
+      const draftsNow = draftsRef.current;
+      if (dirtyNow.size === 0 && deletedNow.size === 0) return revisionRef.current;
+      setSaving('saving');
+      const upserts = draftsNow.filter((d) => dirtyNow.has(d.id)).map(({ isNew: _isNew, ...rest }) => rest);
+      const deletes = [...deletedNow];
+      const savedIds = [...upserts.map((row) => row.id), ...deletes];
+      try {
+        const result = await api<{ revision: number; statements: RubricStatement[]; warnings: { statementId: string; reasons: string[] }[] }>(`/api/submissions/${view.submission.id}/rubric`, {
+          method: 'PUT',
+          body: { revision: revisionRef.current, upserts, deletes, order: draftsNow.map((d) => d.id) },
+        });
+        revisionRef.current = result.revision;
+        setRevision(result.revision);
         const byId = new Map(result.statements.map((s) => [s.id, s]));
-        return current.filter((d) => byId.has(d.id)).map((d) => (dirty.has(d.id) ? toDraft(byId.get(d.id)!) : d));
-      });
-      setDirty(new Set());
-      setDeleted(new Set());
-      setSaving('saved');
-      return result.revision;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409 && Array.isArray(error.detail['statements'])) {
-        setDrafts((error.detail['statements'] as RubricStatement[]).map(toDraft));
-        setRevision(Number(error.detail['revision'] ?? revision));
-        setDirty(new Set());
-        setDeleted(new Set());
-        setSaving('conflict');
-        notify(error.message, 'bad');
-      } else {
+        dirtyRef.current = leftoverDirty(dirtyRef.current, savedIds);
+        deletedRef.current = leftoverDirty(deletedRef.current, deletes);
+        setDrafts((current) => current.filter((d) => byId.has(d.id) || dirtyRef.current.has(d.id)).map((d) => (savedIds.includes(d.id) && byId.has(d.id) ? toDraft(byId.get(d.id)!) : d)));
+        setDirty(dirtyRef.current);
+        setDeleted(deletedRef.current);
+        setSaving('saved');
+        return result.revision;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409 && Array.isArray(error.detail['statements'])) {
+          const nextRevision = Number(error.detail['revision'] ?? revisionRef.current);
+          revisionRef.current = nextRevision;
+          setRevision(nextRevision);
+          const server = error.detail['statements'] as RubricStatement[];
+          setDrafts((current) => {
+            const local = new Map(current.map((d) => [d.id, d]));
+            return server.map((row) => (dirtyRef.current.has(row.id) && !savedIds.includes(row.id) ? local.get(row.id) ?? toDraft(row) : toDraft(row)));
+          });
+          dirtyRef.current = leftoverDirty(dirtyRef.current, savedIds);
+          deletedRef.current = leftoverDirty(deletedRef.current, deletes);
+          setDirty(dirtyRef.current);
+          setDeleted(deletedRef.current);
+          if (quietRubricConflict(source)) {
+            if (dirtyRef.current.size > 0 || deletedRef.current.size > 0) queuedRef.current = true;
+            setSaving('saved');
+          } else {
+            setSaving('conflict');
+            notify(error.message, 'bad');
+          }
+          return nextRevision;
+        }
         setSaving('error');
         notify(error instanceof Error ? error.message : 'Save failed.', 'bad');
+        return revisionRef.current;
       }
-      return revision;
+    };
+
+    const drain = (async () => {
+      let next = await flush();
+      for (let i = 0; i < 8; i++) {
+        if (afterRubricSave(queuedRef.current) !== 'send' && dirtyRef.current.size === 0 && deletedRef.current.size === 0) break;
+        queuedRef.current = false;
+        if (dirtyRef.current.size === 0 && deletedRef.current.size === 0) break;
+        next = await flush();
+      }
+      return next;
+    })();
+    sendingRef.current = drain;
+    try {
+      return await drain;
+    } finally {
+      if (sendingRef.current === drain) sendingRef.current = null;
     }
-  }, [rubric, dirty, deleted, drafts, revision, view.submission.id, notify]);
+  }, [rubric, view.submission.id, notify]);
   saveRef.current = save;
 
   const schedule = useCallback(() => {
@@ -131,26 +186,27 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   }, []);
 
   const update = (id: string, patch: Partial<Draft>) => {
-    setDrafts((current) => current.map((d) => (d.id === id ? { ...d, ...patch } : d)));
-    setDirty((current) => new Set(current).add(id));
+    draftsRef.current = draftsRef.current.map((d) => (d.id === id ? { ...d, ...patch } : d));
+    setDrafts(draftsRef.current);
+    dirtyRef.current = new Set(dirtyRef.current).add(id);
+    setDirty(dirtyRef.current);
     schedule();
   };
 
   const remove = (id: string) => {
-    setDrafts((current) => current.filter((d) => d.id !== id));
-    setDeleted((current) => new Set(current).add(id));
-    setDirty((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
+    draftsRef.current = draftsRef.current.filter((d) => d.id !== id);
+    setDrafts(draftsRef.current);
+    deletedRef.current = new Set(deletedRef.current).add(id);
+    setDeleted(deletedRef.current);
+    dirtyRef.current = leftoverDirty(dirtyRef.current, [id]);
+    setDirty(dirtyRef.current);
     schedule();
   };
 
   async function run(label: string, path: string, body: Record<string, unknown>, okMessage: string) {
     setBusy(label);
     try {
-      const nextRevision = await saveRef.current();
+      const nextRevision = await saveRef.current('action');
       await api(path, { body: typeof body.revision === 'number' && typeof nextRevision === 'number' ? { ...body, revision: nextRevision } : body });
       notify(okMessage);
       await refresh();

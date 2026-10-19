@@ -9,6 +9,7 @@ import { analyzeDiscrimination, isSoftSeat } from '@/domain/discrimination';
 import { correctTag, countFamilies, familyLabels, familyOfStatement, familyOfTag, familyQuotas, guessTag, honorSeatedTag, isRubricTag, quotaCaption, quotaSpread, reseatImportedTag, reseatOverQuotaFamilies, RUBRIC_TAGS, seatedFamily, seatIndexById, seatLabel, seatsInDisplayOrder, tagStyleForGenerate, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
 import { catalogLooksInboundReady, submittedCatalogStatusIds } from '@/domain/catalogListState';
 import { asLegacyVerdict, assignmentSeat, factoryStatementsFromLegacy, inferLegacyPipeline, latestLegacyRun, legacyStabilityHostId, mapLegacyRoles, mapLegacySeatIds, mapLegacyStage, parseLegacyRubricRows, remapVerdicts, stabilityGroupsFromAutorate } from '@/domain/legacyImport';
+import { afterRubricSave, beginRubricSave, leftoverDirty, quietRubricConflict } from '@/domain/rubricSave';
 import { workStateOf } from '@/domain/workState';
 import { normalisedWeights, scoreSeats } from '@/domain/weights';
 
@@ -599,3 +600,19 @@ describe('legacy snapshot import', () => {
     expect(workStateOf({ stage: 'done', rubricAssigneeId: 'x', reviewStatus: 'approved' })).toBe('submitted');
   });
 });
+
+describe('rubric save queue', () => {
+  it('queues a second save while one is in flight, then sends it after', () => {
+    expect(beginRubricSave(false)).toBe('send');
+    expect(beginRubricSave(true)).toBe('queue');
+    expect(afterRubricSave(true)).toBe('send');
+    expect(afterRubricSave(false)).toBe('idle');
+  });
+
+  it('keeps unsaved seat ids after a save, and stays quiet on an autosave conflict', () => {
+    expect([...leftoverDirty(new Set(['a', 'b', 'c']), ['b'])].sort()).toEqual(['a', 'c']);
+    expect(quietRubricConflict('autosave')).toBe(true);
+    expect(quietRubricConflict('action')).toBe(false);
+  });
+});
+
