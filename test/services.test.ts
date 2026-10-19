@@ -11,7 +11,7 @@ import { decideReview, saveCalibration, sendToReview } from '@/lib/services/revi
 import { acceptStability } from '@/lib/services/stability';
 import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
 import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
-import { compactBankRow } from '@/domain/bank';
+import { compactBankRow, parseBank } from '@/domain/bank';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
 import { workStateOf } from '@/domain/workState';
@@ -395,6 +395,43 @@ describe('rubric quota seats', () => {
     expect(replaced.imported).toBe(50);
     expect(countFamilies(replaced.statements)).toEqual({ format: 5, content: 15, visual: 30 });
     expect(replaced.statements.some((row) => row.statement.includes('carousel images') && row.family === 'visual')).toBe(true);
+  });
+
+  it('keeps the unused bank when a pasted rubric replaces the seats', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    await installFactoryVersion(db, s.id, creator.id, {
+      seeds: ['seed-a'],
+      statements: [0, 1, 2, 3, 4].map((i) => ({
+        family: 'format' as const,
+        tag: 'Format/File',
+        statement: `The delivered presentation uses a 16:9 page size on format seat ${i}.`,
+        notes: '',
+        claimKey: `fmt-${i}`,
+        origin: 'factory' as const,
+        lint: passLint,
+        scope: 'output' as const,
+        inputFileIds: [] as string[],
+        outputFile: null,
+      })),
+      generation: {
+        bank: [
+          compactBankRow({
+            claimKey: 'spare-content',
+            statement: 'The deck names the unused bank claim.',
+            tag: 'Content - Exact',
+            family: 'content',
+            notes: '',
+            seedId: 'seed-a',
+          }),
+        ],
+      },
+    });
+    const first = await currentRubric(db, s.id);
+    await replaceRubricFromPaste(creator, s.id, { revision: first!.revision, rows: seatedRubricInputs() });
+    const next = await currentRubric(db, s.id);
+    expect(parseBank(next?.generation).map((row) => row.claimKey)).toEqual(['spare-content']);
+    expect(next?.seeds).toEqual(['seed-a']);
   });
 
   it('keeps a creator-seated Visual row on save when the edited wording looks like Format', async () => {

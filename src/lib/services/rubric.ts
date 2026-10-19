@@ -443,7 +443,13 @@ export async function replaceRubricFromPaste(
 
     const [rubric] = await tx
       .insert(rubrics)
-      .values({ submissionId, version: (previous?.version ?? 0) + 1, seeds: [], generation: {}, createdBy: actor.id })
+      .values({
+        submissionId,
+        version: (previous?.version ?? 0) + 1,
+        seeds: previous?.seeds ?? [],
+        generation: previous?.generation ?? {},
+        createdBy: actor.id,
+      })
       .returning();
     const now = new Date().toISOString();
     const warnings: SaveResult['warnings'] = [];
