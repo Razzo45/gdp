@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import JSZip from 'jszip';
 import { db } from '@/db/client';
 import { derivatives, fileFacts } from '@/db/schema';
@@ -15,6 +15,7 @@ import { getObject, putObject } from '@/lib/storage';
 import { describeFileFacts, describeFileFactsAsync, factsFullyMeasured } from './fileFacts';
 import { mediaPart, SEND_TEXT_CHARS, type MediaPart } from './gemini';
 import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
+import { DESKTOP, MAX_PAGE_HEIGHT, MOBILE, screenshotHtml, type HtmlShot } from './htmlShots';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
 
 export type { OfficePreviewKind };
@@ -142,7 +143,7 @@ export function normaliseMime(name: string, mime: string, bytes?: Uint8Array): s
   return EXT_MIME[ext] || 'application/octet-stream';
 }
 
-export async function prepareFile(file: SourceFile, role: string, depth = 0): Promise<PreparedFile> {
+export async function prepareFile(file: SourceFile, role: string, depth = 0, siblings: { name: string; bytes: Uint8Array }[] = []): Promise<PreparedFile> {
   const digest = sha256(file.bytes);
   const mime = normaliseMime(file.name, file.mime, file.bytes);
   const label = `${role}: ${file.name} (id ${file.id})`;
@@ -181,12 +182,38 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
       // string. tightenSendParts clips every string to 12k, which cut this
       // task's 84k HTML at the Categories label and made raters invent
       // incomplete_generation. Attach the file like a PDF instead.
-      if (html || text.length > SEND_TEXT_CHARS) {
+      if (html) {
+        const shots = await htmlScreenshots(file, digest, siblings).catch(() => []);
+        const shotParts = await Promise.all(
+          shots.map((shot) =>
+            mediaPart({
+              bytes: shot.bytes,
+              mime: shot.mime,
+              sha256: sha256(shot.bytes),
+              name: `${file.name.replace(/\.[a-z0-9]+$/i, '')}-${shot.view}.jpg`,
+              label: `${label} — ${shot.view === 'desktop' ? `desktop screenshot, ${DESKTOP.width}px wide` : `phone screenshot, ${MOBILE.width}px wide`}`,
+            }),
+          ),
+        );
+        const renderNote = shots.length
+          ? `The page was opened in a browser and screenshotted (${shots.map((shot) => (shot.view === 'desktop' ? `desktop ${DESKTOP.width}px wide, full page up to ${MAX_PAGE_HEIGHT}px tall` : `phone ${MOBILE.width}px wide, first screen`)).join('; ')}). Judge layout, colour, typography, imagery and anything drawn by scripts (canvas, WebGL, three.js) from the screenshots; judge text and structure from the source. States reached only by clicking, hovering or later animation are not in the screenshots; check the source for them.`
+          : 'The page could not be rendered in a browser. Judge visual statements from the source only where the markup states them explicitly.';
         return {
           ...base,
           delivery: 'native',
           parts: [
-            `${label}\n${facts}\n${html ? 'HTML' : 'Text'} attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
+            `${label}\n${facts}\nHTML attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.\n${renderNote}`,
+            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label }),
+            ...shotParts,
+          ],
+        };
+      }
+      if (text.length > SEND_TEXT_CHARS) {
+        return {
+          ...base,
+          delivery: 'native',
+          parts: [
+            `${label}\n${facts}\nText attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
             await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label }),
           ],
         };
@@ -286,6 +313,37 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
 }
 
 const RENDER_TOOL = 'libreoffice-pdf-v1';
+const HTML_SHOT_TOOL = 'chromium-shot-v1';
+
+/** Desktop and phone screenshots of an HTML deliverable, taken at most once per content (page plus archive siblings). */
+async function htmlScreenshots(file: SourceFile, digest: string, siblings: { name: string; bytes: Uint8Array }[]): Promise<HtmlShot[]> {
+  const key = siblings.length ? sha256([digest, ...siblings.map((row) => `${row.name}:${sha256(row.bytes)}`).sort()].join('\n')) : digest;
+  const database = db();
+  const views = ['desktop', 'mobile'] as const;
+  const cached = await database.select().from(derivatives).where(and(eq(derivatives.sourceSha256, key), inArray(derivatives.kind, views.map((view) => `html-${view}`))));
+  if (cached.length > 0) {
+    const stored = await Promise.all(
+      cached.map(async (row) => {
+        const bytes = await getObject(row.storagePath);
+        return bytes && sha256(bytes) === row.sha256 ? { view: row.kind.replace('html-', '') as HtmlShot['view'], mime: 'image/jpeg' as const, bytes } : null;
+      }),
+    );
+    const usable = stored.filter((shot): shot is HtmlShot => shot !== null);
+    if (usable.length === cached.length) return views.flatMap((view) => usable.filter((shot) => shot.view === view));
+  }
+
+  const shots = await screenshotHtml({ name: file.name, bytes: file.bytes, siblings });
+  for (const shot of shots) {
+    const path = `derivatives/${key}-${shot.view}.jpg`;
+    await putObject(path, shot.bytes, shot.mime);
+    const row = { storagePath: path, mime: shot.mime, size: shot.bytes.byteLength, sha256: sha256(shot.bytes), tool: HTML_SHOT_TOOL };
+    await database
+      .insert(derivatives)
+      .values({ sourceSha256: key, kind: `html-${shot.view}`, ...row })
+      .onConflictDoUpdate({ target: [derivatives.sourceSha256, derivatives.kind], set: row });
+  }
+  return shots;
+}
 
 /** PDF render of an Office file, converted at most once per source hash. */
 /** PDF render of an Office file, converted at most once per source hash. Used by the grader and the on-page viewer. */
@@ -412,6 +470,7 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
   const listing = entries.map((e) => `  - ${e.name}`).join('\n');
   const parts: (string | MediaPart)[] = [`${label}\n${describeFileFacts({ name: file.name, mime: file.mime, size: file.bytes.byteLength })}\nARCHIVE with ${entries.length} file(s):\n${listing || '  (empty)'}`];
   let budget = MAX_ARCHIVE_BYTES;
+  const loaded: { name: string; bytes: Uint8Array }[] = [];
   for (const entry of entries.slice(0, MAX_ARCHIVE_ENTRIES)) {
     const bytes = new Uint8Array(await entry.async('uint8array'));
     if (bytes.byteLength > budget) {
@@ -419,7 +478,11 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
       continue;
     }
     budget -= bytes.byteLength;
-    const inner = await prepareFile({ id: `${file.id}/${entry.name}`, name: entry.name, mime: '', bytes }, `${role} (inside ${file.name})`, 1);
+    loaded.push({ name: entry.name, bytes });
+  }
+  for (const entry of loaded) {
+    const siblings = /\.html?$/i.test(entry.name) ? loaded.filter((row) => row !== entry) : [];
+    const inner = await prepareFile({ id: `${file.id}/${entry.name}`, name: entry.name, mime: '', bytes: entry.bytes }, `${role} (inside ${file.name})`, 1, siblings);
     parts.push(...inner.parts);
   }
   if (entries.length > MAX_ARCHIVE_ENTRIES) parts.push(`${entries.length - MAX_ARCHIVE_ENTRIES} further file(s) in the archive were not attached (limit ${MAX_ARCHIVE_ENTRIES}).`);

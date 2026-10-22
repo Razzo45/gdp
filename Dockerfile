@@ -21,9 +21,11 @@ FROM node:22-bookworm-slim AS runner
 # LibreOffice is part of this image (not a laptop install). Impress renders
 # PPTX → PDF; the app then stills each page for Golden / Stability.
 # ffmpeg ships ffprobe plus loudness / channel-level FILE FACTS.
+# Chromium screenshots HTML deliverables (desktop + phone) for visual seats.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    chromium \
     ffmpeg \
     fonts-dejavu-core \
     fonts-liberation \
@@ -33,6 +35,7 @@ RUN apt-get update \
     libreoffice-writer \
   && rm -rf /var/lib/apt/lists/* \
   && /usr/bin/soffice --version \
+  && /usr/bin/chromium --version \
   && /usr/bin/ffprobe -version \
   && /usr/bin/ffmpeg -version
 WORKDIR /app
@@ -41,6 +44,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
 ENV LIBREOFFICE_BIN=/usr/bin/soffice
+ENV CHROMIUM_BIN=/usr/bin/chromium
 ENV FFPROBE_BIN=/usr/bin/ffprobe
 ENV FFMPEG_BIN=/usr/bin/ffmpeg
 

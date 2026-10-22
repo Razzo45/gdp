@@ -112,9 +112,11 @@ export async function saveStatements(actor: Actor, submissionId: string, request
       if (input.id && byId.has(input.id)) {
         const previous = byId.get(input.id)!;
         const textChanged = previous.statement !== input.statement || previous.scope !== input.scope || previous.outputFile !== input.outputFile || JSON.stringify(previous.inputFileIds) !== JSON.stringify(input.inputFileIds);
+        // updatedAt marks Stability stale, so it moves only when what grading reads moves.
+        const graded = statementHash(previous) !== statementHash(input);
         await tx
           .update(rubricStatements)
-          .set({ tag, family, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, updatedAt: now, ...(previous.origin === 'factory' && textChanged ? { origin: 'manual' as const } : {}) })
+          .set({ tag, family, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, ...(graded ? { updatedAt: now } : {}), ...(previous.origin === 'factory' && textChanged ? { origin: 'manual' as const } : {}) })
           .where(eq(rubricStatements.id, input.id));
         if (lint.overall === 'fail') warnings.push({ statementId: input.id, reasons: lint.reasons });
       } else {
@@ -194,7 +196,8 @@ export interface GoldenState {
 /**
  * The AI rating counts only while the statement reads exactly as it did
  * when graded (`basis.statementHash`); edits make it stale. A human row
- * outranks AI only when it has a real observation — import stubs do not.
+ * outranks AI only when it has a real observation — import stubs do not —
+ * and goes stale too once the wording differs from `basis.statementText`.
  * A later failed/cancelled autorate does not hide an earlier Yes/No.
  */
 export async function goldenState(database: DbOrTx, rubricId: string, statements: RubricStatement[]): Promise<GoldenState> {
@@ -217,7 +220,9 @@ export async function goldenState(database: DbOrTx, rubricId: string, statements
     const failedAi = own.find((r) => r.source === 'ai' && Boolean(r.error));
     const staleAi = own.find((r) => r.source === 'ai' && !r.error && (r.basis as { statementHash?: string }).statementHash !== hash);
     const humanNote = (human?.evidence || human?.reason || '').trim();
-    const liveHuman = Boolean(human && isLiveHumanNote(humanNote));
+    const humanText = (human?.basis as { statementText?: string } | undefined)?.statementText;
+    const staleHuman = Boolean(human && typeof humanText === 'string' && humanText.trim() !== statement.statement.trim());
+    const liveHuman = Boolean(human && !staleHuman && isLiveHumanNote(humanNote));
     audit[statement.id] = {
       ...(usableAi ? { ai: { verdict: usableAi.verdict, evidence: usableAi.evidence, model: usableAi.model ?? null } } : {}),
       ...(liveHuman ? { human: { verdict: human!.verdict, evidence: humanNote } } : {}),
@@ -239,7 +244,7 @@ export async function goldenState(database: DbOrTx, rubricId: string, statements
       sources[statement.id] = 'ai';
       continue;
     }
-    if (staleAi) sources[statement.id] = 'stale';
+    if (staleAi || staleHuman) sources[statement.id] = 'stale';
   }
   const gate = goldenGate({ answers: verdicts, errors, statementIds: statements.map((s) => s.id) });
   return { verdicts, evidence, errors, sources, audit, gate, ratings };

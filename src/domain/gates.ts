@@ -141,6 +141,15 @@ export function stabilityGate(input: {
   };
 }
 
+/** Before review: the latest Stability run must cover the current wording, be complete, and sit in band. */
+export function stabilityReviewBlock(input: { passes: number; complete: boolean; inBand: boolean; stale: number }): string | null {
+  if (input.passes === 0) return 'Run Stability before sending to review.';
+  if (input.stale > 0) return `Run Stability again: ${input.stale} seat${input.stale === 1 ? '' : 's'} changed since the last run.`;
+  if (!input.complete) return `Stability needs ${STABILITY_PASSES} complete passes with every seat graded.`;
+  if (!input.inBand) return `Every Stability pass must score between ${CALIBRATION_MIN_PERCENT}% and ${CALIBRATION_MAX_PERCENT}% before sending to review.`;
+  return null;
+}
+
 /** The handoff gates, exactly as the existing platform states them. */
 export interface HandoffGates {
   golden: boolean;

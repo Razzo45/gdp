@@ -35,7 +35,7 @@ export interface SubmissionView {
   golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string; model: string | null }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
   aiOutputs: AiOutputFile[];
   review: { latest: { id: string; answers: Record<string, boolean>; evidence: Record<string, string>; scorePercent: number; submitted: boolean; reviewerId: string | null; createdAt: string } | null; submittedPercent: number | null; feedback: { decision: string; feedback: string; reviewerId: string | null; createdAt: string }[] };
-  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
+  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string; basis: { statementsAt?: string } }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
   helper: { id: string; status: Job['status']; progress: Job['progress']; error: string | null; result: TightenReport | null } | null;
@@ -166,7 +166,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
         ? null
         : {
             groupId: stability.groupId,
-            passes: stability.passes.map((p) => ({ passIndex: p.passIndex, answers: p.answers, evidence: p.evidence, errors: p.errors, scorePercent: p.scorePercent, model: p.model, createdAt: p.createdAt })),
+            passes: stability.passes.map((p) => ({ passIndex: p.passIndex, answers: p.answers, evidence: p.evidence, errors: p.errors, scorePercent: p.scorePercent, model: p.model, createdAt: p.createdAt, basis: { statementsAt: (p.basis as { statementsAt?: string } | null)?.statementsAt } })),
             gate: stability.gate,
             acceptedAt: stability.accepted?.createdAt ?? null,
             calibrationGateActive: stability.calibrationGateActive,

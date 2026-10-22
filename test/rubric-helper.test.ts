@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { stabilityReviewBlock } from '@/domain/gates';
 import { analyzeHelperSeats, applyFittedScan, helperConfidence, helperGate, looksCheated, packHelperResult, promptFromFields, seatGroundingOf, shouldScanForFitted, staleSinceStability, type HelperDraft, type HelperSeatInput } from '@/domain/helper';
 
 const CANVAS =
@@ -63,6 +64,12 @@ describe('staleSinceStability', () => {
     expect(staleSinceStability([{ id: 'a', updatedAt: '2026-10-21T09:00:00.000Z' }], [])).toBe(0);
   });
 
+  it('counts an edit made while the run was grading, using when the run read the seats', () => {
+    const running = [{ answers: { a: true }, createdAt: '2026-10-21T10:05:00.000Z', basis: { statementsAt: '2026-10-21T10:00:00.000Z' } }];
+    expect(staleSinceStability([{ id: 'a', updatedAt: '2026-10-21T10:02:00.000Z' }], running)).toBe(1);
+    expect(staleSinceStability([{ id: 'a', updatedAt: '2026-10-21T09:59:00.000Z' }], running)).toBe(0);
+  });
+
   it('reads the Catalog task field as the prompt', () => {
     expect(
       promptFromFields([
@@ -71,6 +78,16 @@ describe('staleSinceStability', () => {
         { key: 'acceptanceCriteria', text: 'The presentation includes a cover page.' },
       ]),
     ).toBe('Propose two visual directions for Velvet Bean Coffee Co.');
+  });
+});
+
+describe('stabilityReviewBlock', () => {
+  it('asks for a run, a re-run after edits, complete passes, then the 20–50% band', () => {
+    expect(stabilityReviewBlock({ passes: 0, complete: false, inBand: false, stale: 0 })).toBe('Run Stability before sending to review.');
+    expect(stabilityReviewBlock({ passes: 3, complete: true, inBand: true, stale: 2 })).toBe('Run Stability again: 2 seats changed since the last run.');
+    expect(stabilityReviewBlock({ passes: 2, complete: false, inBand: false, stale: 0 })).toMatch(/3 complete passes/);
+    expect(stabilityReviewBlock({ passes: 3, complete: true, inBand: false, stale: 0 })).toMatch(/between 20% and 50%/);
+    expect(stabilityReviewBlock({ passes: 3, complete: true, inBand: true, stale: 0 })).toBeNull();
   });
 });
 

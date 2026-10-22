@@ -189,10 +189,11 @@ export function helperGate(input: {
 /** Stability answers are keyed by seat id, so a seat edited after the group started still carries its old answer. */
 export function staleSinceStability(
   statements: readonly { id: string; updatedAt: string | Date }[],
-  passes: readonly { answers: Record<string, boolean | null>; createdAt: string | Date }[],
+  passes: readonly { answers: Record<string, boolean | null>; createdAt: string | Date; basis?: unknown }[],
 ): number {
   if (passes.length === 0) return 0;
-  const started = Math.min(...passes.map((pass) => new Date(pass.createdAt).getTime()));
+  const readAt = (pass: (typeof passes)[number]) => (pass.basis as { statementsAt?: string } | null | undefined)?.statementsAt ?? pass.createdAt;
+  const started = Math.min(...passes.map((pass) => new Date(readAt(pass)).getTime()));
   return statements.filter((row) => new Date(row.updatedAt).getTime() > started || passes.some((pass) => !(row.id in pass.answers))).length;
 }
 

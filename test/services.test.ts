@@ -473,14 +473,58 @@ describe('rubric quota seats', () => {
   });
 });
 
+async function seedPreviewStability(submissionId: string, yes = 13) {
+  const rubric = await currentRubric(db, submissionId);
+  const ids = (await statementsOf(db, rubric!.id)).map((row) => row.id);
+  const answers = yesAnswers(ids, yes);
+  const groupId = crypto.randomUUID();
+  await db.insert(stabilityPasses).values(
+    [1, 2, 3].map((passIndex) => ({ rubricId: rubric!.id, groupId, passIndex, answers, evidence: {}, errors: {}, scorePercent: (yes / ids.length) * 100, basis: {} })),
+  );
+}
+
 describe('review flow', () => {
   async function readyForReview() {
     const s = await makeSubmission(db);
     await claimSeat(creator, s.id, 'rubric');
     const saved = await saveStatements(creator, s.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
     for (const st of saved.statements) await overrideGolden(creator, s.id, st.id, true, 'Verified manually.');
+    await seedPreviewStability(s.id);
     return { s, statements: saved.statements };
   }
+
+  it('refuses review without a current, in-band Stability run, and an edit stales Golden and Stability', async () => {
+    const s = await makeSubmission(db);
+    await claimSeat(creator, s.id, 'rubric');
+    const saved = await saveStatements(creator, s.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
+    for (const st of saved.statements) await overrideGolden(creator, s.id, st.id, true, 'Verified manually.');
+    await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-stale', storagePath: `stale-${s.id}`, uploadedBy: creator.id });
+    await expect(sendToReview(creator, s.id)).rejects.toThrow('Run Stability before sending to review.');
+
+    await seedPreviewStability(s.id, 38);
+    await expect(sendToReview(creator, s.id)).rejects.toThrow('between 20% and 50%');
+
+    await seedPreviewStability(s.id, 13);
+    const fixture = seatedRubricInputs()[0]!;
+    const target = saved.statements.find((row) => row.statement === fixture.statement)!;
+    const seat = { ...fixture, id: target.id };
+    const rubric = await currentRubric(db, s.id);
+    const touched = await saveStatements(creator, s.id, { revision: rubric!.revision, upserts: [{ ...seat, notes: 'Only a note changed.' }], deletes: [] });
+    expect((await goldenState(db, rubric!.id, touched.statements)).gate.ok).toBe(true);
+    await sendToReview(creator, s.id);
+    await db.update(submissions).set({ stage: 'rubric', reviewStatus: null }).where(eq(submissions.id, s.id));
+
+    const reworded = await saveStatements(creator, s.id, { revision: touched.revision, upserts: [{ ...seat, statement: `${target.statement} Reworded.` }], deletes: [] });
+    const golden = await goldenState(db, rubric!.id, reworded.statements);
+    expect(golden.sources[target.id]).toBe('stale');
+    expect(golden.gate.ok).toBe(false);
+    await expectStatus(sendToReview(creator, s.id), 409);
+
+    await overrideGolden(creator, s.id, target.id, true, 'Verified the new wording.');
+    await expect(sendToReview(creator, s.id)).rejects.toThrow('Run Stability again: 1 seat changed since the last run.');
+    await seedPreviewStability(s.id, 13);
+    await sendToReview(creator, s.id);
+  });
 
   it('clears a Catalog bounce when the creator sends the task to review', async () => {
     const { s } = await readyForReview();
@@ -768,6 +812,7 @@ describe('retention', () => {
       await claimSeat(creator, row.id, 'rubric');
       const saved = await saveStatements(creator, row.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
       for (const st of saved.statements) await overrideGolden(creator, row.id, st.id, true, 'Verified manually.');
+      await seedPreviewStability(row.id);
       await db.insert(aiOutputFiles).values({ submissionId: row.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-draft', storagePath: `draft-${row.id}`, uploadedBy: creator.id });
       await sendToReview(creator, row.id);
       await claimSeat(reviewer, row.id, 'review');
@@ -788,6 +833,7 @@ describe('retention', () => {
       await claimSeat(creator, row.id, 'rubric');
       const saved = await saveStatements(creator, row.id, { revision: 0, upserts: seatedRubricInputs(), deletes: [] });
       for (const st of saved.statements) await overrideGolden(creator, row.id, st.id, true, 'Verified manually.');
+      await seedPreviewStability(row.id);
       await db.insert(aiOutputFiles).values({ submissionId: row.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-rescore', storagePath: `rescore-${row.id}`, uploadedBy: creator.id });
       await sendToReview(creator, row.id);
       await claimSeat(reviewer, row.id, 'review');

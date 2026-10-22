@@ -6,6 +6,8 @@ import { statusFromView, statusKey, TASK_STATUS_PULSE_MS, type StatusPulse } fro
 import { platformReturnNote } from '@/domain/catalogReturn';
 import { reviewerReturnNote } from '@/domain/review';
 import { countFamilies, quotaSpread, tagStyleOf } from '@/domain/rubric';
+import { stabilityReviewBlock } from '@/domain/gates';
+import { staleSinceStability } from '@/domain/helper';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
 import { formatDate } from '../format';
@@ -341,7 +343,15 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
   const statements = view.rubric?.statements ?? [];
   const style = tagStyleOf({ tags: statements.map((row) => row.tag), hasCurrentRubric: Boolean(view.rubric) });
   const spread = quotaSpread(countFamilies(statements), undefined, style);
-  const canSend = view.can.editRubric && view.golden?.gate.ok && view.aiOutputs.length > 0 && spread.ready;
+  const goldenStale = statements.filter((row) => view.golden?.sources[row.id] === 'stale').length;
+  const passes = view.stability?.passes ?? [];
+  const stabilityBlock = stabilityReviewBlock({
+    passes: passes.length,
+    complete: view.stability?.gate?.complete === true,
+    inBand: view.stability?.gate?.inBand === true,
+    stale: staleSinceStability(statements, passes),
+  });
+  const canSend = view.can.editRubric && view.golden?.gate.ok && !stabilityBlock && view.aiOutputs.length > 0 && spread.ready;
   const showSend = view.can.editRubric && s.stage === 'rubric';
   const showPush = view.can.push;
 
@@ -379,8 +389,10 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
       ? !spread.ready
         ? spread.warning
         : !view.golden?.gate.ok
-          ? 'Golden must be 100% first.'
-          : 'Attach the AI output first.'
+          ? goldenStale > 0
+            ? `Re-grade the golden file: ${goldenStale} seat${goldenStale === 1 ? '' : 's'} changed since it was graded.`
+            : 'Golden must be 100% first.'
+          : stabilityBlock ?? 'Attach the AI output first.'
       : null;
 
   return (

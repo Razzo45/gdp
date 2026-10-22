@@ -5,7 +5,8 @@ import { db } from '@/db/client';
 import { calibrations, reviewFeedback, stabilityAcceptances, submissions, type Calibration, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { mergeReviewDraft, REVIEW_NOTE_MIN_CHARS } from '@/domain/review';
-import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate } from '@/domain/gates';
+import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate, stabilityReviewBlock } from '@/domain/gates';
+import { staleSinceStability } from '@/domain/helper';
 import { countFamilies, quotaCaption, quotaSpread, tagStyleOf } from '@/domain/rubric';
 import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid, notFound } from './errors';
@@ -40,14 +41,10 @@ export async function sendToReview(actor: Actor, submissionId: string): Promise<
     if (!spread.ready) throw conflict(`Seat the rubric at ${quotaCaption(style)} first. ${spread.warning}`);
     const golden = await goldenState(tx, rubric.id, statements);
     if (!golden.gate.ok) throw conflict(`Golden must grade 100% before review: ${golden.gate.reasons.join(' ')}`);
-    const preview = stabilityGate({
-      passes: await latestGroup(tx, rubric.id),
-      statementIds: statements.map((row) => row.id),
-      calibrationGateActive: false,
-    });
-    if (preview.complete && !preview.inBand) {
-      throw conflict(`Stability must score between ${CALIBRATION_MIN_PERCENT}% and ${CALIBRATION_MAX_PERCENT}% before sending to review.`);
-    }
+    const passes = await latestGroup(tx, rubric.id);
+    const preview = stabilityGate({ passes, statementIds: statements.map((row) => row.id), calibrationGateActive: false });
+    const stabilityBlock = stabilityReviewBlock({ passes: passes.length, complete: preview.complete, inBand: preview.inBand, stale: staleSinceStability(statements, passes) });
+    if (stabilityBlock) throw conflict(stabilityBlock);
     const outputs = await listAiOutputs(tx, submissionId);
     if (outputs.length === 0) throw conflict('Upload the AI output before sending the task to review.');
     await tx

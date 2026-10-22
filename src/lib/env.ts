@@ -75,6 +75,8 @@ const Schema = z
     /** Set to "0" on web instances when a dedicated worker process runs the queue. */
     RUN_WORKER: z.string().default('1'),
     LIBREOFFICE_BIN: z.string().optional(),
+    /** Headless Chromium for HTML deliverable screenshots. */
+    CHROMIUM_BIN: z.string().optional(),
 
     /** 1 = write GDP work status into the PM Google Sheet. Leave 0 until cutover. */
     SHEETS_SYNC: z.enum(['0', '1']).default('0'),

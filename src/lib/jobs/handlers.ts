@@ -315,6 +315,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   if (!rubric || rubric.id !== job.rubricId) throw new ServiceError(409, 'The rubric changed before the run started.');
   const calibration = await submittedCalibration(database, rubric.id);
   const official = calibration != null;
+  const statementsAt = new Date().toISOString();
   const statements = await statementsOf(database, rubric.id);
   const groupId = (job.payload as { groupId?: string }).groupId ?? crypto.randomUUID();
   const { gradeContext, prompt, context } = taskContextOf(submission);
@@ -378,6 +379,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       model: result.model,
       basis: {
         rubricRevision: rubric.revision,
+        statementsAt,
         calibrationId: calibration?.id ?? null,
         calibrationGateActive: official,
         aiFingerprint: ai.fingerprint,
