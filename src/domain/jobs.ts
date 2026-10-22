@@ -5,6 +5,8 @@ export const STATEMENT_LANE_MAX = 8;
 export const HEAVY_FILE_BYTES = 100 * 1024 * 1024;
 /** Other users keep the remaining worker slots while these run. */
 export const HEAVY_RUNNING_MAX = 2;
+/** "Get under 50%" runs for many minutes; the rest of the worker stays free for everyone else. */
+export const HELPER_RUNNING_MAX = 1;
 
 export function isHeavyMedia(file: { mime?: string; name?: string; size?: number }): boolean {
   const mime = (file.mime ?? '').toLowerCase();

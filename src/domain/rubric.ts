@@ -215,7 +215,7 @@ export function familyWord(style: TagStyle): string {
 }
 
 export function quotaCaption(style: TagStyle = 'visual'): string {
-  return `5 Format, 15 Content, 30 ${familyWord(style)}`;
+  return `5 Format, 15 Content, 30 ${familyWord(style)} (±${quotaTolerance(RUBRIC_TARGET)} seats)`;
 }
 
 export function correctTag(statement: string, suggested?: string, style?: TagStyle): RubricTag {
@@ -281,6 +281,11 @@ function isTypefaceClaim(q: string): boolean {
 export const RUBRIC_TARGET = 50;
 export const RUBRIC_MIN = 40;
 
+/** Client-agreed 5% slack on the family split: seats that may sit in another family than the quota says (2 at 50). */
+export function quotaTolerance(total: number): number {
+  return Math.floor(total * 0.05);
+}
+
 /** Upper bound on seeds extracted from notes (one enhancer call each). */
 export const MAX_SEEDS = 100;
 export const MAX_SEED_CHARS = 600;
@@ -326,16 +331,31 @@ export function quotaSpread(
   const canAdd: Record<Family, boolean> = { format: false, content: false, visual: false };
   const parts: string[] = [];
   const short = familyShort(style);
+  let totalHave = 0;
+  let totalWant = 0;
   for (const family of FAMILIES) {
     const have = counts[family] ?? 0;
     const want = quotas[family] ?? 0;
+    totalHave += have;
+    totalWant += want;
     missing[family] = Math.max(0, want - have);
     extra[family] = Math.max(0, have - want);
-    canAdd[family] = have < want;
     if (missing[family] > 0) parts.push(`${short[family]} short by ${missing[family]} (${have} of ${want})`);
     else if (extra[family] > 0) parts.push(`${short[family]} has ${have} of ${want}`);
   }
-  return { ready: parts.length === 0, missing, extra, canAdd, warning: parts.length ? `${parts.join('. ')}.` : '' };
+  const tolerance = quotaTolerance(totalWant);
+  const moved = FAMILIES.reduce((sum, family) => sum + missing[family], 0);
+  const surplus = FAMILIES.reduce((sum, family) => sum + extra[family], 0);
+  for (const family of FAMILIES) {
+    canAdd[family] = totalHave < totalWant && (missing[family] > 0 || surplus + 1 <= tolerance);
+  }
+  const ready = totalHave === totalWant && moved <= tolerance;
+  if (ready) return { ready, missing, extra, canAdd, warning: '' };
+  const lead =
+    totalHave !== totalWant
+      ? `${totalHave} of ${totalWant} statements.`
+      : `${moved} seats are off the ${FAMILIES.map((family) => quotas[family]).join(' / ')} split; at most ${tolerance} may be.`;
+  return { ready, missing, extra, canAdd, warning: [lead, ...parts.map((part) => `${part}.`)].join(' ') };
 }
 
 export type StatementScope = 'output' | 'inputs';

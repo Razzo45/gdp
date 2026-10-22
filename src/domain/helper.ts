@@ -169,14 +169,31 @@ export function helperGate(input: {
   stabilityPasses: number;
   hasAi: boolean;
   hasPrompt: boolean;
+  /** Seats whose golden grade no longer matches their text. */
+  goldenStale?: number;
+  /** Seats edited since the latest Stability run. */
+  stabilityStale?: number;
 }): { ok: boolean; missing: string[] } {
   const missing: string[] = [];
+  const seats = (count: number) => `${count} seat${count === 1 ? '' : 's'}`;
   if (!input.hasRubric) missing.push('Write a few seats first.');
   if (input.goldenGraded < 1) missing.push('Grade the golden file first.');
+  else if (input.goldenStale) missing.push(`Re-grade the golden file: ${seats(input.goldenStale)} changed since it was graded.`);
   if (input.stabilityPasses < 1) missing.push('Run Stability so we have an AI grade.');
+  else if (input.stabilityStale) missing.push(`Run Stability again: ${seats(input.stabilityStale)} changed since the last run.`);
   if (!input.hasAi) missing.push('Attach the AI output first.');
   if (!input.hasPrompt) missing.push('This task is missing its brief.');
   return { ok: missing.length === 0, missing };
+}
+
+/** Stability answers are keyed by seat id, so a seat edited after the group started still carries its old answer. */
+export function staleSinceStability(
+  statements: readonly { id: string; updatedAt: string | Date }[],
+  passes: readonly { answers: Record<string, boolean | null>; createdAt: string | Date }[],
+): number {
+  if (passes.length === 0) return 0;
+  const started = Math.min(...passes.map((pass) => new Date(pass.createdAt).getTime()));
+  return statements.filter((row) => new Date(row.updatedAt).getTime() > started || passes.some((pass) => !(row.id in pass.answers))).length;
 }
 
 function aiOf(stability: readonly (boolean | null)[]): boolean | null {

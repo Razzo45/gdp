@@ -34,11 +34,18 @@ export function describeFileFacts(input: FileFactInput): string {
   return lines.join('\n');
 }
 
+const AV_UNMEASURED = 'Stream facts: NOT MEASURED (ffprobe returned nothing). Resolution, frame rate, codec and duration are unknown, not absent.';
+
 export async function describeFileFactsAsync(input: FileFactInput): Promise<string> {
   const base = describeFileFacts(input);
   if (!input.bytes || !isAv(input.mime, input.name)) return base;
   const probed = await avFacts(input.bytes, input.name);
-  return probed ? `${base}\n${probed}` : base;
+  return `${base}\n${probed ?? AV_UNMEASURED}`;
+}
+
+/** False when a probe failed, so the facts must not be cached for re-runs. */
+export function factsFullyMeasured(facts: string): boolean {
+  return !facts.includes(AV_UNMEASURED);
 }
 
 export interface AudioLevels {
@@ -458,10 +465,8 @@ async function avFacts(bytes: Uint8Array, name: string): Promise<string | null> 
       runFfmpegPhase(input),
     ]);
     const lines: string[] = [];
-    if (probeRaw) {
-      const formatted = formatFfprobe(JSON.parse(probeRaw) as FfprobeJson);
-      if (formatted) lines.push(formatted);
-    }
+    const formatted = probeRaw ? formatFfprobe(JSON.parse(probeRaw) as FfprobeJson) : null;
+    lines.push(formatted ?? AV_UNMEASURED);
     const combinedLog = [levelLog, phaseLog].filter(Boolean).join('\n');
     const levels = combinedLog ? parseAudioLevels(combinedLog) : null;
     if (levels) lines.push(formatAudioLevels(levels));

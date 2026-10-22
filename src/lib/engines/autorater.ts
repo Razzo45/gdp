@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { z } from 'zod';
-import { applyInferredScope, observationKey, resolveGradeFiles, taskBodyPromptBlock } from '@/domain/fileScope';
+import { acceptancePromptBlock, applyInferredScope, observationKey, resolveGradeFiles, taskBodyPromptBlock } from '@/domain/fileScope';
 import { env } from '@/lib/env';
 import { GeminiError, generateJson, tightenSendParts, type MediaPart } from '@/lib/ai/gemini';
 import type { PreparedFile } from '@/lib/ai/media';
@@ -38,6 +38,8 @@ export interface GradeInput {
   taskContext: string;
   /** Full Catalog brief, attached only when a seat links the task body. */
   taskBody?: string;
+  /** Catalog acceptance criteria (+ additional), attached only when a seat links them. */
+  acceptanceCriteria?: string;
   /** Pre-computed defect inventory, shared across stability passes. */
   defectInventory?: string[];
   /** Per-observation inventory reused across Stability passes. */
@@ -81,6 +83,8 @@ You will be shown numbered affirmative statements and the FILES they are graded
 against: CONSIDERED OUTPUT attachments (the work being judged) and, when relevant,
 SUBMITTED INPUT attachments. Treat the attachments and any FILE FACTS / text
 digests as the files themselves. Think through each claim before you answer.
+A TASK BODY or ACCEPTANCE CRITERIA block is reference text from the task: use it
+to know what was required, never as evidence that the output delivers it.
 
 Grade EVERY statement independently. Do not carry a Yes or a No from a
 neighbouring seat. For each, answer exactly Yes or No and give ONE SENTENCE of
@@ -181,18 +185,32 @@ Include a defect only when it is clearly visible, for example:
 Do NOT invent defects. Do NOT praise. Judge only from what is actually evidenced;
 a text digest is a partial view, not proof of truncation or missing content.`;
 
+interface Briefs {
+  taskBody?: string;
+  acceptanceCriteria?: string;
+}
+
+/** Only the virtual inputs this observation selected. */
+function briefsFor(selection: { taskBody: boolean; acceptance: boolean }, input: Briefs): Briefs {
+  return {
+    taskBody: selection.taskBody ? input.taskBody : undefined,
+    acceptanceCriteria: selection.acceptance ? (input.acceptanceCriteria ?? '') : undefined,
+  };
+}
+
 function evidenceParts(
   files: { outputs: PreparedFile[]; inputs: PreparedFile[] },
   taskContext: string,
   inventory: string[],
   allOutputs: boolean,
-  taskBody?: string,
+  briefs: Briefs = {},
 ): (string | MediaPart)[] {
   const parts: (string | MediaPart)[] = [];
   const context = taskContext.trim();
   if (context) parts.push(`TASK CONTEXT:\n${context.length > GRADE_CONTEXT_CHARS ? `${context.slice(0, GRADE_CONTEXT_CHARS)}\n…` : context}`);
-  const body = taskBody ? taskBodyPromptBlock(taskBody) : null;
+  const body = briefs.taskBody ? taskBodyPromptBlock(briefs.taskBody) : null;
   if (body) parts.push(body);
+  if (briefs.acceptanceCriteria !== undefined) parts.push(acceptancePromptBlock(briefs.acceptanceCriteria));
   parts.push(`CONSIDERED_OUTPUTS${allOutputs ? ' (every current deliverable; any one fail → No)' : ''}: ${files.outputs.map((f) => f.name).join(', ') || '(none)'}`);
   if (files.inputs.length) parts.push(`SUBMITTED_INPUTS: ${files.inputs.map((f) => f.name).join(', ')}`);
   const inventoryBlock = inventoryPromptBlock(inventory);
@@ -230,21 +248,21 @@ export async function inventoriesForObservations(input: GradeInput): Promise<Rec
       outputs: selection.outputs,
       inputs: selection.inputs,
       taskContext: input.taskContext,
-      taskBody: selection.taskBody ? input.taskBody : undefined,
+      ...briefsFor(selection, input),
       model: input.model,
     });
   }
   return byKey;
 }
 
-export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'inputs' | 'taskContext' | 'taskBody' | 'model'>): Promise<string[]> {
+export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'inputs' | 'taskContext' | 'taskBody' | 'acceptanceCriteria' | 'model'>): Promise<string[]> {
   if (input.outputs.length === 0) return [];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       const result = await generateJson({
         model: input.model,
         system: INVENTORY_SYSTEM,
-        parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1, input.taskBody),
+        parts: evidenceParts({ outputs: input.outputs, inputs: input.inputs }, input.taskContext, [], input.outputs.length > 1, { taskBody: input.taskBody, acceptanceCriteria: input.acceptanceCriteria }),
         schema: Inventory,
         temperature: 0.1,
         maxOutputTokens: 2048,
@@ -277,7 +295,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
 
   const outputRefs = input.outputs.map((f) => ({ id: f.id, name: f.name }));
   const inputRefs = input.inputs.map((f) => ({ id: f.id, name: f.name }));
-  const resolved = new Map<string, { statement: GradeStatement; files: { outputs: PreparedFile[]; inputs: PreparedFile[] }; allOutputs: boolean; taskBody: boolean; key: string }>();
+  const resolved = new Map<string, { statement: GradeStatement; files: { outputs: PreparedFile[]; inputs: PreparedFile[] }; allOutputs: boolean; briefs: Briefs; key: string }>();
   for (const raw of input.statements) {
     const statement = applyInferredScope(raw, inputRefs, outputRefs);
     const selection = resolveGradeFiles(statement, input.outputs, input.inputs);
@@ -286,7 +304,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
       continue;
     }
     const key = observationKey(selection);
-    resolved.set(raw.id, { statement, files: { outputs: selection.outputs, inputs: selection.inputs }, allOutputs: selection.allOutputs, taskBody: selection.taskBody, key });
+    resolved.set(raw.id, { statement, files: { outputs: selection.outputs, inputs: selection.inputs }, allOutputs: selection.allOutputs, briefs: briefsFor(selection, input), key });
   }
 
   const groups = new Map<string, GradeStatement[]>();
@@ -302,11 +320,11 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     const entry = resolved.get(batch[0]!.id)!;
     const files = entry.files;
     if (!result.inventoryByKey[entry.key]) {
-      result.inventoryByKey[entry.key] = input.defectInventory ?? (await defectInventory({ outputs: files.outputs, inputs: files.inputs, taskContext: input.taskContext, taskBody: entry.taskBody ? input.taskBody : undefined, model }));
+      result.inventoryByKey[entry.key] = input.defectInventory ?? (await defectInventory({ outputs: files.outputs, inputs: files.inputs, taskContext: input.taskContext, ...entry.briefs, model }));
     }
     const inventory = result.inventoryByKey[entry.key] ?? [];
     result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
-    const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs, entry.taskBody ? input.taskBody : undefined), statementsBlock(batch)];
+    const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs, entry.briefs), statementsBlock(batch)];
     const wanted = new Set(batch.map((s) => s.id));
     try {
       const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 8192, thinkingBudget: AUTORATE_THINKING_BUDGET });
@@ -322,7 +340,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
       }
     } catch (error) {
       const message = error instanceof GeminiError ? error.message : 'Grading failed.';
-      if (error instanceof GeminiError && (error.kind === 'rate_limit' || error.kind === 'auth' || error.kind === 'not_configured' || error.kind === 'too_large')) {
+      if (error instanceof GeminiError && (error.kind === 'rate_limit' || error.kind === 'storage_full' || error.kind === 'auth' || error.kind === 'not_configured' || error.kind === 'too_large')) {
         for (const id of wanted) result.errors[id] = message;
         await input.onBatch?.(result);
         return;

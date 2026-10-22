@@ -3,7 +3,8 @@ import 'server-only';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { isUserInteraction } from '@/domain/dashboard';
-import { helperResultOf, type HelperResult } from '@/domain/helper';
+import { acceptanceCriteriaText } from '@/domain/fileScope';
+import { tightenReportOf, type TightenReport } from '@/domain/tighten';
 import { jobs as jobsTable, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
@@ -29,7 +30,7 @@ import { getVisibleSubmission, readSource } from './submissions';
 export interface SubmissionView {
   submission: Pick<Submission, 'id' | 'catalogSubmissionId' | 'projectId' | 'statusId' | 'title' | 'stage' | 'landedAt' | 'lastSeenAt' | 'upstreamChangedAt' | 'lastClaimedAt' | 'rubricAssigneeId' | 'rubricClaimedAt' | 'reviewerId' | 'reviewClaimedAt' | 'reviewStatus' | 'handoffStatus' | 'pushedAt' | 'revision'>;
   people: Record<string, { name: string; email: string }>;
-  brief: { projectName: string; statusName: string | null; author: string | null; heroDeliverable: string; fields: CatalogField[]; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
+  brief: { projectName: string; statusName: string | null; author: string | null; heroDeliverable: string; fields: CatalogField[]; hasAcceptanceCriteria: boolean; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
   rubric: { id: string; version: number; revision: number; seeds: string[]; generation: Record<string, unknown>; statements: RubricStatement[]; quotas: Record<string, number>; target: number } | null;
   golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string; model: string | null }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
   aiOutputs: AiOutputFile[];
@@ -37,7 +38,7 @@ export interface SubmissionView {
   stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
-  helper: { id: string; status: Job['status']; progress: Job['progress']; error: string | null; result: HelperResult | null } | null;
+  helper: { id: string; status: Job['status']; progress: Job['progress']; error: string | null; result: TightenReport | null } | null;
   events: Pick<SubmissionEvent, 'id' | 'actorId' | 'action' | 'detail' | 'createdAt'>[];
   catalogReturnNote: string | null;
   can: {
@@ -134,6 +135,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       author: source?.author ?? null,
       heroDeliverable: heroDeliverableFromSource(submission.source),
       fields: source?.fields ?? [],
+      hasAcceptanceCriteria: source ? acceptanceCriteriaText(source.values) !== '' : false,
       inputFiles: (source?.inputFiles ?? []).map(stripUrls),
       goldenFiles: lens === 'reviewer' ? [] : (source?.goldenFiles ?? []).map(stripUrls),
     },
@@ -190,7 +192,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
             status: helperJob.status,
             progress: helperJob.progress,
             error: helperJob.error,
-            result: helperResultOf(helperJob.result),
+            result: tightenReportOf(helperJob.result),
           },
     events: lens === 'controller' ? events.filter(isUserInteraction).map((e) => ({ id: e.id, actorId: e.actorId, action: e.action, detail: e.detail, createdAt: e.createdAt })) : [],
     catalogReturnNote: parseCatalogReturn(submission.catalogReturn)?.note ?? null,

@@ -30,6 +30,9 @@ export const AUTO_OUTPUT = 'auto';
 export const TASK_BODY = 'task';
 export const TASK_BODY_CHARS = 8_000;
 
+/** Virtual input: the Catalog acceptance criteria, plus the additional criteria when present. */
+export const ACCEPTANCE = 'acceptance';
+
 export function isTaskBody(id: string): boolean {
   return id === TASK_BODY;
 }
@@ -38,14 +41,33 @@ export function taskBodySelected(ids: readonly string[]): boolean {
   return ids.some(isTaskBody);
 }
 
+export function acceptanceSelected(ids: readonly string[]): boolean {
+  return ids.includes(ACCEPTANCE);
+}
+
 export function fileInputIds(ids: readonly string[]): string[] {
-  return ids.filter((id) => !isTaskBody(id));
+  return ids.filter((id) => !isTaskBody(id) && id !== ACCEPTANCE);
 }
 
 export function taskBodyPromptBlock(text: string): string | null {
   const body = text.trim();
   if (!body) return null;
   return body.length > TASK_BODY_CHARS ? `TASK BODY:\n${body.slice(0, TASK_BODY_CHARS)}\n…` : `TASK BODY:\n${body}`;
+}
+
+/** Raw Catalog values, not the status-filtered fields: the additional criteria are hidden on some statuses. */
+export function acceptanceCriteriaText(values: Record<string, unknown>): string {
+  const section = (key: string, label: string) => {
+    const text = typeof values[key] === 'string' ? (values[key] as string).trim() : '';
+    return text ? `${label}:\n${text}` : '';
+  };
+  return [section('acceptanceCriteria', 'ACCEPTANCE CRITERIA'), section('creatorAcceptanceCriteria', 'ADDITIONAL ACCEPTANCE CRITERIA')].filter(Boolean).join('\n\n');
+}
+
+export function acceptancePromptBlock(text: string): string {
+  const body = text.trim();
+  if (!body) return 'ACCEPTANCE CRITERIA: none were provided for this task.';
+  return body.length > TASK_BODY_CHARS ? `${body.slice(0, TASK_BODY_CHARS)}\n…` : body;
 }
 
 export function isDefaultScope(seat: SeatScope): boolean {
@@ -196,23 +218,24 @@ export function resolveGradeFiles<T extends ScopeFile>(
   seat: SeatScope & { statement?: string },
   outputs: readonly T[],
   inputs: readonly T[],
-): { ok: true; outputs: T[]; inputs: T[]; allOutputs: boolean; taskBody: boolean } | { ok: false; error: string } {
+): { ok: true; outputs: T[]; inputs: T[]; allOutputs: boolean; taskBody: boolean; acceptance: boolean } | { ok: false; error: string } {
   const selectedOutputs = consideredOutputs(seat, outputs);
   if (selectedOutputs.length === 0) {
     return { ok: false, error: 'No deliverable files were available to grade against.' };
   }
   const allOutputs = selectedOutputs.length > 1 && selectedOutputs.length === outputs.length;
   const taskBody = taskBodySelected(seat.inputFileIds);
+  const acceptance = acceptanceSelected(seat.inputFileIds);
   const requiredFiles = fileInputIds(seat.inputFileIds);
 
   if (seat.scope === 'output') {
-    if (requiredFiles.length > 0 || taskBody) {
+    if (requiredFiles.length > 0 || taskBody || acceptance) {
       return { ok: false, error: 'An output-only statement cannot require submitted inputs.' };
     }
-    return { ok: true, outputs: selectedOutputs, inputs: [], allOutputs, taskBody: false };
+    return { ok: true, outputs: selectedOutputs, inputs: [], allOutputs, taskBody: false, acceptance: false };
   }
 
-  if (requiredFiles.length === 0 && !taskBody) {
+  if (requiredFiles.length === 0 && !taskBody && !acceptance) {
     return { ok: false, error: 'This statement requires at least one submitted input.' };
   }
   if (new Set(seat.inputFileIds).size !== seat.inputFileIds.length) {
@@ -226,12 +249,12 @@ export function resolveGradeFiles<T extends ScopeFile>(
     }
     selectedInputs.push(matches[0]!);
   }
-  return { ok: true, outputs: selectedOutputs, inputs: selectedInputs, allOutputs, taskBody };
+  return { ok: true, outputs: selectedOutputs, inputs: selectedInputs, allOutputs, taskBody, acceptance };
 }
 
-export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: readonly ScopeFile[]; taskBody?: boolean }): string {
+export function observationKey(files: { outputs: readonly ScopeFile[]; inputs: readonly ScopeFile[]; taskBody?: boolean; acceptance?: boolean }): string {
   const ids = (list: readonly ScopeFile[]) => list.map((file) => file.id).sort().join(',');
-  return `o:${ids(files.outputs)}#i:${ids(files.inputs)}${files.taskBody ? '#t:1' : ''}`;
+  return `o:${ids(files.outputs)}#i:${ids(files.inputs)}${files.taskBody ? '#t:1' : ''}${files.acceptance ? '#a:1' : ''}`;
 }
 
 export function describeSeatScope(seat: SeatScope & { statement?: string }, outputs: readonly ScopeFile[], inputs: readonly ScopeFile[]): string {
@@ -242,7 +265,7 @@ export function describeSeatScope(seat: SeatScope & { statement?: string }, outp
       : 'Golden autorate uses the Golden file. Stability uses the AI output.';
   if (seat.scope !== 'inputs' || seat.inputFileIds.length === 0) return lane;
   const refs = seat.inputFileIds
-    .map((id) => (isTaskBody(id) ? 'the task body' : (matchScopeFile(inputs, id)[0]?.name ?? id)))
+    .map((id) => (isTaskBody(id) ? 'the task body' : id === ACCEPTANCE ? 'the acceptance criteria' : (matchScopeFile(inputs, id)[0]?.name ?? id)))
     .filter(Boolean)
     .join(', ');
   return `${lane} Also reads ${refs || 'submitted inputs'}.`;

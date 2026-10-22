@@ -5,15 +5,18 @@ import { db } from '@/db/client';
 import { goldenRatings, stabilityPasses, submissions, type Job, type JobStage, type RubricStatement } from '@/db/schema';
 import { statementHash } from '@/domain/fingerprint';
 import { scoreBreakdown, STABILITY_PASSES } from '@/domain/gates';
-import { applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
+import { acceptanceCriteriaText, applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
 import { analyzeDiscrimination } from '@/domain/discrimination';
 import { isStatementLane } from '@/domain/jobs';
-import { seatIndexById, tagStyleForGenerate } from '@/domain/rubric';
+import { seatIndexById, tagStyleForGenerate, tagStyleOf } from '@/domain/rubric';
+import { guardLock, packTighten, screenDrafts, TIGHTEN_ROUNDS, tightenNeed, type LockDraft, type TightenReport, type TightenSeat, type VerifiedLock } from '@/domain/tighten';
 import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autorater';
 import type { Seed } from '@/lib/engines/rubricFactory';
+import { coreSeats, mineLocks, reviewDrafts, verifyLocks } from '@/lib/engines/tighten';
 import { GeminiError } from '@/lib/ai/gemini';
-import { listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
-import { analyzeHelperSeats, applyFittedScan, packHelperResult, promptFromFields, shouldScanForFitted, type HelperSeatInput } from '@/domain/helper';
+import { hasReadableText, sourceFileText } from '@/lib/ai/sourceText';
+import { catalogSourceFiles, listAiOutputs, prepareAiOutputs, prepareCatalogFiles } from '@/lib/services/files';
+import { promptFromFields } from '@/domain/helper';
 import { currentRubric, goldenState, installFactoryVersion, statementsOf, toGradeStatement } from '@/lib/services/rubric';
 import { latestGroup } from '@/lib/services/stability';
 import { pruneFinishedJobs, pruneGoldenRatings, pruneStabilityGroups } from '@/lib/services/retention';
@@ -48,6 +51,11 @@ export function isRetryable(error: unknown): boolean {
   if (error instanceof GeminiError) return error.kind === 'rate_limit' || error.kind === 'transport' || error.kind === 'timeout';
   if (error instanceof ServiceError) return error.status === 502;
   return false;
+}
+
+function acceptanceOf(submission: { source: unknown }): string {
+  const read = readSource(submission as Parameters<typeof readSource>[0]);
+  return read ? acceptanceCriteriaText(read.values) : '';
 }
 
 function taskContextOf(submission: { source: unknown; title: string }): { prompt: string; context: string; gradeContext: string; inputNames: string } {
@@ -285,6 +293,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
     inputs: refs,
     taskContext: gradeContext,
     taskBody,
+    acceptanceCriteria: acceptanceOf(submission),
     onBatch: persist,
   });
   await persist(result);
@@ -310,6 +319,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const groupId = (job.payload as { groupId?: string }).groupId ?? crypto.randomUUID();
   const { gradeContext, prompt, context } = taskContextOf(submission);
   const taskBody = prompt || context;
+  const acceptanceCriteria = acceptanceOf(submission);
 
   await ctx.tick({ done: 0, total: STABILITY_PASSES, note: 'Reading the AI output' });
   const ai = await prepareAiOutputs(database, job.submissionId, 'CONSIDERED OUTPUT');
@@ -328,7 +338,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const refs = inputs.files;
 
   await ctx.tick({ done: 0, total: STABILITY_PASSES, note: 'Scanning for defects' });
-  const inventoryByKey = await inventoriesForObservations({ statements: grade, outputs, inputs: refs, taskContext: gradeContext, taskBody });
+  const inventoryByKey = await inventoriesForObservations({ statements: grade, outputs, inputs: refs, taskContext: gradeContext, taskBody, acceptanceCriteria });
 
   const existing = await database.select().from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId));
   const donePasses = new Set(existing.map((p) => p.passIndex));
@@ -345,6 +355,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       inputs: refs,
       taskContext: gradeContext,
       taskBody,
+      acceptanceCriteria,
       inventoryByKey,
       onBatch: async (partial) => {
         graded[passIndex] = Object.keys(partial.answers).length + Object.keys(partial.errors).length;
@@ -391,55 +402,117 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
 }
 
 async function runRubricHelper(ctx: JobContext): Promise<Record<string, unknown>> {
+  const { report, verified } = await buildTightenReport(ctx);
+  await recordEvent(db(), ctx.job.submissionId, ctx.job.createdBy, 'helper_finished', {
+    jobId: ctx.job.id,
+    before: report.before,
+    projected: report.projected,
+    reached: report.reached,
+    shortBy: report.shortBy,
+    swaps: report.swaps.length,
+    verified,
+    guarded: report.guarded.length,
+    rounds: report.rounds,
+  });
+  return report as unknown as Record<string, unknown>;
+}
+
+/** "Get under 50%": mine grounded locks from the files, guard them, grade them for real, offer swaps. Writes nothing. */
+export async function buildTightenReport(
+  ctx: Pick<JobContext, 'job' | 'tick' | 'signal'>,
+  /** Grades an unsaved rubric instead of the stored one. */
+  given?: { statements: RubricStatement[]; golden: Record<string, boolean | null>; passes: Record<string, boolean | null>[] },
+): Promise<{ report: TightenReport; verified: number }> {
   const { job } = ctx;
   const database = db();
   const submission = await getSubmission(database, job.submissionId);
   const rubric = await currentRubric(database, job.submissionId);
-  if (!rubric) throw new ServiceError(409, 'Write a rubric first.');
-  const statements = await statementsOf(database, rubric.id);
-  const [golden, passes] = await Promise.all([
-    goldenState(database, rubric.id, statements),
-    latestGroup(database, rubric.id),
-  ]);
-  const { prompt } = taskContextOf(submission);
-  const source = readSource(submission);
-  const inputRoles = (source?.inputFiles ?? []).flatMap((file) => (file.role ? [file.role] : []));
-  await ctx.tick({ done: 0, total: 4, note: 'Classifying seats from Golden and this AI pack' });
-  const seats: HelperSeatInput[] = statements.map((row) => ({
+  if (!rubric || rubric.id !== job.rubricId) throw new ServiceError(409, 'The rubric changed before the helper started.');
+  const statements = given?.statements ?? (await statementsOf(database, rubric.id));
+  const [golden, passes] = given
+    ? [{ verdicts: given.golden }, given.passes.map((answers) => ({ answers }))]
+    : await Promise.all([goldenState(database, rubric.id, statements), latestGroup(database, rubric.id)]);
+  const style = tagStyleOf({ tags: statements.map((row) => row.tag), hasCurrentRubric: true });
+  const seats: TightenSeat[] = statements.map((row) => ({
     id: row.id,
     statement: row.statement,
     tag: row.tag,
     family: row.family,
-    claimKey: row.claimKey,
     golden: golden.verdicts[row.id] ?? null,
-    goldenEvidence: golden.evidence[row.id],
-    stability: passes.map((pass) => pass.answers[row.id] ?? null),
-    stabilityEvidence: passes.map((pass) => pass.evidence[row.id] ?? ''),
+    ai: passes.map((pass) => pass.answers[row.id] ?? null),
   }));
-  const analyzed = analyzeHelperSeats(seats, { prompt, inputRoles });
-  await ctx.tick({ done: 1, total: 4, note: 'Checking seats that read as written off the golden or AI file' });
-  const { draftHelperRows, scanOutputFitted } = await import('@/lib/engines/helperDraft');
-  const fittedIds = await scanOutputFitted({
-    prompt,
-    inputRoles,
-    seats: analyzed.filter((row) => shouldScanForFitted(row, { prompt, inputRoles })),
-    signal: ctx.signal,
-  });
-  const scanned = applyFittedScan(analyzed, fittedIds);
-  await ctx.tick({ done: 2, total: 4, note: `Keep ${scanned.filter((row) => row.action === 'keep').length} · act ${scanned.filter((row) => row.action !== 'keep').length}` });
-  const drafts = await draftHelperRows({ prompt, inputRoles, seats: scanned, signal: ctx.signal });
-  await ctx.tick({ done: 3, total: 4, note: 'Packing Keep / Act / Add' });
-  const packed = packHelperResult({ seats, prompt, inputRoles, drafts, fittedIds });
-  await recordEvent(database, job.submissionId, job.createdBy, 'helper_finished', {
-    jobId: job.id,
-    keep: packed.mix.keep,
-    act: packed.mix.act,
-    add: packed.mix.add,
-    predictedGolden: packed.mix.predictedGolden,
-    predictedCalibration: packed.mix.predictedCalibration,
-    ready: packed.mix.ready,
-  });
-  return packed as unknown as Record<string, unknown>;
+  const goldenFails = seats.filter((seat) => seat.golden === false).length;
+  const total = TIGHTEN_ROUNDS * 2 + 1;
+  const guarded: TightenReport['guarded'] = [];
+  const verified: VerifiedLock[] = [];
+  let result = packTighten({ seats, locks: [], style });
+  let rounds = 0;
+  let stoppedEarly: string | null = null;
+  const done = () => result.reached && result.swaps.filter((swap) => swap.reason === 'false_on_golden').length >= goldenFails;
+
+  if (!done()) {
+    const { gradeContext, prompt, context } = taskContextOf(submission);
+    const taskBody = prompt || context;
+    const acceptance = acceptanceOf(submission);
+    const hasInputs = (readSource(submission)?.inputFiles.length ?? 0) > 0;
+    await ctx.tick({ done: 0, total, note: 'Reading the golden file, the AI output and the inputs' });
+    const [goldenFiles, ai, inputs, texts] = await Promise.all([
+      prepareCatalogFiles(submission, 'golden', 'CONSIDERED OUTPUT'),
+      prepareAiOutputs(database, job.submissionId, 'CONSIDERED OUTPUT'),
+      hasInputs ? prepareCatalogFiles(submission, 'inputs', 'TASK INPUT') : { files: [], fingerprint: '' },
+      hasInputs ? catalogSourceFiles(submission, 'inputs', (file) => hasReadableText(file.name, file.mime)) : { files: [], fingerprint: '' },
+    ]);
+    if (ai.files.length === 0) throw new ServiceError(422, 'No AI output files are attached to this task.');
+    const inputTexts = await Promise.all(texts.files.map(async (file) => `${file.name}\n${await sourceFileText(file)}`));
+    const sources = [taskBody, context, acceptance, ...inputTexts].join('\n');
+    const kept = statements.map((row) => ({ statement: row.statement, tag: row.tag }));
+    const already: string[] = [];
+    const seatRefs = statements.map((row, index) => ({ id: `s${index + 1}`, statement: row.statement }));
+    const coreRefs = new Set(await coreSeats({ seats: seatRefs, taskText: sources, signal: ctx.signal }));
+    seats.forEach((seat, index) => {
+      seat.core = coreRefs.has(`s${index + 1}`);
+    });
+    result = packTighten({ seats, locks: [], style });
+
+    while (!done() && rounds < TIGHTEN_ROUNDS) {
+      rounds += 1;
+      const missing = rounds === 1 ? tightenNeed(seats).flips : result.shortBy;
+      const want = Math.min(10, Math.max(5, Math.ceil((missing * 1.5 + goldenFails) / 2)));
+      await ctx.tick({ done: rounds * 2 - 1, total, note: `Round ${rounds}: finding what the AI output misses (${verified.length} verified so far)` });
+      const mined = await Promise.allSettled(
+        (['content', 'presentation'] as const).map((focus) => mineLocks({ focus, brief: taskBody, acceptance, inputs: inputs.files, golden: goldenFiles.files, ai: ai.files, kept, already, want, style, signal: ctx.signal })),
+      );
+      const failure = mined.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected');
+      if (failure && mined.every((outcome) => outcome.status === 'rejected')) {
+        if (rounds === 1 || !(failure.reason instanceof GeminiError)) throw failure.reason;
+        stoppedEarly = `Round ${rounds} stopped: ${failure.reason.message}`;
+        break;
+      }
+      const drafts = mined.flatMap((outcome) => (outcome.status === 'fulfilled' ? outcome.value : []));
+      already.push(...drafts.map((draft) => draft.statement));
+      const passed: (LockDraft & { id: string })[] = [];
+      for (const [index, draft] of drafts.entries()) {
+        const reasons = guardLock(draft, { sources, kept: [...kept.map((row) => row.statement), ...verified.map((lock) => lock.statement), ...passed.map((lock) => lock.statement)], style });
+        if (reasons.length) guarded.push({ statement: draft.statement, reasons });
+        else passed.push({ ...draft, id: `r${rounds}d${index + 1}` });
+      }
+      const existing = [...seatRefs, ...verified.map((lock) => ({ id: lock.id, statement: lock.statement }))];
+      try {
+        const review = await reviewDrafts({ drafts: passed, existing, taskText: sources, signal: ctx.signal });
+        const screened = screenDrafts(passed, review, new Set(existing.map((row) => row.id)));
+        guarded.push(...screened.dropped);
+        await ctx.tick({ done: rounds * 2, total, note: `Round ${rounds}: grading ${screened.keep.length} grounded locks on the golden and the AI output` });
+        verified.push(...(await verifyLocks({ drafts: screened.keep, golden: goldenFiles.files, ai: ai.files, taskContext: gradeContext, taskBody, acceptanceCriteria: acceptance })));
+      } catch (error) {
+        if (rounds === 1 || !(error instanceof GeminiError)) throw error;
+        stoppedEarly = `Round ${rounds} stopped: ${error.message}`;
+        break;
+      }
+      result = packTighten({ seats, locks: verified, style });
+    }
+  }
+
+  return { report: { ...result, rubricRevision: rubric.revision, rounds, guarded, stoppedEarly, core: seats.filter((seat) => seat.core).map((seat) => seat.statement) }, verified: verified.length };
 }
 
 export const HANDLERS: Record<Job['kind'], (ctx: JobContext) => Promise<Record<string, unknown>>> = {

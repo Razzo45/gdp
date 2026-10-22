@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeFileFacts, formatAudioLevels, formatFfprobe, parseAudioLevels } from '@/lib/ai/fileFacts';
+import { describeFileFacts, describeFileFactsAsync, factsFullyMeasured, formatAudioLevels, formatFfprobe, parseAudioLevels } from '@/lib/ai/fileFacts';
 import { preparedFromUri } from '@/lib/ai/media';
 
 const PNG_1X1 = Uint8Array.from(
@@ -174,8 +174,27 @@ Duration: 00:00:10.00, start: 0.000000, bitrate: 2304 kb/s
   });
 });
 
+describe('describeFileFactsAsync', () => {
+  it('says the stream facts were not measured when ffprobe returns nothing, and marks them uncacheable', async () => {
+    const saved = { probe: process.env['FFPROBE_BIN'], mpeg: process.env['FFMPEG_BIN'] };
+    process.env['FFPROBE_BIN'] = 'gdp-missing-ffprobe';
+    process.env['FFMPEG_BIN'] = 'gdp-missing-ffmpeg';
+    try {
+      const facts = await describeFileFactsAsync({ name: 'clip.mp4', mime: 'video/mp4', size: 4, bytes: Uint8Array.from([0, 0, 0, 0]) });
+      expect(facts).toMatch(/NOT MEASURED/);
+      expect(factsFullyMeasured(facts)).toBe(false);
+    } finally {
+      if (saved.probe === undefined) delete process.env['FFPROBE_BIN'];
+      else process.env['FFPROBE_BIN'] = saved.probe;
+      if (saved.mpeg === undefined) delete process.env['FFMPEG_BIN'];
+      else process.env['FFMPEG_BIN'] = saved.mpeg;
+    }
+  });
+});
+
 describe('preparedFromUri', () => {
-  it('still attaches measured file size when the model only receives a Files API URI', () => {
+  it('attaches the stored measured facts when the model only receives a Files API URI', () => {
+    const facts = describeFileFacts({ name: 'guide.pdf', mime: 'application/pdf', size: 27_670_908, bytes: ONE_PAGE_PDF });
     const prepared = preparedFromUri({
       id: 'd94aa665',
       name: 'Fieldnote Bakery Brand Guidelines (1).pdf',
@@ -184,9 +203,10 @@ describe('preparedFromUri', () => {
       size: 27_670_908,
       uri: 'https://generativelanguage.googleapis.com/files/x',
       role: 'CONSIDERED OUTPUT',
+      facts,
     });
     const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
-    expect(text).toContain('FILE FACTS');
     expect(text).toContain('File size: 26.4 MB (27670908 bytes)');
+    expect(text).toContain('Pages: 1');
   });
 });

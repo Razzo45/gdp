@@ -317,12 +317,12 @@ describe('rubric quota seats', () => {
     source: 'local' as const,
   };
 
-  it('refuses Add from the bank when that family is already full', async () => {
+  it('refuses Add from the bank when that family is already 2 seats over quota', async () => {
     const s = await makeSubmission(db);
     await claimSeat(creator, s.id, 'rubric');
     await installFactoryVersion(db, s.id, creator.id, {
       seeds: [],
-      statements: [0, 1, 2, 3, 4].map((i) => ({
+      statements: [0, 1, 2, 3, 4, 5, 6].map((i) => ({
         family: 'format' as const,
         tag: 'Format/File',
         statement: `The delivered presentation uses a 16:9 page size on format seat ${i}.`,
@@ -357,7 +357,7 @@ describe('rubric quota seats', () => {
     });
     await expectStatus(addFromBank(creator, s.id, { claimKey: 'extra-fmt', revision: 0 }), 409);
     const added = await addFromBank(creator, s.id, { claimKey: 'extra-content', revision: 0 });
-    expect(added.statements).toHaveLength(6);
+    expect(added.statements).toHaveLength(8);
   });
 
   it('replaces the current rubric with a pasted 5 / 15 / 30 set and refuses a short paste', async () => {
@@ -960,6 +960,23 @@ describe('job queue', () => {
       if (wanted.has(row.job.id)) claimed.push(row.job.id);
     }
     expect(claimed).toEqual([smallGolden.id, stability.id, generate.id, helper.id]);
+  });
+
+  it('runs one helper job at a time so it cannot fill the worker', async () => {
+    await db.execute(sql`update app.jobs set status = 'cancelled' where status in ('queued', 'running')`);
+    const rows = await Promise.all(Array.from({ length: 3 }, () => makeSubmission(db)));
+    const helpers = [];
+    for (const row of rows.slice(0, 2)) {
+      helpers.push(await enqueue(db, { kind: 'rubric_helper', submissionId: row.id, rubricId: null, requestId: crypto.randomUUID(), payload: {}, createdBy: creator.id }));
+    }
+    const golden = await enqueue(db, { kind: 'golden_autorate', submissionId: rows[2]!.id, rubricId: null, requestId: crypto.randomUUID(), payload: {}, createdBy: creator.id });
+    const first = await claimNext(JOB_KINDS);
+    const second = await claimNext(JOB_KINDS);
+    const third = await claimNext(JOB_KINDS);
+    expect([first?.job.id, second?.job.id]).toEqual([golden.id, helpers[0]!.id]);
+    expect(third).toBeNull();
+    await complete(second!.job.id, second!.leaseToken, {});
+    expect((await claimNext(JOB_KINDS))?.job.id).toBe(helpers[1]!.id);
   });
 });
 

@@ -101,24 +101,38 @@ describe('tag channel', () => {
 });
 
 describe('quota spread', () => {
-  it('is ready only at 5 Format, 15 Content, 30 Visual', () => {
-    const ready = quotaSpread({ format: 5, content: 15, visual: 30 });
-    expect(ready.ready).toBe(true);
-    expect(ready.warning).toBe('');
-    expect(ready.canAdd).toEqual({ format: false, content: false, visual: false });
+  it('is ready at 50 seats with at most 2 seats off 5 Format, 15 Content, 30 Visual', () => {
+    const exact = quotaSpread({ format: 5, content: 15, visual: 30 });
+    expect(exact.ready).toBe(true);
+    expect(exact.warning).toBe('');
+    expect(exact.canAdd).toEqual({ format: false, content: false, visual: false });
+
+    expect(quotaSpread({ format: 4, content: 16, visual: 30 }).ready).toBe(true);
+    expect(quotaSpread({ format: 3, content: 15, visual: 32 }).ready).toBe(true);
+    expect(quotaSpread({ format: 5, content: 17, visual: 28 }).ready).toBe(true);
+    expect(quotaSpread({ format: 4, content: 14, visual: 32 }).ready).toBe(true);
+
+    const tooFar = quotaSpread({ format: 2, content: 15, visual: 33 });
+    expect(tooFar.ready).toBe(false);
+    expect(tooFar.warning).toBe('3 seats are off the 5 / 15 / 30 split; at most 2 may be. Format short by 3 (2 of 5). Visual has 33 of 30.');
 
     const short = quotaSpread({ format: 3, content: 15, visual: 30 });
     expect(short.ready).toBe(false);
-    expect(short.canAdd.format).toBe(true);
-    expect(short.warning).toBe('Format short by 2 (3 of 5).');
+    expect(short.canAdd).toEqual({ format: true, content: true, visual: true });
+    expect(short.warning).toBe('48 of 50 statements. Format short by 2 (3 of 5).');
+
+    const leaning = quotaSpread({ format: 5, content: 16, visual: 28 });
+    expect(leaning.canAdd).toEqual({ format: true, content: true, visual: true });
+    const leaningFar = quotaSpread({ format: 5, content: 17, visual: 27 });
+    expect(leaningFar.canAdd).toEqual({ format: false, content: false, visual: true });
 
     const over = quotaSpread({ format: 6, content: 15, visual: 30 });
     expect(over.ready).toBe(false);
-    expect(over.canAdd.format).toBe(false);
-    expect(over.warning).toBe('Format has 6 of 5.');
+    expect(over.canAdd).toEqual({ format: false, content: false, visual: false });
+    expect(over.warning).toBe('51 of 50 statements. Format has 6 of 5.');
 
-    expect(quotaCaption('craft')).toBe('5 Format, 15 Content, 30 Craft');
-    expect(quotaSpread({ format: 5, content: 15, visual: 29 }, undefined, 'craft').warning).toBe('Craft short by 1 (29 of 30).');
+    expect(quotaCaption('craft')).toBe('5 Format, 15 Content, 30 Craft (±2 seats)');
+    expect(quotaSpread({ format: 5, content: 15, visual: 29 }, undefined, 'craft').warning).toBe('49 of 50 statements. Craft short by 1 (29 of 30).');
   });
 
   it('counts seated families from tags', () => {
@@ -403,6 +417,31 @@ describe('assemble', () => {
     const result = assemble([weak, strong], { format: 0, content: 0, visual: 1 });
     expect(result.seated).toHaveLength(1);
     expect(result.seated[0]?.claimKey).toBe(strong.claimKey);
+  });
+
+  const fullBank = (extraContent: number, weakVisual: number): BankRow[] => [
+    ...Array.from({ length: 5 }, (_, i) => ({ ...row('f', i, 'format', 'Format/File'), strength: 90 })),
+    ...Array.from({ length: 15 }, (_, i) => ({ ...row('c', i, 'content', 'Content - Exact'), strength: 60 })),
+    ...Array.from({ length: 3 }, (_, i) => ({ ...row('c', 50 + i, 'content', 'Content - Exact'), strength: extraContent })),
+    ...Array.from({ length: 28 }, (_, i) => ({ ...row('v', i, 'visual', 'Visual - Layout'), strength: 70 })),
+    ...Array.from({ length: 2 }, (_, i) => ({ ...row('v', 50 + i, 'visual', 'Visual - Layout'), strength: weakVisual })),
+  ];
+  const familyCounts = (rows: BankRow[]) => ({
+    format: rows.filter((r) => r.family === 'format').length,
+    content: rows.filter((r) => r.family === 'content').length,
+    visual: rows.filter((r) => r.family === 'visual').length,
+  });
+
+  it('moves up to 2 seats to a family whose leftover statements are clearly stronger', () => {
+    const result = assemble(fullBank(95, 30), { format: 5, content: 15, visual: 30 });
+    expect(result.seated).toHaveLength(50);
+    expect(familyCounts(result.seated)).toEqual({ format: 5, content: 17, visual: 28 });
+    expect(result.seated.some((r) => r.claimKey === 'v-visual-50' || r.claimKey === 'v-visual-51')).toBe(false);
+  });
+
+  it('keeps 5 / 15 / 30 when the leftovers are not clearly stronger', () => {
+    const result = assemble(fullBank(60, 58), { format: 5, content: 15, visual: 30 });
+    expect(familyCounts(result.seated)).toEqual({ format: 5, content: 15, visual: 30 });
   });
 });
 

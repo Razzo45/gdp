@@ -11,7 +11,7 @@ import { canChangeAiOutputs, type Actor } from '@/lib/auth/permissions';
 import { downloadCatalogFile, probeCatalogFile } from '@/lib/catalog/client';
 import type { CatalogFile } from '@/lib/catalog/types';
 import { lookupActiveFileUri, rememberGeminiUse } from '@/lib/ai/gemini';
-import { MAX_FILE_BYTES, normaliseMime, prepareFile, preparedFromUri, type PreparedFile, type SourceFile } from '@/lib/ai/media';
+import { MAX_FILE_BYTES, normaliseMime, prepareFile, preparedFromUri, storedFileFacts, type PreparedFile, type SourceFile } from '@/lib/ai/media';
 import { env } from '@/lib/env';
 import { getObject, hashObject, objectStat, putObject, removeObject, signedPutUrl } from '@/lib/storage';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
@@ -94,8 +94,9 @@ async function prepareOneCatalogOnce(file: CatalogFile, role: string, catalogSub
   const probe = await probeCatalogFile(file.downloadUrl);
   if (cached && (!probe || catalogIdentityMatch(cached, probe))) {
     const uri = await lookupActiveFileUri(cached.sha256);
-    if (uri && canReuseStagedUri(cached.mime, file.name)) {
-      return preparedFromUri({ id: file.id, name: file.name, mime: cached.mime, sha256: cached.sha256, size: cached.size, uri, role });
+    const facts = uri && canReuseStagedUri(cached.mime, file.name) ? await storedFileFacts(cached.sha256) : null;
+    if (uri && facts) {
+      return preparedFromUri({ id: file.id, name: file.name, mime: cached.mime, sha256: cached.sha256, size: cached.size, uri, role, facts });
     }
   }
   let downloaded = await downloadCatalogFile(file.downloadUrl, MAX_FILE_BYTES);
@@ -112,10 +113,10 @@ async function prepareOneCatalogOnce(file: CatalogFile, role: string, catalogSub
   return prepareFile({ id: file.id, name: file.name, mime, bytes: downloaded.bytes }, role);
 }
 
-export async function catalogSourceFiles(submission: Submission, kind: 'golden' | 'inputs'): Promise<{ files: SourceFile[]; fingerprint: string }> {
+export async function catalogSourceFiles(submission: Submission, kind: 'golden' | 'inputs', only?: (file: CatalogFile) => boolean): Promise<{ files: SourceFile[]; fingerprint: string }> {
   const resolved = await catalogList(submission, kind);
   const files: SourceFile[] = [];
-  for (const file of resolved.list) {
+  for (const file of only ? resolved.list.filter(only) : resolved.list) {
     if (!file.downloadUrl) throw new ServiceError(502, `The Catalog gave no download address for ${file.name}.`);
     const downloaded = await downloadCatalogFile(file.downloadUrl, MAX_FILE_BYTES);
     if (!downloaded.ok) throw new ServiceError(502, `${file.name}: ${downloaded.error}`);
@@ -132,9 +133,10 @@ export async function prepareAiOutputs(database: DbOrTx, submissionId: string, r
   const files: PreparedFile[] = [];
   for (const row of rows) {
     const uri = await lookupActiveFileUri(row.sha256);
-    if (uri && canReuseStagedUri(row.mime, row.name)) {
+    const facts = uri && canReuseStagedUri(row.mime, row.name) ? await storedFileFacts(row.sha256) : null;
+    if (uri && facts) {
       await rememberGeminiUse(row.sha256, submissionId);
-      files.push(preparedFromUri({ id: row.id, name: row.name, mime: row.mime, sha256: row.sha256, size: row.size, uri, role }));
+      files.push(preparedFromUri({ id: row.id, name: row.name, mime: row.mime, sha256: row.sha256, size: row.size, uri, role, facts }));
       continue;
     }
     const bytes = await getObject(row.storagePath);

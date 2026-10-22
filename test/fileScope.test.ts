@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACCEPTANCE,
+  acceptanceCriteriaText,
+  acceptancePromptBlock,
   ALL_OUTPUTS,
   applyInferredScope,
   describeSeatScope,
@@ -194,9 +197,47 @@ describe('resolveGradeFiles', () => {
   });
 });
 
+describe('acceptance criteria as a virtual input', () => {
+  it('resolves alone or alongside the task body and files, and keys the observation', () => {
+    const only = resolveGradeFiles({ scope: 'inputs', outputFile: null, inputFileIds: [ACCEPTANCE] }, [deck], []);
+    expect(only).toMatchObject({ ok: true, acceptance: true, taskBody: false });
+    if (only.ok) {
+      expect(only.inputs).toEqual([]);
+      expect(observationKey(only)).toBe('o:out-1#i:#a:1');
+    }
+
+    const all = resolveGradeFiles({ scope: 'inputs', outputFile: null, inputFileIds: [TASK_BODY, ACCEPTANCE, guide.id] }, [deck], [guide]);
+    expect(all).toMatchObject({ ok: true, acceptance: true, taskBody: true });
+    if (all.ok) {
+      expect(all.inputs.map((f) => f.id)).toEqual(['in-1']);
+      expect(observationKey(all)).toBe('o:out-1#i:in-1#t:1#a:1');
+    }
+  });
+
+  it('is refused on an output-only seat', () => {
+    expect(resolveGradeFiles({ scope: 'output', outputFile: null, inputFileIds: [ACCEPTANCE] }, [deck], []).ok).toBe(false);
+  });
+
+  it('reads both Catalog criteria fields, labelled, and skips the additional one when blank', () => {
+    expect(acceptanceCriteriaText({ acceptanceCriteria: ' Drone cuts are stabilised. ', creatorAcceptanceCriteria: 'Logo stays in the safe area.' })).toBe(
+      'ACCEPTANCE CRITERIA:\nDrone cuts are stabilised.\n\nADDITIONAL ACCEPTANCE CRITERIA:\nLogo stays in the safe area.',
+    );
+    expect(acceptanceCriteriaText({ acceptanceCriteria: 'Drone cuts are stabilised.', creatorAcceptanceCriteria: '  ' })).toBe('ACCEPTANCE CRITERIA:\nDrone cuts are stabilised.');
+    expect(acceptanceCriteriaText({})).toBe('');
+  });
+
+  it('says so in the prompt when a seat links criteria the task does not have', () => {
+    expect(acceptancePromptBlock('')).toMatch(/ACCEPTANCE CRITERIA: none/);
+  });
+});
+
 describe('describeSeatScope', () => {
   it('names the task body instead of the raw token', () => {
     expect(describeSeatScope({ scope: 'inputs', outputFile: null, inputFileIds: [TASK_BODY] }, [deck], [])).toContain('task body');
+  });
+
+  it('names the acceptance criteria instead of the raw token', () => {
+    expect(describeSeatScope({ scope: 'inputs', outputFile: null, inputFileIds: [ACCEPTANCE] }, [deck], [])).toContain('the acceptance criteria');
   });
 });
 

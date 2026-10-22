@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import { and, eq } from 'drizzle-orm';
 import JSZip from 'jszip';
 import { db } from '@/db/client';
-import { derivatives } from '@/db/schema';
+import { derivatives, fileFacts } from '@/db/schema';
 import { sha256 } from '@/domain/fingerprint';
+import { canReuseStagedUri } from '@/domain/jobs';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
-import { describeFileFacts, describeFileFactsAsync } from './fileFacts';
+import { describeFileFacts, describeFileFactsAsync, factsFullyMeasured } from './fileFacts';
 import { mediaPart, SEND_TEXT_CHARS, type MediaPart } from './gemini';
 import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
@@ -58,8 +59,8 @@ export interface PreparedFile {
   bytes: number;
 }
 
-/** Rebuild a prepared native file from a live Files API handle — no bytes, no upload. */
-export function preparedFromUri(input: { id: string; name: string; mime: string; sha256: string; size: number; uri: string; role: string }): PreparedFile {
+/** Rebuild a prepared native file from a live Files API handle — no bytes, no upload. `facts` must be the stored measured facts. */
+export function preparedFromUri(input: { id: string; name: string; mime: string; sha256: string; size: number; uri: string; role: string; facts: string }): PreparedFile {
   const label = `${input.role}: ${input.name} (id ${input.id})`;
   return {
     id: input.id,
@@ -67,8 +68,27 @@ export function preparedFromUri(input: { id: string; name: string; mime: string;
     sha256: input.sha256,
     bytes: input.size,
     delivery: 'native',
-    parts: [`${label}\n${describeFileFacts({ name: input.name, mime: input.mime, size: input.size })}`, { kind: 'uri', mime: input.mime, data: input.uri, label }],
+    parts: [`${label}\n${input.facts}`, { kind: 'uri', mime: input.mime, data: input.uri, label }],
   };
+}
+
+/** Measured FILE FACTS from an earlier prepareFile of the same bytes, or null if they must be re-measured. */
+export async function storedFileFacts(digest: string): Promise<string | null> {
+  try {
+    const row = (await db().select({ facts: fileFacts.facts }).from(fileFacts).where(eq(fileFacts.sha256, digest)).limit(1))[0];
+    return row?.facts ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberFileFacts(digest: string, facts: string): Promise<void> {
+  if (!factsFullyMeasured(facts)) return;
+  try {
+    await db().insert(fileFacts).values({ sha256: digest, facts }).onConflictDoUpdate({ target: fileFacts.sha256, set: { facts } });
+  } catch {
+    /* cache only — a miss makes the next re-run read the bytes again */
+  }
 }
 
 export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -136,6 +156,7 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0): Pr
   }
 
   const facts = await describeFileFactsAsync({ name: file.name, mime, size: file.bytes.byteLength, bytes: file.bytes });
+  if (canReuseStagedUri(mime, file.name)) await rememberFileFacts(digest, facts);
 
   if (mime === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
     const text = Buffer.from(file.bytes).toString('utf8');

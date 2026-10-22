@@ -55,7 +55,7 @@ job is queued or running**; otherwise it refreshes after its own actions.
 | `review_feedback` | approve / changes-requested decisions |
 | `stability_passes`, `stability_acceptances` | three passes per group; explicit acceptance |
 | `jobs` | the only queue |
-| `gemini_files`, `derivatives` | Files API cache by sha256; rendered PDFs by source hash |
+| `gemini_files`, `derivatives`, `file_facts` | Files API cache by sha256; rendered PDFs by source hash; measured FILE FACTS by sha256 for URI re-runs |
 | `webhook_events` | delivery dedupe and outcome |
 
 Invariants enforced in SQL: one current rubric per submission (partial unique

@@ -531,7 +531,7 @@ export async function runFactory(input: FactoryInput): Promise<{ statements: Fac
         const message = error instanceof Error ? error.message : String(error);
         console.warn('[factory] seed failed', seed.id, message);
         await input.onStage?.('seed_failed', { seed: seed.id, theme: seed.theme, error: message });
-        if (error instanceof GeminiError && (error.kind === 'rate_limit' || error.kind === 'auth')) fatal = error;
+        if (error instanceof GeminiError && (error.kind === 'rate_limit' || error.kind === 'storage_full' || error.kind === 'auth')) fatal = error;
       }
   });
   if (fatal) throw fatal;

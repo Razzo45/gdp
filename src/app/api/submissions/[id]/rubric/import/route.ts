@@ -3,7 +3,7 @@ import { RUBRIC_TAGS } from '@/domain/rubric';
 import { route } from '@/lib/api';
 import { replaceRubricFromPaste } from '@/lib/services/rubric';
 
-/** Paste a full external rubric. Replaces the current version. Must seat 5 / 15 / 30. */
+/** Paste a full external rubric. Replaces the current version. Must seat 50 at 5 / 15 / 30, at most 2 seats off. */
 const Body = z.object({
   revision: z.number().int().nonnegative(),
   rows: z

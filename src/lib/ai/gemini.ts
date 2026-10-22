@@ -1,7 +1,7 @@
 import 'server-only';
 
-import { createPartFromBase64, createPartFromText, createPartFromUri, FileState, GoogleGenAI, PartMediaResolutionLevel, type Part } from '@google/genai';
-import { and, eq, gt } from 'drizzle-orm';
+import { createPartFromBase64, createPartFromText, createPartFromUri, FileState, GoogleGenAI, PartMediaResolutionLevel, type Part, type ThinkingLevel } from '@google/genai';
+import { and, eq, gt, lte } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { geminiFiles, geminiFileUses } from '@/db/schema';
@@ -29,7 +29,7 @@ import { standInValue } from './standIn';
  *    grading, or when the TTL is up.
  */
 
-export type GeminiErrorKind = 'not_configured' | 'rate_limit' | 'transport' | 'timeout' | 'invalid_output' | 'refused' | 'auth' | 'too_large';
+export type GeminiErrorKind = 'not_configured' | 'rate_limit' | 'transport' | 'timeout' | 'invalid_output' | 'refused' | 'auth' | 'too_large' | 'storage_full';
 
 export class GeminiError extends Error {
   constructor(
@@ -59,10 +59,14 @@ export interface GenerateJsonInput<T> {
   maxOutputTokens?: number;
   /** 0 disables thinking (fast, deterministic grading). */
   thinkingBudget?: number;
+  /** Gemini 3 ignores a token budget above 0 and thinks at its default (high) level; set this to bound it. Replaces thinkingBudget. */
+  thinkingLevel?: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH';
   /** Extra abort; combined with the job/request signal. */
   signal?: AbortSignal;
   /** Fail this call if Gemini has not answered in time (does not change the process-wide HTTP timeout). */
   timeoutMs?: number;
+  /** Per-call HTTP timeout for calls known to outlast GEMINI_TIMEOUT_MS. */
+  httpTimeoutMs?: number;
   /** When false, skip responseJsonSchema and parse JSON from the text. */
   structured?: boolean;
 }
@@ -146,6 +150,9 @@ function classify(error: unknown): GeminiError {
   if (error instanceof GeminiError) return error;
   const status = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
   const message = error instanceof Error ? error.message : String(error);
+  if ((status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(message)) && /storage/i.test(message)) {
+    return new GeminiError('storage_full', storageFullText(null, null), status ?? 429);
+  }
   if (status === 429 || /RESOURCE_EXHAUSTED|exceeded your current quota|quota exceeded/i.test(message)) {
     const retry = message.match(/retry in ([0-9a-z. ]+?)(?:\.|"|$)/i)?.[1]?.trim();
     const text = /free_tier|FreeTier/i.test(message)
@@ -164,6 +171,25 @@ function classify(error: unknown): GeminiError {
   if (status !== undefined && status >= 500) return new GeminiError('transport', `Gemini answered ${status}.`, status);
   if (/timeout|aborted|ETIMEDOUT|ECONNRESET|fetch failed/i.test(message)) return new GeminiError('timeout', 'Gemini did not answer in time.');
   return new GeminiError('transport', message);
+}
+
+/** Files API per-project cap. Gemini answers a full store with the same 429 RESOURCE_EXHAUSTED as a rate limit. */
+const FILES_STORAGE_LIMIT_BYTES = 20 * 1024 ** 3;
+
+function storageFullText(usedBytes: number | null, needBytes: number | null): string {
+  const gib = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+  const usage = usedBytes !== null ? ` (${gib(usedBytes)} of ${gib(FILES_STORAGE_LIMIT_BYTES)} GiB used${needBytes !== null ? `, this file needs ${gib(needBytes)} GiB` : ''})` : '';
+  return `Gemini file storage is full${usage}. This is not a rate limit. Space frees up as finished tasks are culled and staged copies expire (48 hours).`;
+}
+
+async function filesStorageBytes(): Promise<number | null> {
+  try {
+    let total = 0;
+    for await (const file of await ai().files.list({ config: { pageSize: 100 } })) total += Number(file.sizeBytes ?? 0);
+    return total;
+  } catch {
+    return null;
+  }
 }
 
 function retryAfterMs(error: unknown): number | null {
@@ -297,8 +323,9 @@ export async function generateJson<T>(input: GenerateJsonInput<T>): Promise<Gene
               ...(useSchema ? { responseJsonSchema: jsonSchema } : {}),
               // Factory / lint / grade are structured JSON. Thinking is off unless
               // a caller opts in — Gemini 3 Flash otherwise spends seconds per seed.
-              thinkingConfig: { thinkingBudget: input.thinkingBudget ?? 0 },
+              thinkingConfig: input.thinkingLevel ? { thinkingLevel: input.thinkingLevel as ThinkingLevel } : { thinkingBudget: input.thinkingBudget ?? 0 },
               ...(signal ? { abortSignal: signal } : {}),
+              ...(input.httpTimeoutMs ? { httpOptions: { timeout: input.httpTimeoutMs } } : {}),
             },
           }),
           remaining,
@@ -486,9 +513,11 @@ export async function lookupActiveFileUri(digest: string): Promise<string | null
     const decision = cachedGeminiUriDecision({ getFailed: false, state: file.state != null ? String(file.state) : null, uri: file.uri });
     if (decision === 'use') return file.uri ?? cached.uri;
     if (decision === 'keep') return cached.uri;
-  } catch {
-    if (cachedGeminiUriDecision({ getFailed: true }) === 'keep') return cached.uri;
+  } catch (error) {
+    const status = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
+    if (cachedGeminiUriDecision({ getFailed: true, status }) === 'keep') return cached.uri;
   }
+  await dropGeminiFile(cached.uri).catch(() => undefined);
   await database.delete(geminiFiles).where(eq(geminiFiles.sha256, digest));
   return null;
 }
@@ -512,7 +541,10 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
   const ctx = modelContext();
   const gate = controller();
   const admit = { lane: 'files', requestClass: ctx.requestClass, ownerId: ctx.ownerId, signal: ctx.signal };
+  let reaped = false;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    // Set while our upload exists in Gemini but no gemini_files row points at it.
+    let untracked: string | null = null;
     try {
       const uploaded = await admitted(admit, async () => {
         const started = Date.now();
@@ -521,6 +553,7 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
         gate.onSuccess('files', Date.now() - started);
         return file;
       });
+      untracked = uploaded.name ?? null;
       // PROCESSING can take minutes on a 1 GB+ video. Do not hold the files
       // lane closed — other users still need to upload.
       let file = uploaded;
@@ -537,14 +570,39 @@ async function stagedFileUriOnce(input: { bytes: Uint8Array; mime: string; sha25
         throw new GeminiError('transport', `Gemini could not process ${input.name} (${file.state ?? 'unknown state'}).`);
       }
       const uri = file.uri;
-      await database
+      const expiresAt = new Date(Date.now() + FILE_TTL_MS).toISOString();
+      const soon = new Date(Date.now() + 10 * 60_000).toISOString();
+      // Another process may have staged the same sha meanwhile and already
+      // attached its URI to prompts. Keep a live row; only replace one about to expire.
+      const [kept] = await database
         .insert(geminiFiles)
-        .values({ sha256: input.sha256, uri, mime: input.mime, size: input.bytes.byteLength, expiresAt: new Date(Date.now() + FILE_TTL_MS).toISOString() })
-        .onConflictDoUpdate({ target: geminiFiles.sha256, set: { uri, expiresAt: new Date(Date.now() + FILE_TTL_MS).toISOString() } });
+        .values({ sha256: input.sha256, uri, mime: input.mime, size: input.bytes.byteLength, expiresAt })
+        .onConflictDoUpdate({ target: geminiFiles.sha256, set: { uri, expiresAt }, setWhere: lte(geminiFiles.expiresAt, soon) })
+        .returning({ uri: geminiFiles.uri });
+      const winner = kept?.uri ?? (await database.select({ uri: geminiFiles.uri }).from(geminiFiles).where(eq(geminiFiles.sha256, input.sha256)).limit(1))[0]?.uri;
+      if (!winner) throw new GeminiError('transport', `Could not record the staged copy of ${input.name}.`);
+      if (winner !== uri) await dropGeminiFile(uri).catch(() => undefined);
+      untracked = null;
       await rememberGeminiUse(input.sha256);
-      return uri;
+      return winner;
     } catch (error) {
-      const failure = classify(error);
+      if (untracked) await dropGeminiFile(untracked).catch(() => undefined);
+      let failure = classify(error);
+      if (failure.kind === 'rate_limit' && !untracked) {
+        const used = await filesStorageBytes();
+        if (used !== null && used + input.bytes.byteLength > FILES_STORAGE_LIMIT_BYTES) {
+          failure = new GeminiError('storage_full', storageFullText(used, input.bytes.byteLength), failure.status);
+        }
+      }
+      if (failure.kind === 'storage_full') {
+        if (!reaped) {
+          reaped = true;
+          const { reapGeminiFiles } = await import('./reaper');
+          const { culled } = await reapGeminiFiles().catch(() => ({ culled: 0 }));
+          if (culled > 0 && attempt < 3) continue;
+        }
+        throw failure;
+      }
       const fallback = Math.min(30_000, 2_000 * 2 ** attempt);
       if (failure.kind === 'rate_limit') {
         const wait = gate.onThrottle('files', retryAfterMs(error), fallback);

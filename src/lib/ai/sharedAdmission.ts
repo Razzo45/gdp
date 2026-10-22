@@ -9,6 +9,8 @@ import type { RequestClass } from './admission';
 type SharedLane = 'inference' | 'files';
 
 let disabled = false;
+/** Set when the database predates 0012 and rejects the idle class. */
+let idleUnsupported = false;
 
 function sharedLane(lane: string): SharedLane {
   return lane === 'files' ? 'files' : 'inference';
@@ -18,16 +20,30 @@ function truthy(value: unknown): boolean {
   return value === true || value === 't' || value === 'true';
 }
 
+/** The query wrapper puts the database message in `cause`, not in `message`. */
+export function sharedAdmissionFailure(error: unknown): 'missing' | 'idle_unsupported' | null {
+  const messages: string[] = [];
+  for (let current: unknown = error; current && messages.length < 5; current = current instanceof Error ? current.cause : undefined) {
+    messages.push(current instanceof Error ? current.message : String(current));
+  }
+  const text = messages.join('\n');
+  if (/invalid Gemini request class/i.test(text)) return 'idle_unsupported';
+  if (/does not exist|undefined function/i.test(text)) return 'missing';
+  return null;
+}
+
 async function call<T>(statement: ReturnType<typeof sql>): Promise<T | undefined> {
   if (disabled) return undefined;
   try {
     const [row] = rows<T>(await db().execute(statement));
     return row;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/does not exist|undefined function/i.test(message)) {
+    const failure = sharedAdmissionFailure(error);
+    if (failure === 'missing') {
       disabled = true;
       console.warn('[gemini-admission] shared leases unavailable; staying process-local.');
+    } else if (failure === 'idle_unsupported') {
+      idleUnsupported = true;
     }
     return undefined;
   }
@@ -62,13 +78,11 @@ export async function withSharedAdmission<T>(
   const maxBackground = lane === 'files' ? maxActive : Math.max(1, maxActive - 1);
   const leaseSeconds = lane === 'files' ? 180 : 75;
   const token = crypto.randomUUID();
-  // Shared leases only know interactive|background. Idle yields in-process;
-  // across replicas it borrows the background ceiling and reserved-slot rules.
-  const requestClass = options.requestClass === 'idle' ? 'background' : options.requestClass;
   let held = false;
   try {
     while (!held) {
       options.signal?.throwIfAborted();
+      const requestClass = options.requestClass === 'idle' && idleUnsupported ? 'background' : options.requestClass;
       const row = await call<{ ok: unknown }>(sql`
         select app.acquire_gemini_admission(
           ${token}::uuid,
@@ -82,7 +96,7 @@ export async function withSharedAdmission<T>(
       `);
       if (disabled) return operation();
       held = truthy(row?.ok);
-      if (!held) await wait(400, options.signal);
+      if (!held) await wait(requestClass === 'idle' ? 1_500 : 400, options.signal);
     }
     return await operation();
   } finally {

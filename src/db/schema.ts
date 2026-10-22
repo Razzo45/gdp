@@ -330,6 +330,13 @@ export const catalogFileCache = app.table('catalog_file_cache', {
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
 
+/** FILE FACTS measured from the bytes. Re-runs on a live Files API URI have no bytes to measure. */
+export const fileFacts = app.table('file_facts', {
+  sha256: text('sha256').primaryKey(),
+  facts: text('facts').notNull(),
+  createdAt: ts('created_at').notNull().defaultNow(),
+});
+
 export const derivatives = app.table('derivatives', {
   sourceSha256: text('source_sha256').notNull(),
   kind: text('kind').notNull(),

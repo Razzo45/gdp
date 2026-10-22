@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeHelperSeats, applyFittedScan, helperConfidence, helperGate, looksCheated, packHelperResult, promptFromFields, seatGroundingOf, shouldScanForFitted, type HelperDraft, type HelperSeatInput } from '@/domain/helper';
+import { analyzeHelperSeats, applyFittedScan, helperConfidence, helperGate, looksCheated, packHelperResult, promptFromFields, seatGroundingOf, shouldScanForFitted, staleSinceStability, type HelperDraft, type HelperSeatInput } from '@/domain/helper';
 
 const CANVAS =
   'Every text box, chart, shape, and image across all slides in the delivered presentation is positioned entirely within the 16:9 slide canvas boundaries.';
@@ -28,6 +28,39 @@ describe('helperGate', () => {
     expect(
       helperGate({ hasRubric: true, goldenGraded: 0, stabilityPasses: 3, hasAi: true, hasPrompt: true }).missing,
     ).toContain('Grade the golden file first.');
+  });
+
+  it('refuses to run on grades that predate the latest seat edits', () => {
+    const ready = { hasRubric: true, goldenGraded: 50, stabilityPasses: 3, hasAi: true, hasPrompt: true };
+    expect(helperGate({ ...ready, goldenStale: 6, stabilityStale: 6 }).missing).toEqual([
+      'Re-grade the golden file: 6 seats changed since it was graded.',
+      'Run Stability again: 6 seats changed since the last run.',
+    ]);
+    expect(helperGate({ ...ready, goldenStale: 0, stabilityStale: 1 }).missing).toEqual(['Run Stability again: 1 seat changed since the last run.']);
+  });
+});
+
+describe('staleSinceStability', () => {
+  const passes = [
+    { answers: { a: true, b: false }, createdAt: '2026-10-21T10:00:00.000Z' },
+    { answers: { a: true, b: true }, createdAt: '2026-10-21T10:02:00.000Z' },
+  ];
+
+  it('counts seats edited after the first pass of the group, or missing from it', () => {
+    expect(
+      staleSinceStability(
+        [
+          { id: 'a', updatedAt: '2026-10-21T09:00:00.000Z' },
+          { id: 'b', updatedAt: '2026-10-21T10:01:00.000Z' },
+          { id: 'c', updatedAt: '2026-10-21T09:00:00.000Z' },
+        ],
+        passes,
+      ),
+    ).toBe(2);
+  });
+
+  it('is zero without passes; the gate asks for a first run instead', () => {
+    expect(staleSinceStability([{ id: 'a', updatedAt: '2026-10-21T09:00:00.000Z' }], [])).toBe(0);
   });
 
   it('reads the Catalog task field as the prompt', () => {

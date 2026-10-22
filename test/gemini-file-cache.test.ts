@@ -7,6 +7,12 @@ describe('cached Gemini file handle', () => {
     expect(cachedGeminiUriDecision({ getFailed: false, state: 'PROCESSING' })).toBe('keep');
   });
 
+  it('drops the row when Gemini says the file is gone or belongs to another key', () => {
+    expect(cachedGeminiUriDecision({ getFailed: true, status: 403 })).toBe('drop');
+    expect(cachedGeminiUriDecision({ getFailed: true, status: 404 })).toBe('drop');
+    expect(cachedGeminiUriDecision({ getFailed: true, status: 503 })).toBe('keep');
+  });
+
   it('reuses an active URI and drops a failed one', () => {
     expect(cachedGeminiUriDecision({ getFailed: false, state: 'ACTIVE', uri: 'files/abc' })).toBe('use');
     expect(cachedGeminiUriDecision({ getFailed: false, state: 'FAILED' })).toBe('drop');

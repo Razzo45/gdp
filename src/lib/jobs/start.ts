@@ -9,7 +9,7 @@ import { assertGeminiConfigured } from '@/lib/ai/gemini';
 import { conflict, forbidden, invalid, ServiceError } from '@/lib/services/errors';
 import { listAiOutputs } from '@/lib/services/files';
 import { submittedCalibration } from '@/lib/services/review';
-import { helperGate, promptFromFields } from '@/domain/helper';
+import { helperGate, promptFromFields, staleSinceStability } from '@/domain/helper';
 import { currentRubric, ensureCurrentRubric, goldenState, statementsOf } from '@/lib/services/rubric';
 import { latestGroup, stabilityView } from '@/lib/services/stability';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
@@ -145,6 +145,8 @@ export async function startHelper(actor: Actor, submissionId: string, input: { r
         stabilityPasses: passes.length,
         hasAi: outputs.length > 0,
         hasPrompt: prompt.trim().length > 0,
+        goldenStale: statements.filter((row) => golden?.sources[row.id] === 'stale').length,
+        stabilityStale: staleSinceStability(statements, passes),
       });
       if (!gate.ok) throw conflict(gate.missing.join(' '));
       requireGemini();
@@ -156,7 +158,7 @@ export async function startHelper(actor: Actor, submissionId: string, input: { r
         requestId: input.requestId,
         payload: { ...heavyFlag(files) },
         createdBy: actor.id,
-        deadlineMs: 30 * 60_000,
+        deadlineMs: 60 * 60_000,
       });
       await recordEvent(tx, submissionId, actor.id, 'helper_started', { jobId: job.id });
       return job;

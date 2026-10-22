@@ -7,7 +7,7 @@ import { EVIDENCE_MIN_CHARS } from '@/domain/gates';
 import type { LintResult } from '@/domain/lint';
 import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
-import { AUTO_OUTPUT, applyInferredScope, inferFileScope, TASK_BODY, taskBodySelected } from '@/domain/fileScope';
+import { ACCEPTANCE, acceptanceSelected, AUTO_OUTPUT, applyInferredScope, inferFileScope, TASK_BODY, taskBodySelected } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
 import { MAX_ROUGH_CHARS, familyLabels, familyWord, honorSeatedTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
 import { afterRubricSave, beginRubricSave, leftoverDirty, quietRubricConflict, type RubricSaveSource } from '@/domain/rubricSave';
@@ -919,6 +919,16 @@ function SeatScopeLine({ d, view, onUpdate }: { d: Draft; view: PanelProps['view
         />
         Task body
       </label>
+      {(view.brief.hasAcceptanceCriteria || acceptanceSelected(live.inputFileIds)) && (
+        <label className="flex items-center gap-1">
+          <input
+            type="checkbox"
+            checked={live.scope === 'inputs' && acceptanceSelected(live.inputFileIds)}
+            onChange={(e) => toggle(ACCEPTANCE, e.target.checked)}
+          />
+          Acceptance criteria
+        </label>
+      )}
       {files.inputs.map((file) => (
         <label key={file.id} className="flex items-center gap-1">
           <input
