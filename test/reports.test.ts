@@ -121,7 +121,7 @@ describe('recovered tasks', () => {
     expect(resumed.totalHours).toBe(48);
     const summary = summarizeDelivery([resumed]);
     expect(summary).toMatchObject({ open: 1, recovered: 1 });
-    expect(summary.people.get(R)?.heldHours).toBe(24);
+    expect(summary.reviewers.get(R)).toMatchObject({ reviewHours: 24, openNow: 1 });
   });
 });
 
@@ -150,11 +150,65 @@ describe('summarizeDelivery', () => {
     expect(summary.averageHoursByState.unassigned).toBe(7);
   });
 
-  it('attributes held hours and round trips to each person', () => {
-    const people = summarizeDelivery([delivered, stuck]).people;
-    expect(people.get(A)).toMatchObject({ tasks: 2, sent: 2, resent: 1, returnsReceived: 1, submitted: 1, heldHours: 76 });
-    expect(people.get(A)?.hoursByState.preparing).toBe(70);
-    expect(people.get(R)).toMatchObject({ tasks: 1, approved: 1, returnsGiven: 1, heldHours: 12 });
+  it('splits rubric creators from reviewers, with where their time went and what came back', () => {
+    const summary = summarizeDelivery([delivered, stuck]);
+    expect(summary.creators.get(A)).toEqual({
+      tasks: 2,
+      heldHours: 76,
+      buildHours: 70,
+      fixHours: 2,
+      afterApprovalHours: 4,
+      sent: 2,
+      returnedByReview: 1,
+      approved: 1,
+      approvedFirstTime: 0,
+      returnedByPlatform: 0,
+      submitted: 1,
+      openNow: 1,
+      openOverTarget: 1,
+    });
+    expect(summary.reviewers.get(R)).toEqual({ tasks: 1, reviewHours: 12, decisions: 2, approved: 1, sentBack: 1, laterReturnedByPlatform: 0, openNow: 0 });
+    expect(summary.creators.has(R)).toBe(false);
+    expect(summary.reviewers.has(A)).toBe(false);
+    expect(summary).toMatchObject({ approvals: 1, firstTimeApprovals: 0, reviewedTasks: 1, reviewRounds: 2 });
+  });
+
+  it('credits sends and decisions an admin made on someone else’s seat to the seat holder', () => {
+    const onBehalf = replayTask({
+      landedAt: at(1, 0),
+      now: Date.parse(at(2, 0)),
+      events: [
+        ev('landed', null, at(1, 0)),
+        ev('rubric_claimed', A, at(1, 1)),
+        ev('sent_to_review', 'admin', at(1, 2)),
+        ev('review_claimed', R, at(1, 3)),
+        ev('review_changes_requested', 'admin', at(1, 4)),
+      ],
+    });
+    const summary = summarizeDelivery([onBehalf]);
+    expect(summary.creators.get(A)).toMatchObject({ sent: 1, returnedByReview: 1 });
+    expect(summary.reviewers.get(R)).toMatchObject({ decisions: 1, sentBack: 1 });
+    expect(summary.creators.has('admin') || summary.reviewers.has('admin')).toBe(false);
+  });
+
+  it('charges a platform return to the creator and to the reviewer who approved it', () => {
+    const returned = replayTask({
+      landedAt: at(1, 0),
+      now: Date.parse(at(4, 6)),
+      events: [
+        ev('landed', null, at(1, 0)),
+        ev('rubric_claimed', A, at(1, 0)),
+        ev('sent_to_review', A, at(1, 4)),
+        ev('review_claimed', R, at(1, 4)),
+        ev('review_approved', R, at(1, 6)),
+        ev('pushed_to_catalog', A, at(1, 10)),
+        ev('catalog_returned', null, at(4, 0), { rubricAssigneeId: A }),
+      ],
+    });
+    const summary = summarizeDelivery([returned]);
+    expect(summary.creators.get(A)).toMatchObject({ approvedFirstTime: 1, returnedByPlatform: 1, openNow: 1, fixHours: 6 });
+    expect(summary.reviewers.get(R)).toMatchObject({ approved: 1, laterReturnedByPlatform: 1 });
+    expect(summary).toMatchObject({ approvals: 1, firstTimeApprovals: 1 });
   });
 });
 

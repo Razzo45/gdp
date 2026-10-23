@@ -241,18 +241,37 @@ export function replayTask(input: { landedAt: string; events: readonly ReportEve
   return { transitions, segments, hoursByState, totalHours, submittedAt, reviewRounds, reviewReturns, platformReturns, recovered };
 }
 
-export interface PersonDelivery {
+/** A rubric creator's tasks: hours they held them and what review and the platform sent back. */
+export interface CreatorDelivery {
   tasks: number;
-  /** Hours tasks sat waiting on this person, by state. */
-  hoursByState: Record<ReportState, number>;
   heldHours: number;
+  /** Preparing: first build before review. */
+  buildHours: number;
+  /** Fixing after review or the platform sent it back. */
+  fixHours: number;
+  /** Approved or ready to submit, still with them. */
+  afterApprovalHours: number;
   sent: number;
-  /** Sends after the first on the same task: each one is a review round trip. */
-  resent: number;
-  returnsReceived: number;
+  returnedByReview: number;
   approved: number;
-  returnsGiven: number;
+  /** Approvals with no send-back since the last approval. */
+  approvedFirstTime: number;
+  returnedByPlatform: number;
   submitted: number;
+  openNow: number;
+  openOverTarget: number;
+}
+
+export interface ReviewerDelivery {
+  tasks: number;
+  reviewHours: number;
+  /** Approvals plus send-backs. */
+  decisions: number;
+  approved: number;
+  sentBack: number;
+  /** Their approvals that the platform later returned. */
+  laterReturnedByPlatform: number;
+  openNow: number;
 }
 
 export interface DeliverySummary {
@@ -268,8 +287,16 @@ export interface DeliverySummary {
   reviewReturns: number;
   platformReturns: number;
   averageHoursByState: Record<ReportState, number>;
-  people: Map<string, PersonDelivery>;
+  approvals: number;
+  firstTimeApprovals: number;
+  /** Tasks sent to review at least once, and their review rounds in total. */
+  reviewedTasks: number;
+  reviewRounds: number;
+  creators: Map<string, CreatorDelivery>;
+  reviewers: Map<string, ReviewerDelivery>;
 }
+
+const RUBRIC_STATES = new Set<ReportState>(['preparing', 'review_returned', 'stability', 'handoff', 'platform_returned']);
 
 function percentile(sorted: readonly number[], p: number): number | null {
   if (sorted.length === 0) return null;
@@ -278,17 +305,38 @@ function percentile(sorted: readonly number[], p: number): number | null {
 
 const emptyHours = () => Object.fromEntries(REPORT_STATES.map((s) => [s, 0])) as Record<ReportState, number>;
 
-export function summarizeDelivery(timelines: readonly TaskTimeline[]): DeliverySummary {
-  const people = new Map<string, PersonDelivery & { taskSet: Set<number> }>();
-  const person = (id: string, task: number) => {
-    let row = people.get(id);
+function tally<T extends object>(blank: () => T) {
+  const rows = new Map<string, T & { taskSet: Set<number> }>();
+  const get = (id: string, task: number) => {
+    let row = rows.get(id);
     if (!row) {
-      row = { tasks: 0, hoursByState: emptyHours(), heldHours: 0, sent: 0, resent: 0, returnsReceived: 0, approved: 0, returnsGiven: 0, submitted: 0, taskSet: new Set() };
-      people.set(id, row);
+      row = { ...blank(), taskSet: new Set<number>() };
+      rows.set(id, row);
     }
     row.taskSet.add(task);
     return row;
   };
+  const done = () => new Map([...rows].map(([id, { taskSet, ...row }]) => [id, { ...(row as unknown as T), tasks: taskSet.size }]));
+  return { get, done };
+}
+
+export function summarizeDelivery(timelines: readonly TaskTimeline[]): DeliverySummary {
+  const creators = tally<CreatorDelivery>(() => ({
+    tasks: 0,
+    heldHours: 0,
+    buildHours: 0,
+    fixHours: 0,
+    afterApprovalHours: 0,
+    sent: 0,
+    returnedByReview: 0,
+    approved: 0,
+    approvedFirstTime: 0,
+    returnedByPlatform: 0,
+    submitted: 0,
+    openNow: 0,
+    openOverTarget: 0,
+  }));
+  const reviewers = tally<ReviewerDelivery>(() => ({ tasks: 0, reviewHours: 0, decisions: 0, approved: 0, sentBack: 0, laterReturnedByPlatform: 0, openNow: 0 }));
   const averageHoursByState = emptyHours();
   const toSubmit: number[] = [];
   let submittedWithinTarget = 0;
@@ -296,8 +344,16 @@ export function summarizeDelivery(timelines: readonly TaskTimeline[]): DeliveryS
   let openOverTarget = 0;
   let reviewReturns = 0;
   let platformReturns = 0;
+  let approvals = 0;
+  let firstTimeApprovals = 0;
+  let reviewedTasks = 0;
+  let reviewRounds = 0;
 
   timelines.forEach((timeline, task) => {
+    if (timeline.reviewRounds > 0) {
+      reviewedTasks += 1;
+      reviewRounds += timeline.reviewRounds;
+    }
     for (const state of REPORT_STATES) averageHoursByState[state] += timeline.hoursByState[state] / timelines.length;
     reviewReturns += timeline.reviewReturns;
     platformReturns += timeline.platformReturns;
@@ -312,22 +368,70 @@ export function summarizeDelivery(timelines: readonly TaskTimeline[]): DeliveryS
     }
     for (const segment of timeline.segments) {
       if (!segment.holderId || !segment.timed) continue;
-      const row = person(segment.holderId, task);
-      row.hoursByState[segment.state] += segment.hours;
-      row.heldHours += segment.hours;
-    }
-    let sends = 0;
-    for (const t of timeline.transitions) {
-      if (t.action === 'sent_to_review' && t.actorId) {
-        const row = person(t.actorId, task);
-        row.sent += 1;
-        if (sends > 0) row.resent += 1;
-        sends += 1;
+      if (segment.state === 'in_review') {
+        reviewers.get(segment.holderId, task).reviewHours += segment.hours;
+      } else if (RUBRIC_STATES.has(segment.state)) {
+        const row = creators.get(segment.holderId, task);
+        row.heldHours += segment.hours;
+        if (segment.state === 'preparing') row.buildHours += segment.hours;
+        else if (segment.state === 'review_returned' || segment.state === 'platform_returned') row.fixHours += segment.hours;
+        else row.afterApprovalHours += segment.hours;
       }
-      if (t.action === 'review_approved' && t.actorId) person(t.actorId, task).approved += 1;
-      if (t.action === 'review_changes_requested' && t.actorId) person(t.actorId, task).returnsGiven += 1;
-      if ((t.action === 'review_changes_requested' || t.action === 'stability_reopened_rubric') && t.rubricHolderId) person(t.rubricHolderId, task).returnsReceived += 1;
-      if (t.action === 'pushed_to_catalog' && t.rubricHolderId) person(t.rubricHolderId, task).submitted += 1;
+    }
+    const current = timeline.segments.at(-1);
+    if (current && current.leftAt === null && current.holderId && current.state !== 'submitted') {
+      if (current.state === 'in_review') reviewers.get(current.holderId, task).openNow += 1;
+      else {
+        const row = creators.get(current.holderId, task);
+        row.openNow += 1;
+        if (timeline.totalHours > DELIVERY_TARGET_HOURS) row.openOverTarget += 1;
+      }
+    }
+    let returnsSinceApproval = 0;
+    let lastApprover: string | null = null;
+    for (const t of timeline.transitions) {
+      const creatorId = t.rubricHolderId ?? t.actorId;
+      const reviewerId = t.reviewerId ?? t.actorId;
+      switch (t.action) {
+        case 'sent_to_review':
+          if (creatorId) creators.get(creatorId, task).sent += 1;
+          break;
+        case 'review_changes_requested':
+        case 'stability_reopened_rubric':
+          returnsSinceApproval += 1;
+          if (t.rubricHolderId) creators.get(t.rubricHolderId, task).returnedByReview += 1;
+          if (t.action === 'review_changes_requested' && reviewerId) {
+            const row = reviewers.get(reviewerId, task);
+            row.decisions += 1;
+            row.sentBack += 1;
+          }
+          break;
+        case 'review_approved': {
+          approvals += 1;
+          if (returnsSinceApproval === 0) firstTimeApprovals += 1;
+          if (t.rubricHolderId) {
+            const row = creators.get(t.rubricHolderId, task);
+            row.approved += 1;
+            if (returnsSinceApproval === 0) row.approvedFirstTime += 1;
+          }
+          if (reviewerId) {
+            const row = reviewers.get(reviewerId, task);
+            row.decisions += 1;
+            row.approved += 1;
+          }
+          lastApprover = reviewerId;
+          returnsSinceApproval = 0;
+          break;
+        }
+        case 'handoff_bounced':
+        case 'catalog_returned':
+          if (t.rubricHolderId) creators.get(t.rubricHolderId, task).returnedByPlatform += 1;
+          if (lastApprover) reviewers.get(lastApprover, task).laterReturnedByPlatform += 1;
+          break;
+        case 'pushed_to_catalog':
+          if (t.rubricHolderId) creators.get(t.rubricHolderId, task).submitted += 1;
+          break;
+      }
     }
   });
 
@@ -344,7 +448,12 @@ export function summarizeDelivery(timelines: readonly TaskTimeline[]): DeliveryS
     reviewReturns,
     platformReturns,
     averageHoursByState,
-    people: new Map([...people].map(([id, { taskSet, ...row }]) => [id, { ...row, tasks: taskSet.size }])),
+    approvals,
+    firstTimeApprovals,
+    reviewedTasks,
+    reviewRounds,
+    creators: creators.done(),
+    reviewers: reviewers.done(),
   };
 }
 
@@ -357,7 +466,6 @@ export interface ReportTask {
   timeline: TaskTimeline;
 }
 
-const RUBRIC_STATES = new Set<ReportState>(['preparing', 'review_returned', 'stability', 'handoff', 'platform_returned']);
 const CLOCK_STATES = REPORT_STATES.filter((s) => s !== 'submitted');
 
 function peopleOn(timeline: TaskTimeline, rubricSide: boolean): string[] {
