@@ -287,12 +287,14 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
     .map((r) => {
       const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
       const blinded = !isController(actor) && !held;
+      // Reviewers pick by task and creator; rubric claim slots stay fully blind.
+      const reviewSlot = blinded && r.submission.stage === 'review';
       const workState = workStateOf(r.submission);
       const watch = watchByProject.get(r.submission.projectId);
       return {
         ...r.submission,
-        ...(blinded ? { catalogSubmissionId: '', projectId: '' } : {}),
-        rubricAssigneeName: blinded ? null : (r.rubricAssigneeName ?? null),
+        ...(blinded ? { catalogSubmissionId: reviewSlot ? r.submission.catalogSubmissionId : '', projectId: '' } : {}),
+        rubricAssigneeName: blinded && !reviewSlot ? null : (r.rubricAssigneeName ?? null),
         reviewerName: blinded ? null : (r.reviewerName ?? null),
         workState,
         catalogStatusName: blinded ? null : statusName(r.submission),

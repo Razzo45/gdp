@@ -203,7 +203,10 @@ function ClaimQueue({
           <li key={s.id} className="flex items-center justify-between gap-3 py-3">
             <div className="min-w-0">
               <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} size="compact" />
-              <p className="mt-0.5 text-xs text-muted">{s.projectName}</p>
+              <p className="mt-0.5 text-xs text-muted">
+                {s.projectName}
+                {seat === 'review' && s.rubricAssigneeName ? ` · Rubric by ${s.rubricAssigneeName}` : ''}
+              </p>
             </div>
             {seat ? <ClaimTask submissionId={s.id} seat={seat} /> : null}
           </li>

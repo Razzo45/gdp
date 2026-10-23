@@ -8,7 +8,7 @@ import type { Role } from '@/db/schema';
  *                   no Settings
  *   rubric_creator  claims the next rubric task blind; then brief, files,
  *                   Golden, bank, stability; no history, no Settings
- *   reviewer        claims the next review task blind; then scores the seated
+ *   reviewer        claims a review task by its id and rubric creator; then scores the seated
  *                   rubric; no Golden, jobs log, or Settings
  */
 export interface Actor {

@@ -94,6 +94,15 @@ describe('seats', () => {
     expect(queue.find((r) => r.id === s.id)?.heroDeliverable).toBe('Short-form video');
   });
 
+  it('shows reviewers the task id and rubric creator on review claim slots', async () => {
+    const s = await makeSubmission(db, { stage: 'review', reviewStatus: 'pending', rubricAssigneeId: creator.id, catalogSubmissionId: '8bbe2180-aaaa-bbbb-cccc-000000000001' });
+    const slot = (await listSubmissions(reviewer)).find((r) => r.id === s.id);
+    expect(slot?.blinded).toBe(true);
+    expect(slot?.catalogSubmissionId).toBe('8bbe2180-aaaa-bbbb-cccc-000000000001');
+    expect(slot?.rubricAssigneeName).toBe('c1');
+    expect(slot?.projectId).toBe('');
+  });
+
   it('lists parked tasks for a PM so a catchup rewrite cannot empty the board', async () => {
     const s = await makeSubmission(db, { stage: 'parked', title: 'Parked deck' });
     const rows = await listSubmissions(pm);

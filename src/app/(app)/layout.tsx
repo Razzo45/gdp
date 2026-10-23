@@ -15,7 +15,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     { href: '/', label: 'Dashboard', group: 'Operations' },
     { href: '/submissions', label: 'GDP Evaluation', group: 'Operations' },
   ];
-  if (isController(actor)) links.push({ href: '/submissions/claims', label: 'Who holds what', group: 'Operations' });
+  if (isController(actor)) {
+    links.push({ href: '/submissions/claims', label: 'Who holds what', group: 'Operations' });
+    links.push({ href: '/reports', label: 'Reports', group: 'Operations' });
+  }
   if (canManageUsers(actor)) {
     links.push({ href: '/settings/users', label: 'Settings', group: 'Administration' });
   }

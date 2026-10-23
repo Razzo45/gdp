@@ -156,7 +156,7 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
           : { stage: 'rubric', reviewStatus: 'changes_requested', rubricAssigneeId: submission.rubricAssigneeId, handoffStatus: handoffAfterContinue(submission.handoffStatus) },
       )
       .where(eq(submissions.id, submissionId));
-    await recordEvent(tx, submissionId, actor.id, decision === 'approved' ? 'review_approved' : 'review_changes_requested', { calibrationId: calibration?.id ?? null, scorePercent: calibration?.scorePercent ?? null });
+    await recordEvent(tx, submissionId, actor.id, decision === 'approved' ? 'review_approved' : 'review_changes_requested', { calibrationId: calibration?.id ?? null, scorePercent: calibration?.scorePercent ?? null, ...(approved ? { stage: approved.stage } : {}) });
   });
   const next = await getSubmission(db(), submissionId);
   scheduleWorkStatusSheet(previous, next);
