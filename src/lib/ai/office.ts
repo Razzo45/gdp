@@ -34,6 +34,59 @@ const EMBEDDED_IMAGE: Record<string, string> = {
   gif: 'image/gif',
 };
 
+/** ElementTree / some Python writers emit ns0: instead of p:/r:/a:. Impress will not open that. */
+const OFFICE_NS_PREFIX: Record<string, string | null> = {
+  'http://schemas.openxmlformats.org/presentationml/2006/main': 'p',
+  'http://schemas.openxmlformats.org/drawingml/2006/main': 'a',
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships': 'r',
+  'http://schemas.openxmlformats.org/package/2006/relationships': null,
+  'http://schemas.openxmlformats.org/package/2006/content-types': null,
+  'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties': null,
+  'http://schemas.openxmlformats.org/package/2006/core-properties': 'cp',
+  'http://schemas.openxmlformats.org/drawingml/2006/chart': 'c',
+};
+
+/** Rewrite ns0-style prefixes to the prefixes LibreOffice and PowerPoint expect. */
+export function rewriteOfficeXml(xml: string): string {
+  const mapping = new Map<string, string | null>();
+  for (const match of xml.matchAll(/xmlns:([A-Za-z0-9]+)="([^"]+)"/g)) {
+    const prefix = match[1]!;
+    const uri = match[2]!;
+    if (prefix.startsWith('ns') && uri in OFFICE_NS_PREFIX) mapping.set(prefix, OFFICE_NS_PREFIX[uri] ?? null);
+  }
+  if (mapping.size === 0) return xml;
+  let out = xml;
+  for (const old of [...mapping.keys()].toSorted((a, b) => b.length - a.length)) {
+    const next = mapping.get(old);
+    if (!next) {
+      out = out.replaceAll(`xmlns:${old}=`, 'xmlns=');
+      out = out.replace(new RegExp(`(</?)${old}:`, 'g'), '$1');
+      out = out.replace(new RegExp(`(?<=\\s)${old}:`, 'g'), '');
+    } else {
+      out = out.replaceAll(`xmlns:${old}=`, `xmlns:${next}=`);
+      out = out.replace(new RegExp(`(</?)${old}:`, 'g'), `$1${next}:`);
+      out = out.replace(new RegExp(`(?<=\\s)${old}:`, 'g'), `${next}:`);
+    }
+  }
+  return out;
+}
+
+/** Copy of the package with XML prefixes repaired so Impress can load it. Media bytes stay as-is. */
+export async function officeBytesForRender(bytes: Uint8Array): Promise<Uint8Array> {
+  const zip = await JSZip.loadAsync(bytes);
+  const out = new JSZip();
+  for (const [name, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue;
+    const data = await entry.async('uint8array');
+    if (/\.(xml|rels)$/i.test(name)) {
+      out.file(name, rewriteOfficeXml(new TextDecoder('utf-8', { fatal: false }).decode(data)));
+    } else {
+      out.file(name, data);
+    }
+  }
+  return out.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+}
+
 const MAX_EMBEDDED_IMAGES = 24;
 const MIN_EMBEDDED_BYTES = 64;
 const MAX_EMBEDDED_BYTES = 12 * 1024 * 1024;

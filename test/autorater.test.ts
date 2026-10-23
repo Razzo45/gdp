@@ -26,6 +26,12 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).toMatch(/do not write Seat 8/i);
   });
 
+  it('does not treat JPEG slide stills as the deliverable being a JPEG instead of a PPTX', () => {
+    expect(AUTORATER_SYSTEM).toMatch(/slide still/i);
+    expect(AUTORATER_SYSTEM).toMatch(/FILE FACTS/i);
+    expect(AUTORATER_SYSTEM).toMatch(/not (change|the) (the )?file kind|still a (PPTX|PowerPoint)|do not answer .*(JPEG|jpeg).*(PPTX|pptx)/i);
+  });
+
   it('does not treat a failed inventory as a clean file', () => {
     expect(inventoryPromptBlock([])).toBeNull();
     expect(inventoryPromptBlock(['logo is stretched'])).toMatch(/logo is stretched/);

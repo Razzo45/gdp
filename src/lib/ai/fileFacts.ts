@@ -116,8 +116,9 @@ export function parseAudioLevels(log: string): AudioLevels | null {
   const leftRms = left?.rms ?? null;
   const rightRms = right?.rms ?? null;
   const channelDifferenceDb = leftRms !== null && rightRms !== null ? round1(Math.abs(leftRms - rightRms)) : null;
-  const integratedLufs = firstNumber(log, /\bI:\s+(-?\d+(?:\.\d+)?)\s+LUFS\b/);
-  const loudnessRangeLu = firstNumber(log, /\bLRA:\s+(-?\d+(?:\.\d+)?)\s+LU\b/);
+  const summary = log.slice(Math.max(0, log.lastIndexOf('Summary:')));
+  const integratedLufs = firstNumber(summary, /\bI:\s+(-?\d+(?:\.\d+)?)\s+LUFS\b/);
+  const loudnessRangeLu = firstNumber(summary, /\bLRA:\s+(-?\d+(?:\.\d+)?)\s+LU\b/);
   const trueBlock = log.match(/True peak:[\s\S]*?Peak:\s+(-?\d+(?:\.\d+)?)\s+dBFS/i);
   const truePeakDbfs = trueBlock ? round1(Number(trueBlock[1])) : null;
   const peakDbfs = overallPeak ?? left?.peak ?? null;
@@ -154,8 +155,15 @@ export function parseAudioLevels(log: string): AudioLevels | null {
   };
 }
 
+const LEVELS_HEADER = 'Audio levels (measured over the whole file):';
+
+/** Facts cached before levels covered the whole file reported only the last frame's peak/RMS and the first frame's loudness. */
+export function factsCurrent(facts: string): boolean {
+  return facts.includes(LEVELS_HEADER) || !/^(Peak level|RMS level|Integrated loudness): /m.test(facts);
+}
+
 export function formatAudioLevels(levels: AudioLevels): string {
-  const lines: string[] = [];
+  const lines: string[] = [LEVELS_HEADER];
   if (levels.peakDbfs !== null) lines.push(`Peak level: ${fmt1(levels.peakDbfs)} dBFS`);
   if (levels.rmsDbfs !== null) lines.push(`RMS level: ${fmt1(levels.rmsDbfs)} dBFS`);
   if (levels.leftRmsDbfs !== null && levels.rightRmsDbfs !== null) {
@@ -527,7 +535,7 @@ function runFfprobe(path: string): Promise<string | null> {
 function runFfmpegLevels(path: string): Promise<string | null> {
   return spawnText(
     process.env['FFMPEG_BIN']?.trim() || 'ffmpeg',
-    ['-hide_banner', '-nostats', '-i', path, '-af', 'astats=metadata=1:reset=1,ebur128,silencedetect=noise=-40dB:duration=0.25', '-f', 'null', '-'],
+    ['-hide_banner', '-nostats', '-i', path, '-af', 'astats,ebur128=peak=true:framelog=quiet,silencedetect=noise=-40dB:duration=0.25', '-f', 'null', '-'],
     'stderr',
     45_000,
   );

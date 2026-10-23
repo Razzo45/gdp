@@ -105,6 +105,11 @@ Rules:
 - INSPECT attached images, video, audio, PDF and rendered slide/page stills.
   Prefer what you see/hear over a text summary when they conflict. A slide still
   labelled "slide N" is that page of the deck.
+- JPEG or PDF attachments labelled as slide/page stills or a PDF render of a
+  PPTX/DOCX/XLSX are views of that Office file. FILE FACTS Kind is the
+  deliverable format. Do not answer that the file is a JPEG rather than a PPTX.
+  Packaged slide/page size and aspect come from FILE FACTS, not from a still's
+  pixel dimensions.
 - For video/audio: only claim events, dialogue or specs evidenced in the clip.
   If you did not hear the required words or see the required beat, answer No.
   Exact wording: a paraphrase is a No.
@@ -149,8 +154,9 @@ Rules:
   the document looks. Use the FILE FACTS loudness / channel-level / clipping /
   silence / stereo lines for those claims; do not guess them by ear.
 - Embedded images attached after NO FULL-PAGE RENDER may support photograph/asset
-  claims. For slide-level layout, spacing or typography you cannot see, the
-  statement does not hold.
+  claims. Format, slide/page count and packaged size still come from FILE FACTS.
+  For slide-level layout, spacing or typography you cannot see, the statement
+  does not hold.
 - If the files do not show the claimed property, or you cannot verify it, the
   statement does not hold. Do not guess it in to make Yes. Do not invent a
   defect to make No.

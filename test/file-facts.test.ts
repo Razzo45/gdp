@@ -1,5 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { describeFileFacts, describeFileFactsAsync, factsFullyMeasured, formatAudioLevels, formatFfprobe, parseAudioLevels } from '@/lib/ai/fileFacts';
+import { describeFileFacts, describeFileFactsAsync, factsCurrent, factsFullyMeasured, formatAudioLevels, formatFfprobe, parseAudioLevels } from '@/lib/ai/fileFacts';
 import { preparedFromUri } from '@/lib/ai/media';
 
 const PNG_1X1 = Uint8Array.from(
@@ -130,6 +131,14 @@ describe('audio level FILE FACTS', () => {
     expect(text).toContain('Clipping: no');
   });
 
+  it('takes integrated loudness from the summary, not the first per-frame reading', () => {
+    const levels = parseAudioLevels(`
+[Parsed_ebur128_1 @ 0x2] t: 0.0999792  TARGET:-23 LUFS    M:-120.7 S:-120.7     I: -70.0 LUFS       LRA:   0.0 LU
+${FFMPEG_LEVELS}`);
+    expect(levels?.integratedLufs).toBe(-16.3);
+    expect(levels?.loudnessRangeLu).toBe(5.2);
+  });
+
   it('reads clipping, silence gaps, stereo correlation, DC offset and bit depth', () => {
     const levels = parseAudioLevels(`
 Duration: 00:00:10.00, start: 0.000000, bitrate: 2304 kb/s
@@ -190,7 +199,56 @@ describe('describeFileFactsAsync', () => {
       else process.env['FFMPEG_BIN'] = saved.mpeg;
     }
   });
+
+  it.skipIf(!hasFfmpeg())('measures peak and loudness over the whole file, not a faded tail or a silent start', async () => {
+    const wav = toneWav({ seconds: 6, leadSilence: 0.5, fadeOut: 2, amplitude: 0.5 });
+    const facts = await describeFileFactsAsync({ name: 'cue.wav', mime: 'audio/wav', size: wav.byteLength, bytes: wav });
+    const peak = Number(facts.match(/Peak level: (-?\d+\.\d) dBFS/)?.[1]);
+    const lufs = Number(facts.match(/Integrated loudness: (-?\d+\.\d) LUFS/)?.[1]);
+    expect(peak).toBeCloseTo(-6, 0);
+    expect(lufs).toBeGreaterThan(-15);
+    expect(lufs).toBeLessThan(-5);
+    expect(factsCurrent(facts)).toBe(true);
+  });
 });
+
+describe('factsCurrent', () => {
+  it('rejects cached audio facts measured before levels covered the whole file', () => {
+    expect(factsCurrent('FILE FACTS\nDuration: 30.0 s\nPeak level: -35.3 dBFS\nIntegrated loudness: -70.0 LUFS')).toBe(false);
+    expect(factsCurrent(`FILE FACTS\nDuration: 30.0 s\n${formatAudioLevels(parseAudioLevels(FFMPEG_LEVELS)!)}`)).toBe(true);
+    expect(factsCurrent('FILE FACTS\nDimensions: 1080 x 1350')).toBe(true);
+  });
+});
+
+function hasFfmpeg(): boolean {
+  return spawnSync(process.env['FFMPEG_BIN']?.trim() || 'ffmpeg', ['-version']).status === 0;
+}
+
+function toneWav(opts: { seconds: number; leadSilence: number; fadeOut: number; amplitude: number }): Uint8Array {
+  const rate = 48_000;
+  const frames = Math.round(opts.seconds * rate);
+  const data = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i += 1) {
+    const t = i / rate;
+    const fade = t > opts.seconds - opts.fadeOut ? (opts.seconds - t) / opts.fadeOut : 1;
+    const gain = t < opts.leadSilence ? 0 : opts.amplitude * fade;
+    data.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * t) * gain * 32767), i * 2);
+  }
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  return new Uint8Array(Buffer.concat([header, data]));
+}
 
 describe('preparedFromUri', () => {
   it('attaches the stored measured facts when the model only receives a Files API URI', () => {

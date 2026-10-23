@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { officeManifest, officePreviewKind, officeTextDigest } from '@/lib/ai/office';
+import { officeBytesForRender, officeManifest, officePreviewKind, officeTextDigest, rewriteOfficeXml } from '@/lib/ai/office';
 
 const slide = (title: string, body: string, extra = '') => `<?xml version="1.0"?>
 <p:sld xmlns:p="p" xmlns:a="a"${extra}>
@@ -133,5 +133,44 @@ describe('documentViewHtml', () => {
     expect(html).toContain('Community Days | April 2027');
     expect(html).toContain('Session');
     expect(html).not.toContain('Empty sheet');
+  });
+});
+
+describe('rewriteOfficeXml', () => {
+  it('rewrites ElementTree ns0 prefixes so Impress can load the package', () => {
+    const xml =
+      '<ns0:presentation xmlns:ns0="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:ns1="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><ns0:sldId id="256" ns1:id="rId7"/></ns0:presentation>';
+    const out = rewriteOfficeXml(xml);
+    expect(out).toContain('<p:presentation');
+    expect(out).toContain('xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"');
+    expect(out).toContain('xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+    expect(out).toContain('r:id="rId7"');
+    expect(out).not.toContain('ns0:');
+    expect(out).not.toContain('ns1:');
+  });
+
+  it('leaves already-standard Office prefixes alone', () => {
+    const xml = '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>';
+    expect(rewriteOfficeXml(xml)).toBe(xml);
+  });
+});
+
+describe('officeBytesForRender', () => {
+  it('rewrites every XML part in the zip, leaving media bytes untouched', async () => {
+    const zip = new JSZip();
+    zip.file(
+      '[Content_Types].xml',
+      '<ns0:Types xmlns:ns0="http://schemas.openxmlformats.org/package/2006/content-types"><ns0:Default Extension="xml" ContentType="application/xml"/></ns0:Types>',
+    );
+    zip.file(
+      'ppt/presentation.xml',
+      '<ns0:presentation xmlns:ns0="http://schemas.openxmlformats.org/presentationml/2006/main"/>',
+    );
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47]);
+    zip.file('ppt/media/image1.png', png);
+    const repaired = await JSZip.loadAsync(await officeBytesForRender(await zip.generateAsync({ type: 'uint8array' })));
+    expect(await repaired.file('[Content_Types].xml')!.async('string')).toContain('<Types xmlns=');
+    expect(await repaired.file('ppt/presentation.xml')!.async('string')).toContain('<p:presentation');
+    expect(Uint8Array.from(await repaired.file('ppt/media/image1.png')!.async('uint8array'))).toEqual(png);
   });
 });

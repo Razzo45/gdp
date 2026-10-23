@@ -12,9 +12,9 @@ import { sha256 } from '@/domain/fingerprint';
 import { canReuseStagedUri } from '@/domain/jobs';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
-import { describeFileFacts, describeFileFactsAsync, factsFullyMeasured } from './fileFacts';
+import { describeFileFacts, describeFileFactsAsync, factsCurrent, factsFullyMeasured } from './fileFacts';
 import { mediaPart, SEND_TEXT_CHARS, type MediaPart } from './gemini';
-import { officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
+import { officeBytesForRender, officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
 import { DESKTOP, MAX_PAGE_HEIGHT, MOBILE, screenshotHtml, type HtmlShot } from './htmlShots';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
 
@@ -77,7 +77,7 @@ export function preparedFromUri(input: { id: string; name: string; mime: string;
 export async function storedFileFacts(digest: string): Promise<string | null> {
   try {
     const row = (await db().select({ facts: fileFacts.facts }).from(fileFacts).where(eq(fileFacts.sha256, digest)).limit(1))[0];
-    return row?.facts ?? null;
+    return row?.facts && factsCurrent(row.facts) ? row.facts : null;
   } catch {
     return null;
   }
@@ -271,8 +271,9 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
         ...base,
         delivery: 'pdf_from_office',
         parts: [
-          `${label}${facts}\n${pages.length} ${unit}(s) rendered as images below. Inspect each image for layout, colour, typography and photographs. FILE FACTS remain authoritative for counts, fonts and aspect. Animations, transitions and embedded video are not in the stills.${extra}${digest}`,
+          `${label}${facts}\nThe deliverable is a ${kind.toUpperCase()} file. The ${pages.length} JPEG image(s) below are rendered ${unit} stills of that file — they are not the deliverable format. FILE FACTS decide kind, ${unit} count and packaged size. Inspect each still for layout, colour, typography and photographs. Animations, transitions and embedded video are not in the stills.${extra}${digest}`,
           ...pageParts,
+          await mediaPart({ bytes: pdf, mime: 'application/pdf', sha256: sha256(pdf), name: file.name.replace(/\.[a-z0-9]+$/i, '.pdf'), label: `${label} — PDF render of the ${kind.toUpperCase()}` }),
         ],
       };
     }
@@ -424,7 +425,8 @@ async function convertWithLibreOffice(bytes: Uint8Array, kind: OfficePreviewKind
   const dir = await mkdtemp(join(tmpdir(), 'gdp-office-'));
   try {
     const input = join(dir, `source.${kind}`);
-    await writeFile(input, bytes);
+    const renderBytes = isOoxml(kind) ? await officeBytesForRender(bytes).catch(() => bytes) : bytes;
+    await writeFile(input, renderBytes);
     const profile = `${fileUrl(join(dir, 'profile'))}`;
     const ok = await new Promise<boolean>((resolve) => {
       const child = spawn(/* turbopackIgnore: true */ bin, ['--headless', '--norestore', '--nologo', `-env:UserInstallation=${profile}`, '--convert-to', 'pdf', '--outdir', dir, input], { stdio: 'ignore' });
