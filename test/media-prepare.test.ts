@@ -72,6 +72,24 @@ describe('prepareFile edge cases', () => {
     expect(prepared.parts.join('')).toContain('<svg');
   });
 
+  it('opens a site zip and attaches the CSS and JS inside so the grader can read them', async () => {
+    const zip = new JSZip();
+    zip.file('index.html', '<!DOCTYPE html><html><link rel="stylesheet" href="css/style.css"><script src="app.js"></script></html>');
+    zip.file('css/style.css', '@media (min-width: 769px) { main { padding: 32px; } }');
+    zip.file('app.js', 'document.body.dataset.ready = "1";');
+    zip.file('fonts/JakartaSans.woff2', new Uint8Array([0x77, 0x4f, 0x46, 0x32, 1, 2, 3, 4]));
+    const bytes = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+    const prepared = await prepareFile({ id: 'z', name: 'site.zip', mime: 'application/x-zip-compressed', bytes }, 'CONSIDERED OUTPUT');
+    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
+    expect(prepared.delivery).toBe('archive');
+    expect(text).toContain('@media (min-width: 769px)');
+    expect(text).toContain('document.body.dataset.ready');
+    expect(text).toContain('JakartaSans.woff2');
+    expect(text).not.toMatch(/style\.css[\s\S]{0,200}NOT ATTACHED/);
+    expect(text).not.toMatch(/app\.js[\s\S]{0,200}NOT ATTACHED/);
+    expect(text).not.toMatch(/JakartaSans[\s\S]{0,200}must be answered No/);
+  });
+
   it('pulls embedded photographs out of a PPTX when there is no page render', async () => {
     const png = Uint8Array.from(
       atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),

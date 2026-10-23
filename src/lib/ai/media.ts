@@ -101,7 +101,8 @@ const NATIVE_MIME = /^(image\/(png|jpe?g|webp|heic|heif|gif)|video\/|audio\/|app
 const EXT_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', heic: 'image/heic', heif: 'image/heif', svg: 'image/svg+xml',
   mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4',
-  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html', json: 'text/plain', srt: 'text/plain',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', html: 'text/html', htm: 'text/html', css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', cjs: 'text/javascript', json: 'text/plain', srt: 'text/plain',
+  woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf', eot: 'application/vnd.ms-fontobject',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   ppt: 'application/vnd.ms-powerpoint',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -110,6 +111,9 @@ const EXT_MIME: Record<string, string> = {
   xls: 'application/vnd.ms-excel',
   zip: 'application/zip',
 };
+
+const ZIP_MIME = /^(application\/(zip|x-zip-compressed|x-zip)|multipart\/x-zip)$/;
+const FONT_MIME = /^(font\/|application\/(font-woff2?|vnd\.ms-fontobject|x-font-))/;
 
 /** Trust the bytes when a JPEG/PNG/PDF is wearing an Office name. */
 export function sniffMime(bytes: Uint8Array): string | null {
@@ -174,8 +178,8 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
     return { ...base, delivery: 'text_digest', parts: [`${label}\n${facts}\nSVG markup (not rasterised):\n${text}\n--- end ---`] };
   }
 
-  if (NATIVE_MIME.test(mime)) {
-    if (mime.startsWith('text/')) {
+  if (NATIVE_MIME.test(mime) || /^(application\/(javascript|x-javascript|json))$/.test(mime)) {
+    if (mime.startsWith('text/') || /javascript|\/json$/.test(mime)) {
       const text = Buffer.from(file.bytes).toString('utf8');
       const html = mime === 'text/html' || /\.html?$/i.test(file.name);
       // Long text (especially HTML prototypes) must not go in the prompt
@@ -226,15 +230,27 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
   const office = officePreviewKind(file.name, mime);
   if (office) return prepareOffice(file, office, label, base);
 
-  if (mime === 'application/zip' || /\.zip$/i.test(file.name)) {
+  if (ZIP_MIME.test(mime) || /\.zip$/i.test(file.name)) {
     if (depth > 0) return { ...base, delivery: 'unsupported', parts: [`${label}\nNOT ATTACHED: nested archives are not expanded.`] };
     return prepareArchive(file, role, label, base);
+  }
+
+  if (FONT_MIME.test(mime) || /\.(woff2?|ttf|otf|eot)$/i.test(file.name)) {
+    return {
+      ...base,
+      delivery: 'text_digest',
+      parts: [`${label}\n${facts}\nFont file present in the archive. Judge whether it is used from the HTML/CSS and the screenshots; do not answer No only because the font bytes were not attached.`],
+    };
   }
 
   return {
     ...base,
     delivery: 'unsupported',
-    parts: [`${label}\nNOT ATTACHED: ${mime} is not a format the grader can read. Statements that depend on its content must be answered No, with that reason as evidence.`],
+    parts: [
+      depth > 0
+        ? `${label}\nPresent in the archive (${mime}). Not a format the grader reads as its own file; use the archive listing, HTML/CSS and screenshots.`
+        : `${label}\nNOT ATTACHED: ${mime} is not a format the grader can read. Statements that depend on its content must be answered No, with that reason as evidence.`,
+    ],
   };
 }
 
