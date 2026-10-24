@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { AppShell, type NavLink } from '@/components/AppShell';
 import { FetchShortcut } from '@/components/FetchShortcut';
 import { currentActor } from '@/lib/auth/identity';
-import { canManageUsers, isController } from '@/lib/auth/permissions';
+import { canManageUsers, canOversee, isController } from '@/lib/auth/permissions';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     { href: '/', label: 'Dashboard', group: 'Operations' },
     { href: '/submissions', label: 'GDP Evaluation', group: 'Operations' },
   ];
-  if (isController(actor)) {
+  if (canOversee(actor)) {
     links.push({ href: '/submissions/claims', label: 'Who holds what', group: 'Operations' });
     links.push({ href: '/reports', label: 'Reports', group: 'Operations' });
   }

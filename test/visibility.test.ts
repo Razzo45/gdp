@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canChangeAiOutputs, canRunStability, canSeeSubmission, claimableSeat, taskLens, type Actor } from '@/lib/auth/permissions';
+import { canChangeAiOutputs, canOversee, canRunStability, canSeeSubmission, claimableSeat, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor } from '@/lib/auth/permissions';
 
 const seat = { rubricAssigneeId: 'ana', reviewerId: null as string | null, stage: 'rubric' };
 
@@ -49,6 +49,22 @@ describe('taskLens', () => {
     expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'handoff' })).toBe(true);
     expect(canRunStability(actor(['admin'], 'a'), { ...seat, stage: 'done' })).toBe(true);
     expect(canRunStability(actor(['rubric_creator'], 'ana'), { ...seat, stage: 'review' })).toBe(true);
+  });
+
+  it('lets an observer see every task the way a PM does, without touching seats or the workflow', () => {
+    const overseer = actor(['observer'], 'pat');
+    const open = { rubricAssigneeId: null, reviewerId: null, stage: 'rubric' };
+    expect(canOversee(overseer)).toBe(true);
+    expect(isController(overseer)).toBe(false);
+    expect(taskLens(overseer, seat)).toBe('controller');
+    expect(canSeeSubmission(overseer, open)).toBe(true);
+    expect(canSeeSubmission(overseer, seat)).toBe(true);
+    expect(holdsRubricSeat(overseer, seat)).toBe(false);
+    expect(holdsRubricSeat(overseer, open)).toBe(false);
+    expect(holdsReviewSeat(overseer, { rubricAssigneeId: 'ana', reviewerId: null, stage: 'review' })).toBe(false);
+    expect(claimableSeat(overseer, open)).toBeNull();
+    expect(canChangeAiOutputs(overseer, open)).toBe(false);
+    expect(canRunStability(overseer, seat)).toBe(false);
   });
 
   it('follows the review seat when someone holds both hats', () => {

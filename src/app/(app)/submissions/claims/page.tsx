@@ -9,7 +9,7 @@ import { TaskLabel } from '@/components/TaskLabel';
 import { formatDate } from '@/components/format';
 import { seatIsStale, STALE_HOLD_HOURS } from '@/domain/workState';
 import { currentActor } from '@/lib/auth/identity';
-import { isController } from '@/lib/auth/permissions';
+import { canOversee } from '@/lib/auth/permissions';
 import { claimsOverview } from '@/lib/services/submissions';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
 export default async function ClaimsPage() {
   const actor = await currentActor();
   if (!actor) redirect('/login');
-  if (!isController(actor)) redirect('/');
+  if (!canOversee(actor)) redirect('/');
   const people = await claimsOverview(actor);
   const now = Date.now();
   const holding = people

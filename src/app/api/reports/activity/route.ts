@@ -5,7 +5,7 @@ import { XLSX_TYPE, toXlsx } from '@/lib/xlsx';
 
 export const dynamic = 'force-dynamic';
 
-/** Activity workbook: every state change in the window, optionally for one person's tasks. PM / admin only. */
+/** Activity workbook: every state change in the window, optionally for one person's tasks. PM / admin / observer. */
 export const GET = route({}, async ({ actor, request }) => {
   const query = new URL(request.url).searchParams;
   const range = reportRange({ from: query.get('from'), to: query.get('to') });

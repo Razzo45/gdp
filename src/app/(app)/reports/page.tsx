@@ -5,7 +5,7 @@ import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { DELIVERY_TARGET_HOURS, REPORT_STATE_LABEL, REPORT_STATES, reportRange, summarizeDelivery, type ReportState, type ReportTask } from '@/domain/reports';
 import { currentActor } from '@/lib/auth/identity';
-import { isController } from '@/lib/auth/permissions';
+import { canOversee } from '@/lib/auth/permissions';
 import { loadReportData } from '@/lib/services/reports';
 
 export const dynamic = 'force-dynamic';
@@ -57,7 +57,7 @@ const shortId = (task: ReportTask) => task.catalogSubmissionId.slice(0, 8);
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const actor = await currentActor();
   if (!actor) redirect('/login');
-  if (!isController(actor)) redirect('/');
+  if (!canOversee(actor)) redirect('/');
   const params = await searchParams;
   const range = reportRange({ from: params['from'], to: params['to'] });
   const { tasks, names } = await loadReportData(actor);

@@ -3,7 +3,7 @@ import { db } from '@/db/client';
 import { jobs } from '@/db/schema';
 import { modelTraffic } from '@/lib/ai/gemini';
 import { route } from '@/lib/api';
-import { isController } from '@/lib/auth/permissions';
+import { canOversee } from '@/lib/auth/permissions';
 import { forbidden } from '@/lib/services/errors';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  * the task, not this lane.
  */
 export const GET = route({}, async ({ actor }) => {
-  if (!isController(actor)) throw forbidden('Model traffic is for admin and PM.');
+  if (!canOversee(actor)) throw forbidden('Model traffic is for admin, PM, and observers.');
   const database = db();
   const queue = await database
     .select({ status: jobs.status, kind: jobs.kind, n: count() })

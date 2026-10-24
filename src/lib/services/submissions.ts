@@ -7,7 +7,7 @@ import { profiles, submissionEvents, submissions, userRoles, watchedProjects, ty
 import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
-import { canCreateRubrics, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
+import { canCreateRubrics, canOversee, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { catalogReturnFromSync, landFromParked, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { isUserInteraction } from '@/domain/dashboard';
@@ -231,7 +231,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   if (filter.workState === 'handoff') conditions.push(and(eq(submissions.stage, 'handoff'), sql`${submissions.handoffStatus} is distinct from 'bounced'`));
   if (filter.workState === 'submitted') conditions.push(eq(submissions.stage, 'done'));
   if (filter.workState === 'other') conditions.push(eq(submissions.stage, 'parked'));
-  if (!isController(actor)) {
+  if (!canOversee(actor)) {
     const visible = [];
     if (canCreateRubrics(actor)) {
       visible.push(eq(submissions.rubricAssigneeId, actor.id));
@@ -286,7 +286,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   return rows
     .map((r) => {
       const held = r.submission.rubricAssigneeId === actor.id || r.submission.reviewerId === actor.id;
-      const blinded = !isController(actor) && !held;
+      const blinded = !canOversee(actor) && !held;
       // Reviewers pick by task and creator; rubric claim slots stay fully blind.
       const reviewSlot = blinded && r.submission.stage === 'review';
       const workState = workStateOf(r.submission);
@@ -421,7 +421,7 @@ export interface ClaimsOverviewRow {
 
 /** Who holds what, for PMs. */
 export async function claimsOverview(actor: Actor): Promise<ClaimsOverviewRow[]> {
-  if (!isController(actor)) throw forbidden('Only PMs and admins can see the claims overview.');
+  if (!canOversee(actor)) throw forbidden('Only PMs, admins, and observers can see the claims overview.');
   const database = db();
   const [people, roleRows, held] = await Promise.all([
     database.select().from(profiles).where(eq(profiles.isActive, true)).orderBy(profiles.email),

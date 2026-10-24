@@ -22,7 +22,7 @@ import {
 
 export const app = pgSchema('app');
 
-export const ROLES = ['admin', 'pm', 'rubric_creator', 'reviewer'] as const;
+export const ROLES = ['admin', 'pm', 'observer', 'rubric_creator', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const STAGES = ['rubric', 'review', 'stability', 'handoff', 'done', 'parked'] as const;

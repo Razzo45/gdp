@@ -5,7 +5,7 @@ import { db } from '@/db/client';
 import { profiles, submissionEvents, submissions } from '@/db/schema';
 import { CATALOG_MARKED_DONE, REPORT_ACTIONS, replayTask, type ReportEvent, type ReportTask } from '@/domain/reports';
 import { workStateOf } from '@/domain/workState';
-import { isController, type Actor } from '@/lib/auth/permissions';
+import { canOversee, type Actor } from '@/lib/auth/permissions';
 import { forbidden } from './errors';
 
 export interface ReportData {
@@ -15,7 +15,7 @@ export interface ReportData {
 
 /** Every task that entered the work lanes, replayed from its event log. PM / admin only. */
 export async function loadReportData(actor: Actor, now = Date.now()): Promise<ReportData> {
-  if (!isController(actor)) throw forbidden('Only PMs and admins can open reports.');
+  if (!canOversee(actor)) throw forbidden('Only PMs, admins, and observers can open reports.');
   const database = db();
   const [rows, people] = await Promise.all([
     database

@@ -8,7 +8,7 @@ import { api } from './client';
 import { CollapsibleCopy, TaskLabel } from './TaskLabel';
 
 /** PM queue: Catalog sent a submitted task back. Accept reopens; dismiss leaves it done. */
-export function CatalogReturnQueue({ items }: { items: PendingCatalogReturn[] }) {
+export function CatalogReturnQueue({ items, readOnly = false }: { items: PendingCatalogReturn[]; readOnly?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,14 +55,16 @@ export function CatalogReturnQueue({ items }: { items: PendingCatalogReturn[] })
                   </p>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button className="btn btn-primary btn-sm" disabled={acting} type="button" onClick={() => void act(item.id, 'accept')}>
-                  {busy === `${item.id}:accept` ? 'Accepting…' : 'Accept return'}
-                </button>
-                <button className="btn btn-sm" disabled={acting} type="button" onClick={() => void act(item.id, 'dismiss')}>
-                  {busy === `${item.id}:dismiss` ? 'Keeping…' : 'Keep submitted'}
-                </button>
-              </div>
+              {readOnly ? null : (
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn btn-primary btn-sm" disabled={acting} type="button" onClick={() => void act(item.id, 'accept')}>
+                    {busy === `${item.id}:accept` ? 'Accepting…' : 'Accept return'}
+                  </button>
+                  <button className="btn btn-sm" disabled={acting} type="button" onClick={() => void act(item.id, 'dismiss')}>
+                    {busy === `${item.id}:dismiss` ? 'Keeping…' : 'Keep submitted'}
+                  </button>
+                </div>
+              )}
             </li>
           );
         })}

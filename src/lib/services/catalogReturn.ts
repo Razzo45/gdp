@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissions, type Submission } from '@/db/schema';
 import { parseCatalogReturn, type PendingCatalogReturn } from '@/domain/catalogReturn';
-import { isController, type Actor } from '@/lib/auth/permissions';
+import { canOversee, isController, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden } from './errors';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
@@ -55,7 +55,7 @@ export async function dismissCatalogReturn(actor: Actor, submissionId: string): 
 }
 
 export async function listPendingCatalogReturns(actor: Actor): Promise<PendingCatalogReturn[]> {
-  if (!isController(actor)) throw forbidden('Only PMs and admins can see Catalog returns.');
+  if (!canOversee(actor)) throw forbidden('Only PMs, admins, and observers can see Catalog returns.');
   const rows = await db()
     .select()
     .from(submissions)

@@ -8,6 +8,7 @@ import { api } from '../client';
 const ROLE_HELP: Record<Role, string> = {
   admin: 'everything, including Settings',
   pm: 'same task view as admin; assign, reassign, unlock, handoff — no Settings',
+  observer: 'same view as admin, plus reports; cannot change rubrics, seats, or the workflow',
   rubric_creator: 'claims the next rubric task blind, then Golden, Stability, push',
   reviewer: 'claims the next review task blind, then scores the seated rubric',
 };

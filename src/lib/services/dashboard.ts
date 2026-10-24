@@ -17,7 +17,7 @@ import {
   type TeamSignal,
 } from '@/domain/dashboard';
 import { holdAgeHours, WORK_STATE_LABEL, type WorkState } from '@/domain/workState';
-import { isController, type Actor } from '@/lib/auth/permissions';
+import { canOversee, type Actor } from '@/lib/auth/permissions';
 import { listUsers } from './admin';
 import { forbidden } from './errors';
 import { listSubmissions, type SubmissionListRow } from './submissions';
@@ -77,7 +77,7 @@ const TRACKED_ACTIONS = [
 
 /** PM / admin glance: stuck work, throughput, and who is moving or blocked. */
 export async function dashboardOverview(actor: Actor, now = Date.now()): Promise<DashboardOverview> {
-  if (!isController(actor)) throw forbidden('Only PMs and admins can open the operations dashboard.');
+  if (!canOversee(actor)) throw forbidden('Only PMs, admins, and observers can open the operations dashboard.');
   const since = new Date(periodStarts(now).month - 90 * 86_400_000).toISOString();
   const [rows, people, events] = await Promise.all([
     listSubmissions(actor),

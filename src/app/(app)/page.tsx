@@ -8,7 +8,7 @@ import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
 import { currentActor } from '@/lib/auth/identity';
-import { claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
+import { canOversee, claimableSeat, type Actor } from '@/lib/auth/permissions';
 import { dashboardOverview } from '@/lib/services/dashboard';
 import { listSubmissions } from '@/lib/services/submissions';
 
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
 export default async function Dashboard() {
   const actor = await currentActor();
   if (!actor) redirect('/login');
-  if (isController(actor)) return <PmDashboard actor={actor} />;
+  if (canOversee(actor)) return <PmDashboard actor={actor} />;
 
   const all = await listSubmissions(actor);
   const mine = all.filter((s) => s.rubricAssigneeId === actor.id || s.reviewerId === actor.id);

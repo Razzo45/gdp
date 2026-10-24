@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { profiles, ROLES, userRoles, watchedProjects, type Role, type WatchedProject } from '@/db/schema';
 import { forgetActor } from '@/lib/auth/identity';
-import { canManageProjects, canManageUsers, type Actor } from '@/lib/auth/permissions';
+import { canManageProjects, canManageUsers, canOversee, type Actor } from '@/lib/auth/permissions';
 import { fetchProject } from '@/lib/catalog/client';
 import { readProjectStatuses } from '@/lib/catalog/read';
 import type { CatalogStatus } from '@/lib/catalog/types';
@@ -24,7 +24,7 @@ export interface UserRow {
 }
 
 export async function listUsers(actor: Actor): Promise<UserRow[]> {
-  if (!canManageUsers(actor) && !actor.roles.has('pm')) throw forbidden('Only admins and PMs can list users.');
+  if (!canOversee(actor)) throw forbidden('Only PMs, admins, and observers can list users.');
   const database = db();
   const people = await database.select().from(profiles).orderBy(profiles.email);
   const grants = await database.select().from(userRoles);

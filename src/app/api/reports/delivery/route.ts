@@ -5,7 +5,7 @@ import { XLSX_TYPE, toXlsx } from '@/lib/xlsx';
 
 export const dynamic = 'force-dynamic';
 
-/** Delivery workbook: one row per task that landed in the window. PM / admin only. */
+/** Delivery workbook: one row per task that landed in the window. PM / admin / observer. */
 export const GET = route({}, async ({ actor, request }) => {
   const query = new URL(request.url).searchParams;
   const range = reportRange({ from: query.get('from'), to: query.get('to') });

@@ -6,6 +6,8 @@ import type { Role } from '@/db/schema';
  *   admin           everything, including Settings (users and watched projects)
  *   pm              same task visibility as admin; seats, unlock, handoff;
  *                   no Settings
+ *   observer        same view as admin/PM (board, history, reports) and can
+ *                   download reports; cannot claim, assign, edit, or move work
  *   rubric_creator  claims the next rubric task blind; then brief, files,
  *                   Golden, bank, stability; no history, no Settings
  *   reviewer        claims a review task by its id and rubric creator; then scores the seated
@@ -22,7 +24,10 @@ export interface Actor {
 export const has = (actor: Actor, ...roles: Role[]): boolean => roles.some((r) => actor.roles.has(r));
 
 export const isAdmin = (a: Actor) => has(a, 'admin');
+/** Admin or PM: may change seats, rubrics, and the workflow. */
 export const isController = (a: Actor) => has(a, 'admin', 'pm');
+/** Admin, PM, or observer: may see the whole board, history, and reports. */
+export const canOversee = (a: Actor) => has(a, 'admin', 'pm', 'observer');
 export const canCreateRubrics = (a: Actor) => has(a, 'admin', 'pm', 'rubric_creator');
 export const canReview = (a: Actor) => has(a, 'admin', 'pm', 'reviewer');
 export const canManageUsers = (a: Actor) => has(a, 'admin');
@@ -38,7 +43,7 @@ export interface SeatView {
 export type TaskLens = 'controller' | 'rubric' | 'reviewer';
 
 export function taskLens(actor: Actor, seat: SeatView): TaskLens {
-  if (isController(actor)) return 'controller';
+  if (canOversee(actor)) return 'controller';
   if (holdsRubricSeat(actor, seat)) return 'rubric';
   if (holdsReviewSeat(actor, seat)) return 'reviewer';
   if (canCreateRubrics(actor) && canReview(actor)) return seat.stage === 'review' ? 'reviewer' : 'rubric';
@@ -74,7 +79,7 @@ export function holdsReviewSeat(actor: Actor, seat: SeatView): boolean {
 
 /** May this actor read the record at all? Unclaimed work is not visible — they claim it blind. */
 export function canSeeSubmission(actor: Actor, seat: SeatView): boolean {
-  if (isController(actor)) return true;
+  if (canOversee(actor)) return true;
   if (seat.rubricAssigneeId === actor.id) return true;
   if (seat.reviewerId === actor.id) return true;
   return false;

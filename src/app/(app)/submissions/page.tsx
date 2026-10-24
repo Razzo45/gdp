@@ -6,7 +6,7 @@ import { ImportTask } from '@/components/ImportTask';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { currentActor } from '@/lib/auth/identity';
-import { isController } from '@/lib/auth/permissions';
+import { canOversee, isController } from '@/lib/auth/permissions';
 import { listPendingCatalogReturns } from '@/lib/services/catalogReturn';
 import { listSubmissions } from '@/lib/services/submissions';
 import { CollapsibleCopy, TaskLabel } from '@/components/TaskLabel';
@@ -24,12 +24,13 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const workState = WORK_STATES.includes(params['state'] as WorkState) ? (params['state'] as WorkState) : undefined;
   const q = params['q']?.trim() || undefined;
   const mine = params['mine'] === '1';
-  const pm = isController(actor);
+  const operate = isController(actor);
+  const oversee = canOversee(actor);
   const [listedQuery, pendingReturns] = await Promise.all([
     listSubmissions(actor, { mine, q }),
-    pm ? listPendingCatalogReturns(actor) : Promise.resolve([]),
+    oversee ? listPendingCatalogReturns(actor) : Promise.resolve([]),
   ]);
-  const scoped = pm ? listedQuery : listedQuery.filter((r) => !r.blinded);
+  const scoped = oversee ? listedQuery : listedQuery.filter((r) => !r.blinded);
   const listed = boardListRows(scoped, { workState, q });
   const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
@@ -41,7 +42,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Submissions"
         actions={
-          pm ? (
+          oversee ? (
             <>
               <Link href="/submissions" className={`chip ${!mine && (q || !workState) ? 'chip-on' : ''}`}>
                 All
@@ -57,14 +58,14 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
           ? 'Search looks across every panel. Work status says where each match sits.'
           : workState
             ? WORK_STATE_HINT[workState]
-            : pm
+            : oversee
               ? 'This project’s board. Claim and personal status live on the dashboard when more projects land.'
               : 'This project’s tasks you already hold. Claim from the dashboard.'}
       </PageHeader>
 
-      {pm && <WorkStateChips counts={counts} active={q ? undefined : workState} />}
+      {oversee && <WorkStateChips counts={counts} active={q ? undefined : workState} />}
 
-      {pm && (
+      {oversee && (
         <form className="flex flex-wrap items-end gap-2" action="/submissions" method="get">
           <label className="flex min-w-64 flex-1 flex-col gap-1 text-sm">
             Full or partial submission ID
@@ -81,8 +82,8 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
         </form>
       )}
 
-      {pm && <CatalogReturnQueue items={pendingReturns} />}
-      {pm && <ImportTask />}
+      {oversee && <CatalogReturnQueue items={pendingReturns} readOnly={!operate} />}
+      {operate && <ImportTask />}
 
       <div className="card overflow-x-auto p-0">
         <table className="w-full min-w-[800px] text-sm">
