@@ -698,9 +698,10 @@ describe('review flow', () => {
     await expect(startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() })).rejects.toThrow(/accepted/i);
 
     const seat = statements[0]!;
+    const fixture = seatedRubricInputs().find((row) => row.statement === seat.statement)!;
     await saveStatements(creator, s.id, {
       revision: (await currentRubric(db, s.id))!.revision,
-      upserts: [{ id: seat.id, tag: seat.tag, statement: `${seat.statement} Fixed for the bounce.`, notes: seat.notes, scope: seat.scope, inputFileIds: seat.inputFileIds, outputFile: seat.outputFile }],
+      upserts: [{ ...fixture, id: seat.id, statement: `${seat.statement} Fixed for the bounce.` }],
       deletes: [],
     });
     expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
