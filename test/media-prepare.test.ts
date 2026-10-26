@@ -90,6 +90,26 @@ describe('prepareFile edge cases', () => {
     expect(text).not.toMatch(/JakartaSans[\s\S]{0,200}must be answered No/);
   });
 
+  it('still attaches HTML and JS when a site zip has many assets ahead of them alphabetically', async () => {
+    const zip = new JSZip();
+    for (let i = 0; i < 30; i++) {
+      zip.file(`assets/images/item-${String(i).padStart(2, '0')}.webp`, new Uint8Array([0x52, 0x49, 0x46, 0x46, i, 0, 0, 0]));
+    }
+    zip.file('index.html', '<!DOCTYPE html><html><body data-menu="stackd"></body></html>');
+    zip.file('js/dishes.js', 'export const dishes = [{ name: "Classic Stack" }];');
+    const bytes = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+    const prepared = await prepareFile({ id: 'z', name: 'menu.zip', mime: 'application/zip', bytes }, 'CONSIDERED OUTPUT');
+    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
+    const media = prepared.parts.filter((part) => typeof part !== 'string');
+    expect(prepared.delivery).toBe('archive');
+    expect(text).toMatch(/index\.html[\s\S]*HTML attached in full/);
+    expect(text).toContain('Classic Stack');
+    expect(media.some((part) => 'mime' in part && part.mime === 'text/html')).toBe(true);
+    expect(text).not.toMatch(/further file\(s\) in the archive were not attached/);
+    expect(text).not.toMatch(/index\.html[\s\S]{0,200}NOT ATTACHED/);
+    expect(text).not.toMatch(/dishes\.js[\s\S]{0,200}NOT ATTACHED/);
+  });
+
   it('pulls embedded photographs out of a PPTX when there is no page render', async () => {
     const png = Uint8Array.from(
       atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),

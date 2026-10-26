@@ -94,7 +94,7 @@ async function rememberFileFacts(digest: string, facts: string): Promise<void> {
 
 export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_TEXT_CHARS = 40_000;
-const MAX_ARCHIVE_ENTRIES = 25;
+/** Soft cap on total unpacked archive payload. No per-entry count limit — site zips often put HTML/JS after dozens of assets alphabetically. */
 const MAX_ARCHIVE_BYTES = 300 * 1024 * 1024;
 
 const NATIVE_MIME = /^(image\/(png|jpe?g|webp|heic|heif|gif)|video\/|audio\/|application\/pdf|text\/)/;
@@ -489,7 +489,7 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
   const parts: (string | MediaPart)[] = [`${label}\n${describeFileFacts({ name: file.name, mime: file.mime, size: file.bytes.byteLength })}\nARCHIVE with ${entries.length} file(s):\n${listing || '  (empty)'}`];
   let budget = MAX_ARCHIVE_BYTES;
   const loaded: { name: string; bytes: Uint8Array }[] = [];
-  for (const entry of entries.slice(0, MAX_ARCHIVE_ENTRIES)) {
+  for (const entry of entries) {
     const bytes = new Uint8Array(await entry.async('uint8array'));
     if (bytes.byteLength > budget) {
       parts.push(`${entry.name}: NOT ATTACHED, archive byte budget exhausted.`);
@@ -503,7 +503,6 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
     const inner = await prepareFile({ id: `${file.id}/${entry.name}`, name: entry.name, mime: '', bytes: entry.bytes }, `${role} (inside ${file.name})`, 1, siblings);
     parts.push(...inner.parts);
   }
-  if (entries.length > MAX_ARCHIVE_ENTRIES) parts.push(`${entries.length - MAX_ARCHIVE_ENTRIES} further file(s) in the archive were not attached (limit ${MAX_ARCHIVE_ENTRIES}).`);
   return { ...base, delivery: 'archive', parts };
 }
 
