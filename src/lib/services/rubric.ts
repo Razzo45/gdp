@@ -3,7 +3,7 @@ import 'server-only';
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/db/client';
-import { goldenRatings, rubricStatements, rubrics, submissions, type GoldenRating, type Rubric, type RubricStatement, type Submission } from '@/db/schema';
+import { goldenRatings, rubricStatements, rubrics, stabilityAcceptances, submissions, type GoldenRating, type Rubric, type RubricStatement, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { statementHash } from '@/domain/fingerprint';
 import { isLiveHumanNote } from '@/domain/golden';
@@ -97,6 +97,9 @@ export async function saveStatements(actor: Actor, submissionId: string, request
     const byId = new Map(existing.map((s) => [s.id, s]));
     const now = new Date().toISOString();
     const warnings: SaveResult['warnings'] = [];
+    // Graded seat changes make Stability stale; clear acceptance so re-run is allowed again
+    // (otherwise Platform returned tasks stay locked: can't send, can't re-run).
+    let gradedChanged = request.deletes.length > 0;
 
     if (request.deletes.length) {
       const unknown = request.deletes.filter((id) => !byId.has(id));
@@ -114,12 +117,14 @@ export async function saveStatements(actor: Actor, submissionId: string, request
         const textChanged = previous.statement !== input.statement || previous.scope !== input.scope || previous.outputFile !== input.outputFile || JSON.stringify(previous.inputFileIds) !== JSON.stringify(input.inputFileIds);
         // updatedAt marks Stability stale, so it moves only when what grading reads moves.
         const graded = statementHash(previous) !== statementHash(input);
+        if (graded) gradedChanged = true;
         await tx
           .update(rubricStatements)
           .set({ tag, family, statement: input.statement, notes: input.notes, scope: input.scope, inputFileIds: input.inputFileIds, outputFile: input.outputFile, lint: lint as unknown as Record<string, unknown>, updatedBy: actor.id, ...(graded ? { updatedAt: now } : {}), ...(previous.origin === 'factory' && textChanged ? { origin: 'manual' as const } : {}) })
           .where(eq(rubricStatements.id, input.id));
         if (lint.overall === 'fail') warnings.push({ statementId: input.id, reasons: lint.reasons });
       } else {
+        gradedChanged = true;
         const position = existing.length + request.upserts.indexOf(raw) + 1;
         const [created] = await tx
           .insert(rubricStatements)
@@ -127,6 +132,10 @@ export async function saveStatements(actor: Actor, submissionId: string, request
           .returning({ id: rubricStatements.id });
         if (lint.overall === 'fail') warnings.push({ statementId: created!.id, reasons: lint.reasons });
       }
+    }
+
+    if (gradedChanged) {
+      await tx.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric.id));
     }
 
     const after = await statementsOf(tx, rubric.id);

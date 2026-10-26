@@ -10,7 +10,7 @@ import { ServiceError } from '@/lib/services/errors';
 import { decideReview, saveCalibration, sendToReview } from '@/lib/services/review';
 import { acceptStability } from '@/lib/services/stability';
 import { KEEP, pruneGoldenRatings } from '@/lib/services/retention';
-import { startGoldenAutorate, startHelper } from '@/lib/jobs/start';
+import { startGoldenAutorate, startHelper, startStabilityRun } from '@/lib/jobs/start';
 import { compactBankRow, parseBank } from '@/domain/bank';
 import { countFamilies, quotaSpread } from '@/domain/rubric';
 import { addFromBank, currentRubric, goldenState, installFactoryVersion, overrideGolden, replaceRubricFromPaste, saveStatements, statementsOf } from '@/lib/services/rubric';
@@ -661,6 +661,50 @@ describe('review flow', () => {
     expect(after.stage).toBe('handoff');
     expect(after.handoffStatus).toBe('stability_pass');
     expect(workStateOf(after)).toBe('handoff');
+  });
+
+  it('clears Stability acceptance when a seat is reworded so the run can be started again after a platform return', async () => {
+    process.env['DATABASE_URL'] ??= 'postgres://test@localhost/test';
+    process.env['GEMINI_API_KEY'] ??= 'test-key';
+    process.env['AUTH_MODE'] ??= 'local';
+    const { s, statements } = await readyForReview();
+    await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-unlock', storagePath: `unlock-${s.id}`, uploadedBy: creator.id });
+    await sendToReview(creator, s.id);
+    await claimSeat(reviewer, s.id, 'review');
+    const ids = statements.map((x) => x.id);
+    const answers = yesAnswers(ids, 13);
+    const noted = Object.fromEntries(ids.map((id) => [id, 'Checked on the output.']));
+    await saveCalibration(reviewer, s.id, { answers, evidence: noted, submit: true });
+    await decideReview(reviewer, s.id, 'approved', '');
+
+    const rubric = await currentRubric(db, s.id);
+    const groupId = crypto.randomUUID();
+    await db.insert(stabilityPasses).values(
+      [1, 2, 3].map((passIndex) => ({
+        rubricId: rubric!.id,
+        groupId,
+        passIndex,
+        answers,
+        evidence: noted,
+        errors: {},
+        scorePercent: 26,
+        basis: {},
+      })),
+    );
+    await db.insert(stabilityAcceptances).values({ rubricId: rubric!.id, groupId, acceptedBy: creator.id, scores: [26, 26, 26], spread: 0, basis: {} });
+
+    // Catalog bounce: Platform returned with the accepted Stability still on file.
+    await db.update(submissions).set({ stage: 'rubric', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, s.id));
+    await expect(startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() })).rejects.toThrow(/accepted/i);
+
+    const seat = statements[0]!;
+    await saveStatements(creator, s.id, {
+      revision: (await currentRubric(db, s.id))!.revision,
+      upserts: [{ id: seat.id, tag: seat.tag, statement: `${seat.statement} Fixed for the bounce.`, notes: seat.notes, scope: seat.scope, inputFileIds: seat.inputFileIds, outputFile: seat.outputFile }],
+      deletes: [],
+    });
+    expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
+    await startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() });
   });
 
   it('lets the creator continue to Ready to submit on an already-accepted Stability', async () => {
