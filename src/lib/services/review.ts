@@ -8,7 +8,7 @@ import { mergeReviewDraft, REVIEW_NOTE_MIN_CHARS } from '@/domain/review';
 import { calibrationInBand, CALIBRATION_MAX_PERCENT, CALIBRATION_MIN_PERCENT, EVIDENCE_MIN_CHARS, scoreBreakdown, stabilityGate, stabilityReviewBlock } from '@/domain/gates';
 import { staleSinceStability } from '@/domain/helper';
 import { countFamilies, quotaCaption, quotaSpread, tagStyleOf } from '@/domain/rubric';
-import { holdsReviewSeat, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
+import { holdsReviewSeat, holdsRubricSeat, isController, isOwnRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid, notFound } from './errors';
 import { pruneCalibrations, pruneReviewFeedback } from './retention';
 import { listAiOutputs } from './files';
@@ -74,6 +74,9 @@ export async function saveCalibration(actor: Actor, submissionId: string, input:
   return db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsReviewSeat(actor, submission)) throw forbidden('You do not hold the review seat on this task.');
+    if (!isController(actor) && isOwnRubricSeat(actor, submission)) {
+      throw forbidden('You cannot run the human AI evaluation on a task whose rubric seat you hold.');
+    }
     if (submission.stage !== 'review') throw conflict('The task is not in review.');
     const rubric = await currentRubric(tx, submissionId);
     if (!rubric) throw conflict('Generate or write a rubric first.');
@@ -122,6 +125,9 @@ export async function decideReview(actor: Actor, submissionId: string, decision:
   await db().transaction(async (tx) => {
     const submission = await getSubmission(tx, submissionId);
     if (!holdsReviewSeat(actor, submission)) throw forbidden('You do not hold the review seat on this task.');
+    if (!isController(actor) && isOwnRubricSeat(actor, submission)) {
+      throw forbidden('You cannot decide review on a task whose rubric seat you hold.');
+    }
     if (submission.stage !== 'review') throw conflict('The task is not in review.');
     const rubric = await currentRubric(tx, submissionId);
     if (!rubric) throw notFound('The rubric');

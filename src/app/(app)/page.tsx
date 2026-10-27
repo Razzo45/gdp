@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { BoardFreshness } from '@/components/BoardFreshness';
@@ -7,8 +8,12 @@ import { PageHeader } from '@/components/PageHeader';
 import { TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
+import { WorkModeNudge } from '@/components/WorkModeToggle';
+import { organizeMySeats, seatPanelKind } from '@/domain/seatPanel';
+import { seatsForMode, usesWorkMode, type SeatCaps } from '@/domain/workMode';
 import { currentActor } from '@/lib/auth/identity';
 import { canOversee, claimableSeat, type Actor } from '@/lib/auth/permissions';
+import { capsFor, workModeFor } from '@/lib/auth/workMode';
 import { dashboardOverview } from '@/lib/services/dashboard';
 import { listSubmissions } from '@/lib/services/submissions';
 
@@ -19,15 +24,21 @@ export default async function Dashboard() {
   if (!actor) redirect('/login');
   if (canOversee(actor)) return <PmDashboard actor={actor} />;
 
+  const caps = await capsFor(actor);
+  const mode = await workModeFor(actor);
   const all = await listSubmissions(actor);
-  const mine = all.filter((s) => s.rubricAssigneeId === actor.id || s.reviewerId === actor.id);
-  const queue = all.filter((s) => s.blinded);
+  const held = all.filter((s) => s.rubricAssigneeId === actor.id || s.reviewerId === actor.id);
+  const { visible: mine, otherHatCount } = usesWorkMode(actor)
+    ? seatsForMode(held, actor.id, mode)
+    : { visible: held, otherHatCount: 0 };
+  const queue = all.filter((s) => s.blinded && claimableSeat(actor, s, caps));
 
   return (
     <Page>
     <BoardFreshness />
     <div className="space-y-5">
     <PageHeader title="Your work">The tasks you hold, and anything you can claim — across projects.</PageHeader>
+    {usesWorkMode(actor) ? <WorkModeNudge mode={mode} otherHatCount={otherHatCount} /> : null}
     <div className="grid gap-5 lg:grid-cols-3">
       <section className="card lg:col-span-2">
         <h2 className="section-title mb-4 text-lg">Your seats ({mine.length})</h2>
@@ -36,7 +47,7 @@ export default async function Dashboard() {
             You hold no tasks. Claim one from the queue — the short description and project are visible so you can pick a field you know.
           </p>
         ) : (
-          <SeatList rows={mine} actorId={actor.id} />
+          <SeatList rows={mine} actor={actor} caps={caps} />
         )}
       </section>
       <section className="card">
@@ -44,7 +55,7 @@ export default async function Dashboard() {
         {queue.length === 0 ? (
           <p className="text-sm text-muted">Nothing is waiting to be claimed.</p>
         ) : (
-          <ClaimQueue rows={queue} actor={actor} />
+          <ClaimQueue rows={queue} actor={actor} caps={caps} />
         )}
       </section>
     </div>
@@ -163,7 +174,11 @@ async function PmDashboard({ actor }: { actor: Actor }) {
           <summary className="cursor-pointer select-none font-semibold">Seats you hold ({mine.length})</summary>
           <p className="mt-1 text-sm text-muted">PMs assign work; this only appears if a seat is already on your account.</p>
           <div className="mt-3">
-            <SeatList rows={mine} actorId={actor.id} />
+            <SeatList
+              rows={mine}
+              actor={actor}
+              caps={{ canCreateRubrics: true, canReview: true }}
+            />
           </div>
         </details>
       )}
@@ -191,14 +206,16 @@ function SignalBadge({ signal }: { signal: 'attention' | 'moving' | 'quiet' }) {
 function ClaimQueue({
   rows,
   actor,
+  caps,
 }: {
   rows: Awaited<ReturnType<typeof listSubmissions>>;
   actor: Actor;
+  caps: SeatCaps;
 }) {
   return (
     <ul className="divide-y divide-line">
       {rows.map((s) => {
-        const seat = claimableSeat(actor, s);
+        const seat = claimableSeat(actor, s, caps);
         return (
           <li key={s.id} className="flex items-center justify-between gap-3 py-3">
             <div className="min-w-0">
@@ -216,13 +233,66 @@ function ClaimQueue({
   );
 }
 
-function SeatList({
-  rows,
-  actorId,
+type SeatRow = Awaited<ReturnType<typeof listSubmissions>>[number];
+
+function SeatList({ rows, actor, caps }: { rows: SeatRow[]; actor: Actor; caps: SeatCaps }) {
+  const organized = organizeMySeats(rows, seatPanelKind(caps));
+
+  if (organized.kind === 'reviewer') {
+    return (
+      <div className="space-y-3">
+        {organized.needsAction.length > 0 ? <SeatRows rows={organized.needsAction} actorId={actor.id} /> : null}
+        {organized.needsAction.length === 0 && organized.earlier.length > 0 ? (
+          <p className="text-sm text-muted">No tasks in review right now.</p>
+        ) : null}
+        {organized.earlier.length > 0 ? (
+          <SeatGroup detailsOpen={organized.needsAction.length === 0} label={`Earlier seats (${organized.earlier.length})`}>
+            <SeatRows rows={organized.earlier} actorId={actor.id} />
+          </SeatGroup>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {organized.needsAction.length > 0 ? (
+        <div>
+          <p className="mb-1 text-xs font-medium text-muted">In review ({organized.needsAction.length})</p>
+          <SeatRows rows={organized.needsAction} actorId={actor.id} />
+        </div>
+      ) : null}
+      {organized.groups.map((group, i) => (
+        <SeatGroup
+          key={group.state}
+          detailsOpen={organized.needsAction.length === 0 && i === 0}
+          label={`${group.label} (${group.rows.length})`}
+        >
+          <SeatRows rows={group.rows} actorId={actor.id} />
+        </SeatGroup>
+      ))}
+    </div>
+  );
+}
+
+function SeatGroup({
+  label,
+  detailsOpen,
+  children,
 }: {
-  rows: Awaited<ReturnType<typeof listSubmissions>>;
-  actorId: string;
+  label: string;
+  detailsOpen: boolean;
+  children: ReactNode;
 }) {
+  return (
+    <details open={detailsOpen || undefined} className="rounded-xl border border-line">
+      <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">{label}</summary>
+      <div className="border-t border-line px-3">{children}</div>
+    </details>
+  );
+}
+
+function SeatRows({ rows, actorId }: { rows: SeatRow[]; actorId: string }) {
   return (
     <ul className="divide-y divide-line">
       {rows.map((s) => (

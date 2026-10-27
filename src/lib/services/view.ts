@@ -9,7 +9,8 @@ import { jobs as jobsTable, profiles, submissionEvents, type AiOutputFile, type 
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
-import { canChangeAiOutputs, canReview, canRunStability, holdsReviewSeat, holdsRubricSeat, isController, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { capsFor } from '@/lib/auth/workMode';
+import { canChangeAiOutputs, canRunStability, claimableSeat, holdsReviewSeat, holdsRubricSeat, isController, isOwnRubricSeat, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
 import { parseCatalogReturn } from '@/domain/catalogReturn';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
@@ -104,6 +105,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
   }
 
   const lens = taskLens(actor, submission);
+  const caps = await capsFor(actor);
   const reviewVisible = lens === 'controller' || lens === 'reviewer';
   const hideReviewAnswers = !reviewVisible;
 
@@ -202,10 +204,13 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       holdsRubricSeat: holdsRubricSeat(actor, submission),
       runStability: canRunStability(actor, submission),
       runGolden: holdsRubricSeat(actor, submission),
-      review: holdsReviewSeat(actor, submission) && submission.stage === 'review',
+      review:
+        holdsReviewSeat(actor, submission) &&
+        submission.stage === 'review' &&
+        (isController(actor) || !isOwnRubricSeat(actor, submission)),
       control: isController(actor),
-      claimRubric: submission.rubricAssigneeId === null && (isController(actor) || actor.roles.has('rubric_creator')),
-      claimReview: submission.reviewerId === null && submission.stage === 'review' && canReview(actor),
+      claimRubric: submission.rubricAssigneeId === null && (isController(actor) || caps.canCreateRubrics),
+      claimReview: claimableSeat(actor, submission, caps) === 'review',
       push:
         (holdsRubricSeat(actor, submission) || isController(actor)) &&
         canSubmitToDataPlatform({

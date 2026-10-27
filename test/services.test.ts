@@ -147,6 +147,16 @@ describe('seats', () => {
     const pooled = await assignSeat(pm, s.id, 'review', null);
     expect(pooled.reviewerId).toBeNull();
   });
+
+  it('locks dual-role users out of reviewing a task whose rubric seat they hold', async () => {
+    const both = await makeUser(db, 'both@example.com', ['rubric_creator', 'reviewer']);
+    const s = await makeSubmission(db, { stage: 'review', reviewStatus: 'pending', rubricAssigneeId: both.id });
+    await expectStatus(claimSeat(both, s.id, 'review'), 403);
+    await expectStatus(assignSeat(pm, s.id, 'review', both.id), 422);
+    const other = await makeSubmission(db, { stage: 'review', reviewStatus: 'pending', rubricAssigneeId: creator.id });
+    const claimed = await claimSeat(both, other.id, 'review');
+    expect(claimed.reviewerId).toBe(both.id);
+  });
 });
 
 describe('rubric autosave with revision CAS', () => {

@@ -7,7 +7,8 @@ import { profiles, submissionEvents, submissions, userRoles, watchedProjects, ty
 import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
-import { canCreateRubrics, canOversee, canReview, canSeeSubmission, claimableSeat, isController, type Actor } from '@/lib/auth/permissions';
+import { capsFor } from '@/lib/auth/workMode';
+import { canCreateRubrics, canOversee, canReview, canSeeSubmission, claimableSeat, isController, isOwnRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { catalogReturnFromSync, landFromParked, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { isUserInteraction } from '@/domain/dashboard';
@@ -312,7 +313,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
 export async function peekClaim(actor: Actor, submissionId: string): Promise<{ seat: 'rubric' | 'review' } | null> {
   const row = await getSubmission(db(), submissionId);
   if (canSeeSubmission(actor, row)) return null;
-  const seat = claimableSeat(actor, row);
+  const seat = claimableSeat(actor, row, await capsFor(actor));
   return seat ? { seat } : null;
 }
 
@@ -345,6 +346,9 @@ export async function claimSeat(actor: Actor, submissionId: string, seat: Seat):
   const result = await db().transaction(async (tx) => {
     const current = await getSubmission(tx, submissionId);
     if (seat === 'review' && current.stage !== 'review') throw conflict('This task is not in review yet.');
+    if (seat === 'review' && isOwnRubricSeat(actor, current)) {
+      throw forbidden('You cannot review a task whose rubric seat you hold.');
+    }
     if (current[column.key] === actor.id) return { previous: current, next: current };
     const [updated] = await tx
       .update(submissions)
@@ -393,6 +397,9 @@ export async function assignSeat(actor: Actor, submissionId: string, seat: Seat,
       if (!target || !target.isActive) throw invalid('That user is not active on the platform.');
       const grants = await tx.select().from(userRoles).where(eq(userRoles.userId, userId));
       if (!isEligibleAssignee(grants.map((g) => g.role), seat)) throw invalid(seatTeamError(seat));
+      if (seat === 'review' && userId === current.rubricAssigneeId) {
+        throw invalid('The rubric creator cannot take the review seat on their own task.');
+      }
     }
     const now = new Date().toISOString();
     const [updated] = await tx

@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { NAV_COLLAPSE_KEY, navCollapseValue, readNavCollapsed } from '@/domain/nav';
+import type { WorkMode } from '@/domain/workMode';
 import { BrandMark } from './BrandMark';
 import { ThemeToggle } from './ThemeToggle';
+import { WorkModeToggle } from './WorkModeToggle';
 
 export interface NavLink {
   href: string;
@@ -18,12 +20,15 @@ export function AppShell({
   email,
   roles,
   links,
+  workMode,
   children,
 }: {
   name: string;
   email: string;
   roles: string;
   links: NavLink[];
+  /** Present only for dual-role non-overseer accounts. */
+  workMode?: WorkMode;
   children: ReactNode;
 }) {
   const path = usePathname();
@@ -118,7 +123,8 @@ export function AppShell({
         </button>
         <BrandMark />
         <div className="min-w-0 truncate text-base font-semibold leading-5 tracking-[-0.03em]">GDP Wirestock</div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {workMode ? <WorkModeToggle mode={workMode} /> : null}
           <ThemeToggle />
         </div>
       </header>
@@ -157,7 +163,8 @@ export function AppShell({
       </aside>
 
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="hidden h-12 shrink-0 items-center justify-end border-b border-line bg-surface px-4 lg:flex">
+        <div className="hidden h-12 shrink-0 items-center justify-end gap-3 border-b border-line bg-surface px-4 lg:flex">
+          {workMode ? <WorkModeToggle mode={workMode} /> : null}
           <ThemeToggle />
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>

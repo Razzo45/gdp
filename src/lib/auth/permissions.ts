@@ -2,6 +2,8 @@ import type { Role } from '@/db/schema';
 
 /**
  * Roles are permission bundles, not personas; a user may hold several.
+ * Dual-role (rubric_creator + reviewer) is allowed, but you cannot claim,
+ * run, or see the human AI evaluation on a task whose rubric seat you hold.
  *
  *   admin           everything, including Settings (users and watched projects)
  *   pm              same task visibility as admin; seats, unlock, handoff;
@@ -77,6 +79,11 @@ export function holdsReviewSeat(actor: Actor, seat: SeatView): boolean {
   return isController(actor) || (seat.reviewerId !== null && seat.reviewerId === actor.id);
 }
 
+/** Dual-role lock: the current rubric holder cannot take or run the human AI evaluation. */
+export function isOwnRubricSeat(actor: { id: string }, seat: SeatView): boolean {
+  return seat.rubricAssigneeId !== null && seat.rubricAssigneeId === actor.id;
+}
+
 /** May this actor read the record at all? Unclaimed work is not visible — they claim it blind. */
 export function canSeeSubmission(actor: Actor, seat: SeatView): boolean {
   if (canOversee(actor)) return true;
@@ -85,9 +92,16 @@ export function canSeeSubmission(actor: Actor, seat: SeatView): boolean {
   return false;
 }
 
+export type SeatCaps = {
+  canCreateRubrics: boolean;
+  canReview: boolean;
+};
+
 /** Which seat this actor may take without seeing the brief. Null if it is not theirs to claim. */
-export function claimableSeat(actor: Actor, seat: SeatView): 'rubric' | 'review' | null {
-  if (seat.stage === 'review' && seat.reviewerId === null && canReview(actor)) return 'review';
-  if (seat.stage !== 'review' && seat.rubricAssigneeId === null && canCreateRubrics(actor)) return 'rubric';
+export function claimableSeat(actor: Actor, seat: SeatView, caps?: SeatCaps): 'rubric' | 'review' | null {
+  const review = caps?.canReview ?? canReview(actor);
+  const create = caps?.canCreateRubrics ?? canCreateRubrics(actor);
+  if (seat.stage === 'review' && seat.reviewerId === null && review && !isOwnRubricSeat(actor, seat)) return 'review';
+  if (seat.stage !== 'review' && seat.rubricAssigneeId === null && create) return 'rubric';
   return null;
 }

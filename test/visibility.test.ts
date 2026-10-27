@@ -72,4 +72,13 @@ describe('taskLens', () => {
     expect(taskLens(both, { rubricAssigneeId: 'ana', reviewerId: 'sam', stage: 'review' })).toBe('reviewer');
     expect(taskLens(both, { rubricAssigneeId: 'sam', reviewerId: null, stage: 'rubric' })).toBe('rubric');
   });
+
+  it('blocks dual-role users from claiming review on a task whose rubric seat they hold', () => {
+    const both = actor(['rubric_creator', 'reviewer'], 'sam');
+    const ownInReview = { rubricAssigneeId: 'sam', reviewerId: null as string | null, stage: 'review' };
+    const otherInReview = { rubricAssigneeId: 'ana', reviewerId: null as string | null, stage: 'review' };
+    expect(claimableSeat(both, ownInReview)).toBeNull();
+    expect(claimableSeat(both, otherInReview)).toBe('review');
+    expect(taskLens(both, ownInReview)).toBe('rubric');
+  });
 });
