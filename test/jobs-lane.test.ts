@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { canReuseStagedUri, catalogIdentityMatch, conflictingJob, isHeavyJobPayload, isHeavyMedia, isStatementLane, statementIdsOf } from '@/domain/jobs';
+import {
+  archiveMembersStayStaged,
+  canReuseStagedUri,
+  catalogIdentityMatch,
+  conflictingJob,
+  isArchiveFile,
+  isArchiveJobPayload,
+  isHeavyJobPayload,
+  isHeavyMedia,
+  isStatementLane,
+  stabilityGradeBatchSize,
+  stabilityGradeCalls,
+  stabilityGradesInParallel,
+  statementIdsOf,
+} from '@/domain/jobs';
 
 describe('statement lane', () => {
   it('treats 1–8 statement ids as the fast lane', () => {
@@ -30,6 +44,32 @@ describe('heavy media jobs', () => {
     expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 50 * 1024 * 1024 })).toBe(false);
     expect(isHeavyJobPayload({ heavy: true })).toBe(true);
     expect(isHeavyJobPayload({})).toBe(false);
+  });
+
+  it('puts a site zip in the archive lane, not the 1 GB video heavy lane', () => {
+    expect(isArchiveFile({ mime: 'application/x-zip-compressed', name: 'maison-ai-output.zip' })).toBe(true);
+    expect(isHeavyMedia({ mime: 'application/zip', name: 'maison-ai-output.zip', size: 100_899_604 })).toBe(false);
+    expect(isHeavyMedia({ mime: 'application/x-zip-compressed', name: 'site.zip', size: 2_000_000 })).toBe(false);
+    expect(isHeavyMedia({ mime: '', name: 'bundle.zip', size: 800_000 })).toBe(false);
+    expect(isHeavyMedia({ mime: 'video/mp4', name: 'cut.mp4', size: 1_000_000_000 })).toBe(true);
+    expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 100 * 1024 * 1024 })).toBe(true);
+    expect(isArchiveJobPayload({ archive: true })).toBe(true);
+    expect(isArchiveJobPayload({ heavy: true })).toBe(false);
+  });
+
+  it('stages fat zip members, grades archive Stability serially, and batches seats so 250 statements take about 15 minutes', () => {
+    expect(archiveMembersStayStaged(100_899_604)).toBe(true);
+    expect(archiveMembersStayStaged(8 * 1024 * 1024)).toBe(true);
+    expect(archiveMembersStayStaged(200_000)).toBe(false);
+    expect(stabilityGradesInParallel({ archive: true })).toBe(false);
+    expect(stabilityGradesInParallel({ heavy: true })).toBe(false);
+    expect(stabilityGradesInParallel({})).toBe(true);
+    expect(stabilityGradeBatchSize({ archive: true })).toBe(5);
+    expect(stabilityGradeBatchSize({})).toBeUndefined();
+    expect(stabilityGradeCalls(250, { archive: true })).toBe(150);
+    expect(stabilityGradeCalls(50, { archive: true })).toBe(30);
+    expect(stabilityGradeCalls(50, {})).toBe(150);
+    expect(stabilityGradesInParallel({ archive: true })).toBe(false);
   });
 });
 

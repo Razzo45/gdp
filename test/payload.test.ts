@@ -10,6 +10,9 @@ describe('tight send payloads', () => {
     expect(shouldInlineMedia('image/png', 800_000)).toBe(true);
     expect(shouldInlineMedia('application/pdf', 3 * 1024 * 1024)).toBe(false);
     expect(shouldInlineMedia('application/pdf', 800_000)).toBe(true);
+    expect(shouldInlineMedia('text/html', 80_000)).toBe(true);
+    expect(shouldInlineMedia('text/html', 80_000, { stage: true })).toBe(false);
+    expect(shouldInlineMedia('image/jpeg', 400_000, { stage: true })).toBe(false);
   });
 
   it('clips text, drops blanks, and keeps one copy of each URI', () => {

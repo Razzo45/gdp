@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { jobs, type Job, type JobKind } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { conflictingJob, HEAVY_RUNNING_MAX, HELPER_RUNNING_MAX } from '@/domain/jobs';
+import { ARCHIVE_RUNNING_MAX, conflictingJob, HEAVY_RUNNING_MAX, HELPER_RUNNING_MAX } from '@/domain/jobs';
 import { pruneFinishedJobs } from '@/lib/services/retention';
 export { conflictingJob };
 
@@ -88,6 +88,16 @@ export async function claimNext(kinds: readonly JobKind[]): Promise<{ job: Job; 
               ) < ${HEAVY_RUNNING_MAX}
             )`,
             sql`(
+              coalesce((${jobs.payload}->>'archive')::boolean, false) = false
+              or (
+                select count(*)::int from app.jobs rh
+                where rh.status = 'running'
+                  and rh.lease_until is not null
+                  and rh.lease_until >= ${now}::timestamptz
+                  and coalesce((rh.payload->>'archive')::boolean, false)
+              ) < ${ARCHIVE_RUNNING_MAX}
+            )`,
+            sql`(
               ${jobs.kind} <> 'rubric_helper'
               or (
                 select count(*)::int from app.jobs rh
@@ -105,8 +115,9 @@ export async function claimNext(kinds: readonly JobKind[]): Promise<{ job: Job; 
               and jsonb_typeof(${jobs.payload}->'statementIds') = 'array'
               and jsonb_array_length(${jobs.payload}->'statementIds') between 1 and 8
             then 0
-            when ${jobs.kind} = 'rubric_generate' then 2
-            when ${jobs.kind} = 'rubric_helper' then 3
+            when coalesce((${jobs.payload}->>'archive')::boolean, false) then 2
+            when ${jobs.kind} = 'rubric_generate' then 3
+            when ${jobs.kind} = 'rubric_helper' then 4
             else 1
           end`,
           jobs.createdAt,

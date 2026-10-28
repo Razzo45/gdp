@@ -443,8 +443,9 @@ const FILE_TTL_MS = 47 * 60 * 60_000; // provider keeps files 48h
 const INLINE_LIMIT = 12 * 1024 * 1024;
 const PDF_INLINE_LIMIT = 2 * 1024 * 1024;
 
-/** Video/audio never travel in the generateContent body. Fat PDFs are staged too. */
-export function shouldInlineMedia(mime: string, bytes: number): boolean {
+/** Video/audio never travel in the generateContent body. Fat PDFs are staged too. Archive members of a large zip always stage. */
+export function shouldInlineMedia(mime: string, bytes: number, opts?: { stage?: boolean }): boolean {
+  if (opts?.stage) return false;
   if (/^(video|audio)\//.test(mime)) return false;
   if (mime === 'application/pdf' && bytes > PDF_INLINE_LIMIT) return false;
   return bytes <= INLINE_LIMIT;
@@ -455,8 +456,8 @@ export function shouldInlineMedia(mime: string, bytes: number): boolean {
  * and PDFs over 2 MB are staged once per sha256 — grade pings attach the URI,
  * not the file. Golden and AI output reuse that handle across batches/passes.
  */
-export async function mediaPart(input: { bytes?: Uint8Array; mime: string; sha256: string; name: string; label: string }): Promise<MediaPart> {
-  if (input.bytes && shouldInlineMedia(input.mime, input.bytes.byteLength)) {
+export async function mediaPart(input: { bytes?: Uint8Array; mime: string; sha256: string; name: string; label: string; stage?: boolean }): Promise<MediaPart> {
+  if (input.bytes && shouldInlineMedia(input.mime, input.bytes.byteLength, { stage: input.stage })) {
     return { kind: 'inline', mime: input.mime, data: Buffer.from(input.bytes).toString('base64'), label: input.label };
   }
   const uri = input.bytes ? await stagedFileUri({ ...input, bytes: input.bytes }) : await lookupActiveFileUri(input.sha256);

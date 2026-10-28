@@ -9,7 +9,7 @@ import JSZip from 'jszip';
 import { db } from '@/db/client';
 import { derivatives, fileFacts } from '@/db/schema';
 import { sha256 } from '@/domain/fingerprint';
-import { canReuseStagedUri } from '@/domain/jobs';
+import { archiveMembersStayStaged, canReuseStagedUri } from '@/domain/jobs';
 import { env } from '@/lib/env';
 import { getObject, putObject } from '@/lib/storage';
 import { describeFileFacts, describeFileFactsAsync, factsCurrent, factsFullyMeasured } from './fileFacts';
@@ -147,11 +147,12 @@ export function normaliseMime(name: string, mime: string, bytes?: Uint8Array): s
   return EXT_MIME[ext] || 'application/octet-stream';
 }
 
-export async function prepareFile(file: SourceFile, role: string, depth = 0, siblings: { name: string; bytes: Uint8Array }[] = []): Promise<PreparedFile> {
+export async function prepareFile(file: SourceFile, role: string, depth = 0, siblings: { name: string; bytes: Uint8Array }[] = [], opts?: { stage?: boolean }): Promise<PreparedFile> {
   const digest = sha256(file.bytes);
   const mime = normaliseMime(file.name, file.mime, file.bytes);
   const label = `${role}: ${file.name} (id ${file.id})`;
   const base = { id: file.id, name: file.name, sha256: digest, bytes: file.bytes.byteLength };
+  const stage = opts?.stage;
 
   if (file.bytes.byteLength === 0) {
     return { ...base, delivery: 'unsupported', parts: [`${label}\nNOT ATTACHED: the file is empty.`] };
@@ -171,7 +172,7 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
         delivery: 'native',
         parts: [
           `${label}\n${facts}\nSVG attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
-          await mediaPart({ bytes: file.bytes, mime: 'image/svg+xml', sha256: digest, name: file.name, label }),
+          await mediaPart({ bytes: file.bytes, mime: 'image/svg+xml', sha256: digest, name: file.name, label, stage }),
         ],
       };
     }
@@ -196,6 +197,7 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
               sha256: sha256(shot.bytes),
               name: `${file.name.replace(/\.[a-z0-9]+$/i, '')}-${shot.view}.jpg`,
               label: `${label} — ${shot.view === 'desktop' ? `desktop screenshot, ${DESKTOP.width}px wide` : `phone screenshot, ${MOBILE.width}px wide`}`,
+              stage,
             }),
           ),
         );
@@ -207,7 +209,7 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
           delivery: 'native',
           parts: [
             `${label}\n${facts}\nHTML attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.\n${renderNote}`,
-            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label }),
+            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label, stage }),
             ...shotParts,
           ],
         };
@@ -218,13 +220,13 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
           delivery: 'native',
           parts: [
             `${label}\n${facts}\nText attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
-            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label }),
+            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label, stage }),
           ],
         };
       }
       return { ...base, delivery: 'native', parts: [`${label}\n${facts}\n--- file text (${text.length} chars) ---\n${text}\n--- end ---`] };
     }
-    return { ...base, delivery: 'native', parts: [`${label}\n${facts}`, await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label })] };
+    return { ...base, delivery: 'native', parts: [`${label}\n${facts}`, await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label, stage })] };
   }
 
   const office = officePreviewKind(file.name, mime);
@@ -498,9 +500,10 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
     budget -= bytes.byteLength;
     loaded.push({ name: entry.name, bytes });
   }
+  const stage = archiveMembersStayStaged(file.bytes.byteLength);
   for (const entry of loaded) {
     const siblings = /\.html?$/i.test(entry.name) ? loaded.filter((row) => row !== entry) : [];
-    const inner = await prepareFile({ id: `${file.id}/${entry.name}`, name: entry.name, mime: '', bytes: entry.bytes }, `${role} (inside ${file.name})`, 1, siblings);
+    const inner = await prepareFile({ id: `${file.id}/${entry.name}`, name: entry.name, mime: '', bytes: entry.bytes }, `${role} (inside ${file.name})`, 1, siblings, { stage });
     parts.push(...inner.parts);
   }
   return { ...base, delivery: 'archive', parts };

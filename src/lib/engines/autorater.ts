@@ -47,6 +47,10 @@ export interface GradeInput {
   model?: string;
   temperature?: number;
   onBatch?: (partial: GradeResult) => Promise<void> | void;
+  /** Seats per Gemini call. Archive Stability uses 5 so a large run finishes in about 15 minutes. */
+  batchSize?: number;
+  /** Archive/video Stability grades one batch at a time so a zip cannot fan out ten full-site prompts. */
+  serialBatches?: boolean;
 }
 
 export interface GradeResult {
@@ -284,7 +288,7 @@ export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'input
 
 export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
   const model = input.model ?? env().GEMINI_MODEL;
-  const batchSize = env().AUTORATE_BATCH_SIZE;
+  const batchSize = input.batchSize ?? env().AUTORATE_BATCH_SIZE;
   const result: GradeResult = {
     answers: {},
     evidence: {},
@@ -371,7 +375,11 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     await input.onBatch?.(result);
   };
 
-  await Promise.all(batches.map(gradeBatch));
+  if (input.serialBatches) {
+    for (const batch of batches) await gradeBatch(batch);
+  } else {
+    await Promise.all(batches.map(gradeBatch));
+  }
   return result;
 }
 

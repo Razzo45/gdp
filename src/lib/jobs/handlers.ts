@@ -7,7 +7,7 @@ import { statementHash } from '@/domain/fingerprint';
 import { scoreBreakdown, STABILITY_PASSES } from '@/domain/gates';
 import { acceptanceCriteriaText, applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
 import { analyzeDiscrimination } from '@/domain/discrimination';
-import { isStatementLane } from '@/domain/jobs';
+import { isStatementLane, stabilityGradeBatchSize, stabilityGradesInParallel } from '@/domain/jobs';
 import { seatIndexById, tagStyleForGenerate, tagStyleOf } from '@/domain/rubric';
 import { guardLock, packTighten, screenDrafts, TIGHTEN_ROUNDS, tightenNeed, type LockDraft, type TightenReport, type TightenSeat, type VerifiedLock } from '@/domain/tighten';
 import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autorater';
@@ -322,7 +322,11 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   const taskBody = prompt || context;
   const acceptanceCriteria = acceptanceOf(submission);
 
-  await ctx.tick({ done: 0, total: STABILITY_PASSES, note: 'Reading the AI output' });
+  await ctx.tick({
+    done: 0,
+    total: STABILITY_PASSES,
+    note: stabilityGradesInParallel(job.payload) ? 'Reading the AI output' : 'Staging the AI output',
+  });
   const ai = await prepareAiOutputs(database, job.submissionId, 'CONSIDERED OUTPUT');
   if (ai.files.length === 0) throw new ServiceError(422, 'No AI output files are attached to this task.');
   const currentShas = (await listAiOutputs(database, job.submissionId)).map((f) => f.sha256).sort();
@@ -358,6 +362,8 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       taskBody,
       acceptanceCriteria,
       inventoryByKey,
+      batchSize: stabilityGradeBatchSize(job.payload),
+      serialBatches: !stabilityGradesInParallel(job.payload),
       onBatch: async (partial) => {
         graded[passIndex] = Object.keys(partial.answers).length + Object.keys(partial.errors).length;
         const total = Object.values(graded).reduce((a, b) => a + b, 0);
@@ -395,7 +401,12 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
     await ctx.tick({ done: completed, total: STABILITY_PASSES, note: `Pass ${passIndex} done (${score.percent?.toFixed(1) ?? '—'}%)`, passes: liveScores }, { groupId });
   };
 
-  await Promise.all(Array.from({ length: STABILITY_PASSES }, (_, i) => runPass(i + 1)));
+  const passIndexes = Array.from({ length: STABILITY_PASSES }, (_, i) => i + 1);
+  if (stabilityGradesInParallel(job.payload)) {
+    await Promise.all(passIndexes.map((index) => runPass(index)));
+  } else {
+    for (const index of passIndexes) await runPass(index);
+  }
   const passes = await database.select().from(stabilityPasses).where(eq(stabilityPasses.groupId, groupId)).orderBy(stabilityPasses.passIndex);
   await pruneStabilityGroups(database, rubric.id);
   await recordEvent(database, job.submissionId, job.createdBy, 'stability_run', { jobId: job.id, groupId, scores: passes.map((p) => p.scorePercent) });

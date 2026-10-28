@@ -2,7 +2,7 @@ import 'server-only';
 
 import { db } from '@/db/client';
 import type { Job } from '@/db/schema';
-import { isHeavyMedia } from '@/domain/jobs';
+import { isArchiveFile, isHeavyMedia } from '@/domain/jobs';
 import { countFamilies, MAX_ROUGH_CHARS, quotaCaption, quotaSpread, RUBRIC_MIN, RUBRIC_TARGET, tagStyleOf } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
@@ -15,8 +15,10 @@ import { latestGroup, stabilityView } from '@/lib/services/stability';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
 
-function heavyFlag(files: { mime?: string; name?: string; size?: number }[]): { heavy?: true } {
-  return files.some((file) => isHeavyMedia(file)) ? { heavy: true } : {};
+function weightFlag(files: { mime?: string; name?: string; size?: number }[]): { heavy?: true; archive?: true } {
+  if (files.some((file) => isHeavyMedia(file))) return { heavy: true };
+  if (files.some((file) => isArchiveFile(file))) return { archive: true };
+  return {};
 }
 
 /** User-facing entry points that put work on the queue, with the seat checks. */
@@ -57,7 +59,7 @@ export async function startRubricGeneration(actor: Actor, submissionId: string, 
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { source, target, ...heavyFlag([...(sourceFiles?.inputFiles ?? []), ...(sourceFiles?.goldenFiles ?? [])]) },
+        payload: { source, target, ...weightFlag([...(sourceFiles?.inputFiles ?? []), ...(sourceFiles?.goldenFiles ?? [])]) },
         createdBy: actor.id,
         deadlineMs: 45 * 60_000,
       });
@@ -87,7 +89,7 @@ export async function startGoldenAutorate(actor: Actor, submissionId: string, in
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { ...(ids?.length ? { statementIds: ids } : {}), ...heavyFlag([...(files?.goldenFiles ?? []), ...(files?.inputFiles ?? [])]) },
+        payload: { ...(ids?.length ? { statementIds: ids } : {}), ...weightFlag([...(files?.goldenFiles ?? []), ...(files?.inputFiles ?? [])]) },
         createdBy: actor.id,
         deadlineMs: 60 * 60_000,
       });
@@ -116,7 +118,7 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { groupId: crypto.randomUUID(), calibrationGateActive: official, ...heavyFlag([...outputs, ...inputs]) },
+        payload: { groupId: crypto.randomUUID(), calibrationGateActive: official, ...weightFlag([...outputs, ...inputs]) },
         createdBy: actor.id,
         deadlineMs: 2 * 60 * 60_000,
       });
@@ -156,7 +158,7 @@ export async function startHelper(actor: Actor, submissionId: string, input: { r
         submissionId,
         rubricId: rubric!.id,
         requestId: input.requestId,
-        payload: { ...heavyFlag(files) },
+        payload: { ...weightFlag(files) },
         createdBy: actor.id,
         deadlineMs: 60 * 60_000,
       });

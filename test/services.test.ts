@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { aiOutputFiles, calibrations, goldenRatings, jobs, rubrics, stabilityAcceptances, stabilityPasses, submissions } from '@/db/schema';
 import { statementHash } from '@/domain/fingerprint';
@@ -718,6 +718,23 @@ describe('review flow', () => {
     await startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() });
   });
 
+  it('marks a zip Stability run as archive, not heavy', async () => {
+    process.env['GEMINI_API_KEY'] ??= 'test-key';
+    const { s } = await readyForReview();
+    await db.insert(aiOutputFiles).values({
+      submissionId: s.id,
+      name: 'maison-ai-output.zip',
+      mime: 'application/zip',
+      size: 100_899_604,
+      sha256: 'zip-heavy',
+      storagePath: `zip-${s.id}`,
+      uploadedBy: creator.id,
+    });
+    const job = await startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() });
+    expect(job.payload['archive']).toBe(true);
+    expect(job.payload['heavy']).toBeUndefined();
+  });
+
   it('lets the creator continue to Ready to submit on an already-accepted Stability', async () => {
     const { s, statements } = await readyForReview();
     await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-cont', storagePath: `cont-${s.id}`, uploadedBy: creator.id });
@@ -1000,9 +1017,61 @@ describe('job queue', () => {
     const second = await claimNext(['golden_autorate']);
     const third = await claimNext(['golden_autorate']);
     const fourth = await claimNext(['golden_autorate']);
-    const claimed = [first, second, third].map((row) => row?.job.id);
-    expect(claimed).toEqual([light.id, heavies[0]!.id, heavies[1]!.id]);
+    expect([first?.job.id, second?.job.id, third?.job.id]).toEqual([light.id, heavies[0]!.id, heavies[1]!.id]);
     expect(fourth).toBeNull();
+  });
+
+  it('lets a site-zip archive run beside a video without taking a second archive slot', async () => {
+    await db.update(jobs).set({ status: 'cancelled', finishedAt: new Date().toISOString() }).where(inArray(jobs.status, ['queued', 'running']));
+    const rows = await Promise.all(Array.from({ length: 5 }, () => makeSubmission(db)));
+    const light = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[0]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const archive1 = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[1]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { archive: true },
+      createdBy: creator.id,
+    });
+    const heavy = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[2]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { heavy: true },
+      createdBy: creator.id,
+    });
+    const archive2 = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[3]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { archive: true },
+      createdBy: creator.id,
+    });
+    const heavy2 = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[4]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { heavy: true },
+      createdBy: creator.id,
+    });
+    const claimed: string[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      const row = await claimNext(['golden_autorate', 'stability_run']);
+      if (!row) break;
+      claimed.push(row.job.id);
+    }
+    expect(claimed).toEqual(expect.arrayContaining([light.id, heavy.id, heavy2.id, archive1.id]));
+    expect(claimed).not.toContain(archive2.id);
   });
 
   it('fails a crashed running job that has used every attempt so it stops blocking the task', async () => {
