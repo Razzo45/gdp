@@ -139,6 +139,25 @@ ${FFMPEG_LEVELS}`);
     expect(levels?.loudnessRangeLu).toBe(5.2);
   });
 
+  it('does not treat a killed ffmpeg log as 0.0 LUFS and no silence', () => {
+    const levels = parseAudioLevels(`
+Duration: 00:02:00.90, start: 0.000000, bitrate: 1411 kb/s
+[Parsed_ebur128_1 @ 0x2] t: 0.0999792  TARGET:-23 LUFS    M:-23.0 S:-23.0     I: 0.0 LUFS       LRA:   0.0 LU
+`);
+    expect(levels).toBeNull();
+    const facts = `FILE FACTS (measured from the file, authoritative for format statements):
+Duration: 120.9 s
+Audio levels (measured over the whole file):
+Integrated loudness: 0.0 LUFS
+Loudness range: 0.0 LU
+Leading silence: 0.00 s
+Trailing silence: 0.00 s
+Internal silence gaps: 0
+Longest silence: 0.00 s`;
+    expect(factsCurrent(facts)).toBe(false);
+    expect(factsFullyMeasured(facts)).toBe(false);
+  });
+
   it('reads clipping, silence gaps, stereo correlation, DC offset and bit depth', () => {
     const levels = parseAudioLevels(`
 Duration: 00:00:10.00, start: 0.000000, bitrate: 2304 kb/s

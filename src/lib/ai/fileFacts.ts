@@ -45,7 +45,7 @@ export async function describeFileFactsAsync(input: FileFactInput): Promise<stri
 
 /** False when a probe failed, so the facts must not be cached for re-runs. */
 export function factsFullyMeasured(facts: string): boolean {
-  return !facts.includes(AV_UNMEASURED);
+  return !facts.includes(AV_UNMEASURED) && factsCurrent(facts);
 }
 
 export interface AudioLevels {
@@ -116,14 +116,20 @@ export function parseAudioLevels(log: string): AudioLevels | null {
   const leftRms = left?.rms ?? null;
   const rightRms = right?.rms ?? null;
   const channelDifferenceDb = leftRms !== null && rightRms !== null ? round1(Math.abs(leftRms - rightRms)) : null;
-  const summary = log.slice(Math.max(0, log.lastIndexOf('Summary:')));
-  const integratedLufs = firstNumber(summary, /\bI:\s+(-?\d+(?:\.\d+)?)\s+LUFS\b/);
-  const loudnessRangeLu = firstNumber(summary, /\bLRA:\s+(-?\d+(?:\.\d+)?)\s+LU\b/);
+  const summaryAt = log.lastIndexOf('Summary:');
+  const summary = summaryAt >= 0 ? log.slice(summaryAt) : '';
+  const integratedLufs = summary ? firstNumber(summary, /\bI:\s+(-?\d+(?:\.\d+)?)\s+LUFS\b/) : null;
+  const loudnessRangeLu = summary ? firstNumber(summary, /\bLRA:\s+(-?\d+(?:\.\d+)?)\s+LU\b/) : null;
   const trueBlock = log.match(/True peak:[\s\S]*?Peak:\s+(-?\d+(?:\.\d+)?)\s+dBFS/i);
   const truePeakDbfs = trueBlock ? round1(Number(trueBlock[1])) : null;
   const peakDbfs = overallPeak ?? left?.peak ?? null;
   const rmsDbfs = overallRms ?? left?.rms ?? null;
-  const silence = parseSilence(log);
+  const probedSilence = parseSilence(log);
+  const chainFinished = peakDbfs !== null || rmsDbfs !== null;
+  const silence =
+    chainFinished && probedSilence.leadingSilenceSec === null && parseDurationSec(log) !== null
+      ? { leadingSilenceSec: 0, trailingSilenceSec: 0, internalSilenceGaps: 0, longestSilenceSec: 0 }
+      : probedSilence;
   const stereo = parseStereo(log);
   if (
     peakDbfs === null &&
@@ -159,6 +165,7 @@ const LEVELS_HEADER = 'Audio levels (measured over the whole file):';
 
 /** Facts cached before levels covered the whole file reported only the last frame's peak/RMS and the first frame's loudness. */
 export function factsCurrent(facts: string): boolean {
+  if (/Integrated loudness: 0\.0 LUFS/.test(facts) && !/^Peak level: /m.test(facts)) return false;
   return facts.includes(LEVELS_HEADER) || !/^(Peak level|RMS level|Integrated loudness): /m.test(facts);
 }
 
@@ -257,14 +264,7 @@ function parseSilence(log: string): Pick<
   if (pendingStart !== null) {
     gaps.push({ start: pendingStart, end: durationSec, duration: durationSec - pendingStart });
   }
-  if (gaps.length === 0) {
-    return {
-      leadingSilenceSec: 0,
-      trailingSilenceSec: 0,
-      internalSilenceGaps: 0,
-      longestSilenceSec: 0,
-    };
-  }
+  if (gaps.length === 0) return empty;
   const edge = 0.05;
   const leading = gaps.find((gap) => gap.start <= edge);
   const trailing = [...gaps].reverse().find((gap) => gap.end >= durationSec - edge);
