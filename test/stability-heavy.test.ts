@@ -122,7 +122,7 @@ describe('heavy Stability does not overlap grade passes', () => {
   });
   afterEach(async () => ctx.close());
 
-  async function seedJob(heavy: boolean) {
+  async function seedJob(flag: { archive?: true; heavy?: true } | Record<string, never> = {}) {
     const creator = await makeUser(ctx.db, 'c-heavy@example.com', ['rubric_creator']);
     const submission = await makeSubmission(ctx.db);
     const [rubric] = await ctx.db.insert(rubrics).values({ submissionId: submission.id, version: 1, createdBy: creator.id }).returning();
@@ -140,7 +140,7 @@ describe('heavy Stability does not overlap grade passes', () => {
         submissionId: submission.id,
         rubricId: rubric!.id,
         requestId: crypto.randomUUID(),
-        payload: { groupId: crypto.randomUUID(), ...(heavy ? { archive: true } : {}) },
+        payload: { groupId: crypto.randomUUID(), ...flag },
         status: 'running',
         createdBy: creator.id,
         deadlineAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -149,8 +149,8 @@ describe('heavy Stability does not overlap grade passes', () => {
     return job!;
   }
 
-  it('runs the three heavy passes one at a time', async () => {
-    const job = await seedJob(true);
+  it('runs the three archive passes one at a time', async () => {
+    const job = await seedJob({ archive: true });
     const result = await runStability({
       job,
       leaseToken: 'lease',
@@ -161,8 +161,19 @@ describe('heavy Stability does not overlap grade passes', () => {
     expect(result.scores).toHaveLength(3);
   });
 
+  it('still overlaps video heavy passes, so one-seat calls can share the key', async () => {
+    const job = await seedJob({ heavy: true });
+    await runStability({
+      job,
+      leaseToken: 'lease',
+      tick: async () => undefined,
+      signal: new AbortController().signal,
+    });
+    expect(gradeGate.max).toBeGreaterThan(1);
+  });
+
   it('still overlaps the three light passes, so the detector can see a crash-shaped run', async () => {
-    const job = await seedJob(false);
+    const job = await seedJob();
     await runStability({
       job,
       leaseToken: 'lease',

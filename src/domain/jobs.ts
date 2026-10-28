@@ -36,9 +36,9 @@ export function isArchiveJobPayload(payload: Record<string, unknown> | null | un
   return payload?.['archive'] === true;
 }
 
-/** Three parallel full-site grades of a staged zip OOM the embedded worker. Video stays serial for the same reason. */
+/** Three parallel full-site zip grades OOM the worker. Video/audio keep overlapping one-seat calls. */
 export function stabilityGradesInParallel(payload: Record<string, unknown> | null | undefined): boolean {
-  return !isHeavyJobPayload(payload) && !isArchiveJobPayload(payload);
+  return !isArchiveJobPayload(payload);
 }
 
 export function archiveMembersStayStaged(archiveBytes: number): boolean {

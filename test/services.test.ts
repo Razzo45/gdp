@@ -1141,6 +1141,42 @@ describe('job queue', () => {
     expect(claimed).toEqual([smallGolden.id, stability.id, generate.id, helper.id]);
   });
 
+  it('claims a site-zip archive only after Golden, generate, and helper, so zip cannot starve the queue', async () => {
+    await db.update(jobs).set({ status: 'cancelled', finishedAt: new Date().toISOString() }).where(inArray(jobs.status, ['queued', 'running']));
+    const rows = await Promise.all(Array.from({ length: 3 }, () => makeSubmission(db)));
+    const archive = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[0]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { archive: true },
+      createdBy: creator.id,
+    });
+    const generate = await enqueue(db, {
+      kind: 'rubric_generate',
+      submissionId: rows[1]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const helper = await enqueue(db, {
+      kind: 'rubric_helper',
+      submissionId: rows[2]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: {},
+      createdBy: creator.id,
+    });
+    const claimed: string[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const row = await claimNext(JOB_KINDS);
+      if (!row) break;
+      claimed.push(row.job.id);
+    }
+    expect(claimed).toEqual([generate.id, helper.id, archive.id]);
+  });
+
   it('runs one helper job at a time so it cannot fill the worker', async () => {
     await db.execute(sql`update app.jobs set status = 'cancelled' where status in ('queued', 'running')`);
     const rows = await Promise.all(Array.from({ length: 3 }, () => makeSubmission(db)));
