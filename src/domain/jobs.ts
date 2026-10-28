@@ -7,12 +7,6 @@ export const STATEMENT_LANE_MAX = 8;
 export const HEAVY_FILE_BYTES = 100 * 1024 * 1024;
 /** Site zips above this unpack into many HTML/CSS/JS parts; those members go to the Files API instead of the generate body. */
 export const ARCHIVE_STAGE_BYTES = 8 * 1024 * 1024;
-/**
- * Staged archive Stability grades this many seats per Gemini call.
- * 250 seats × 3 serial passes / 5 = 150 calls; at ~6s that is about 15 minutes.
- * Default AUTORATE_BATCH_SIZE stays 1 for light work.
- */
-export const ARCHIVE_STABILITY_BATCH = 5;
 /** Other users keep the remaining worker slots while a video/100 MB+ file runs. */
 export const HEAVY_RUNNING_MAX = 2;
 /** One site-zip unpack/grade at a time. Does not take a video heavy slot. */
@@ -51,9 +45,8 @@ export function archiveMembersStayStaged(archiveBytes: number): boolean {
   return archiveBytes >= ARCHIVE_STAGE_BYTES;
 }
 
-/** Override for gradeStatements; undefined means the process default. */
-export function stabilityGradeBatchSize(payload: Record<string, unknown> | null | undefined): number | undefined {
-  if (isArchiveJobPayload(payload) || isHeavyJobPayload(payload)) return ARCHIVE_STABILITY_BATCH;
+/** No Stability lane batches seats. Packing seats in one call bleeds verdicts. */
+export function stabilityGradeBatchSize(_payload: Record<string, unknown> | null | undefined): number | undefined {
   return undefined;
 }
 

@@ -93,7 +93,7 @@ describe('b290-sized zip Stability', () => {
     expect(isArchiveFile(B290_ZIP)).toBe(true);
     expect(isHeavyMedia(B290_ZIP)).toBe(false);
     expect(stabilityGradesInParallel({ archive: true })).toBe(false);
-    expect(stabilityGradeCalls(250, { archive: true })).toBe(150);
+    expect(stabilityGradeCalls(50, { archive: true })).toBe(150);
     expect(B290_ZIP.size).toBeGreaterThan(ARCHIVE_STAGE_BYTES);
   });
 

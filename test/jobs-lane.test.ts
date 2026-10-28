@@ -57,19 +57,19 @@ describe('heavy media jobs', () => {
     expect(isArchiveJobPayload({ heavy: true })).toBe(false);
   });
 
-  it('stages fat zip members, grades archive Stability serially, and batches seats so 250 statements take about 15 minutes', () => {
+  it('stages fat zip members and grades archive Stability serially, one seat per call like video', () => {
     expect(archiveMembersStayStaged(100_899_604)).toBe(true);
     expect(archiveMembersStayStaged(8 * 1024 * 1024)).toBe(true);
     expect(archiveMembersStayStaged(200_000)).toBe(false);
     expect(stabilityGradesInParallel({ archive: true })).toBe(false);
     expect(stabilityGradesInParallel({ heavy: true })).toBe(false);
     expect(stabilityGradesInParallel({})).toBe(true);
-    expect(stabilityGradeBatchSize({ archive: true })).toBe(5);
+    expect(stabilityGradeBatchSize({ archive: true })).toBeUndefined();
+    expect(stabilityGradeBatchSize({ heavy: true })).toBeUndefined();
     expect(stabilityGradeBatchSize({})).toBeUndefined();
-    expect(stabilityGradeCalls(250, { archive: true })).toBe(150);
-    expect(stabilityGradeCalls(50, { archive: true })).toBe(30);
+    expect(stabilityGradeCalls(50, { archive: true })).toBe(150);
+    expect(stabilityGradeCalls(50, { heavy: true })).toBe(150);
     expect(stabilityGradeCalls(50, {})).toBe(150);
-    expect(stabilityGradesInParallel({ archive: true })).toBe(false);
   });
 });
 

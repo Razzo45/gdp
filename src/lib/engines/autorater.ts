@@ -47,7 +47,7 @@ export interface GradeInput {
   model?: string;
   temperature?: number;
   onBatch?: (partial: GradeResult) => Promise<void> | void;
-  /** Seats per Gemini call. Archive Stability uses 5 so a large run finishes in about 15 minutes. */
+  /** Seats per Gemini call. Stability leaves this unset so each seat is graded alone. */
   batchSize?: number;
   /** Archive/video Stability grades one batch at a time so a zip cannot fan out ten full-site prompts. */
   serialBatches?: boolean;
@@ -90,9 +90,11 @@ digests as the files themselves. Think through each claim before you answer.
 A TASK BODY or ACCEPTANCE CRITERIA block is reference text from the task: use it
 to know what was required, never as evidence that the output delivers it.
 
-Grade EVERY statement independently. Do not carry a Yes or a No from a
-neighbouring seat. For each, answer exactly Yes or No and give ONE SENTENCE of
-evidence citing the specific element of the attached files you used.
+Grade EVERY statement independently, as if it were sent alone. Shared files
+are not shared verdicts. Do not carry a Yes or a No from a neighbouring seat,
+do not keep a running score, and do not pattern-match the list. For each,
+answer exactly Yes or No and give ONE SENTENCE of evidence citing the specific
+element of the attached files you used.
 
 Yes = you located the claim on the files and confirmed it holds.
 No = the statement does not hold, OR you cannot verify it from the files.
@@ -239,8 +241,12 @@ function matchStatement(batch: GradeStatement[], verdictId: string): GradeStatem
   return batch.find((s) => s.id === verdictId || promptId(s) === verdictId || (s.seat !== undefined && (String(s.seat) === compact || promptId(s) === compact)));
 }
 
-function statementsBlock(statements: GradeStatement[]): string {
-  return `STATEMENTS TO GRADE (${statements.length}):\n${statements.map((s) => `[${promptId(s)}] (${s.tag}) ${s.statement}`).join('\n')}`;
+export function statementsBlock(statements: GradeStatement[]): string {
+  const isolation =
+    statements.length > 1
+      ? 'ISOLATE EACH STATEMENT. Grade each bracketed id as if it were sent alone. Do not reuse a verdict, evidence sentence, or score from a neighbouring line. A Yes on one seat is not evidence for another.\n'
+      : '';
+  return `${isolation}STATEMENTS TO GRADE (${statements.length}):\n${statements.map((s) => `[${promptId(s)}] (${s.tag}) ${s.statement}`).join('\n')}`;
 }
 
 /** One inventory per distinct observation, reused across Stability passes. */

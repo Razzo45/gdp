@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mediaResolutionFor } from '@/lib/ai/gemini';
-import { AUTORATE_THINKING_BUDGET, AUTORATER_SYSTEM, INVENTORY_UNAVAILABLE, inventoryPromptBlock } from '@/lib/engines/autorater';
+import { AUTORATE_THINKING_BUDGET, AUTORATER_SYSTEM, INVENTORY_UNAVAILABLE, inventoryPromptBlock, statementsBlock } from '@/lib/engines/autorater';
 
 describe('autorater policy', () => {
   it('grades the statement only — no Yes/No preference, no Golden score target', () => {
@@ -30,6 +30,19 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).toMatch(/slide still/i);
     expect(AUTORATER_SYSTEM).toMatch(/FILE FACTS/i);
     expect(AUTORATER_SYSTEM).toMatch(/not (change|the) (the )?file kind|still a (PPTX|PowerPoint)|do not answer .*(JPEG|jpeg).*(PPTX|pptx)/i);
+  });
+
+  it('grades each seat as if it travelled alone even when several share a call', () => {
+    expect(AUTORATER_SYSTEM).toMatch(/as if it were (the only statement|sent alone)/i);
+    expect(AUTORATER_SYSTEM).toMatch(/shared files\s+are not shared verdicts/i);
+    const together = statementsBlock([
+      { id: 'a', seat: 1, tag: 'Content - Semantics', statement: 'The home page lists opening hours.', scope: 'output', inputFileIds: [], outputFile: null },
+      { id: 'b', seat: 2, tag: 'Content - Semantics', statement: 'The about page names the bakery.', scope: 'output', inputFileIds: [], outputFile: null },
+    ]);
+    expect(together).toMatch(/\[s001\]/);
+    expect(together).toMatch(/\[s002\]/);
+    expect(together).toMatch(/ISOLATE EACH STATEMENT|as if it were sent alone/i);
+    expect(together).toMatch(/not (reuse|evidence for another)|neighbouring/i);
   });
 
   it('does not treat a failed inventory as a clean file', () => {
