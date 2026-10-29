@@ -36,9 +36,14 @@ export function isArchiveJobPayload(payload: Record<string, unknown> | null | un
   return payload?.['archive'] === true;
 }
 
-/** Three parallel full-site zip grades OOM the worker. Video/audio keep overlapping one-seat calls. */
+/** Three parallel full-site zip grades OOM the worker. Video/audio may overlap the three Stability passes. */
 export function stabilityGradesInParallel(payload: Record<string, unknown> | null | undefined): boolean {
   return !isArchiveJobPayload(payload);
+}
+
+/** Isolation is one seat per call. Never Promise.all a 50-seat gold or 150-check stab. */
+export function autorateSeatsInParallel(): boolean {
+  return false;
 }
 
 export function archiveMembersStayStaged(archiveBytes: number): boolean {

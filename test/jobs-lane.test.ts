@@ -8,6 +8,7 @@ import {
   isArchiveJobPayload,
   isHeavyJobPayload,
   isHeavyMedia,
+  autorateSeatsInParallel,
   isStatementLane,
   stabilityGradeBatchSize,
   stabilityGradeCalls,
@@ -57,7 +58,7 @@ describe('heavy media jobs', () => {
     expect(isArchiveJobPayload({ heavy: true })).toBe(false);
   });
 
-  it('stages fat zip members and serialises only archive passes; video still overlaps one-seat calls', () => {
+  it('stages fat zip members and serialises archive passes; seats never fan out in one Promise.all', () => {
     expect(archiveMembersStayStaged(100_899_604)).toBe(true);
     expect(archiveMembersStayStaged(8 * 1024 * 1024)).toBe(true);
     expect(archiveMembersStayStaged(200_000)).toBe(false);
@@ -70,6 +71,7 @@ describe('heavy media jobs', () => {
     expect(stabilityGradeCalls(50, { archive: true })).toBe(150);
     expect(stabilityGradeCalls(50, { heavy: true })).toBe(150);
     expect(stabilityGradeCalls(50, {})).toBe(150);
+    expect(autorateSeatsInParallel()).toBe(false);
   });
 });
 

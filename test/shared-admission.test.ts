@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { rows } from '@/db/rows';
 import type { Db } from '@/db/types';
 import { sharedAdmissionFailure, withSharedAdmission } from '@/lib/ai/sharedAdmission';
@@ -29,7 +29,20 @@ async function acquire(token: string, maxActive = 1, requestClass: 'interactive'
 
 const release = (token: string) => database.execute(sql`select app.release_gemini_admission(${token}::uuid)`);
 
+async function resetAdmission() {
+  await database.execute(sql`delete from app.gemini_admission_leases`);
+  await database.execute(sql`delete from app.gemini_admission_waiters`);
+  await database.execute(sql`
+    update app.gemini_admission_state
+    set cooldown_until = '-infinity', next_admit_at = '-infinity', updated_at = now()
+  `);
+}
+
 describe('shared Gemini admission', () => {
+  afterEach(async () => {
+    await resetAdmission();
+  });
+
   it('caps active leases across callers, then frees the slot', async () => {
     const first = crypto.randomUUID();
     const second = crypto.randomUUID();
@@ -92,5 +105,16 @@ describe('shared Gemini admission', () => {
       seen.push('ok');
     });
     expect(seen).toEqual(['ok']);
+  });
+
+  it('paces the next admit after a 429 so callers cannot dump together', async () => {
+    await database.execute(sql`select app.throttle_gemini_admission('inference', 1000)`);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const first = crypto.randomUUID();
+    const second = crypto.randomUUID();
+    expect(await acquire(first, 16)).toBe(true);
+    expect(await acquire(second, 16)).toBe(false);
+    await release(first);
+    expect(await acquire(second, 16)).toBe(false);
   });
 });

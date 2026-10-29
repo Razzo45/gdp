@@ -68,15 +68,17 @@ const wait = (ms: number, signal?: AbortSignal) =>
  * AIMD. This is the ceiling + 429 cooldown other replicas must see.
  */
 export async function withSharedAdmission<T>(
-  options: { lane: string; requestClass: RequestClass; signal?: AbortSignal },
+  options: { lane: string; requestClass: RequestClass; signal?: AbortSignal; maxActive?: number; intervalMs?: number },
   operation: () => Promise<T>,
 ): Promise<T> {
   if (disabled) return operation();
   const lane = sharedLane(options.lane);
   const e = env();
-  const maxActive = lane === 'files' ? e.GEMINI_FILES_CONCURRENCY : e.GEMINI_CONCURRENCY;
+  const ceiling = lane === 'files' ? e.GEMINI_FILES_CONCURRENCY : e.GEMINI_CONCURRENCY;
+  const maxActive = Math.max(1, Math.min(ceiling, options.maxActive ?? ceiling));
   const maxBackground = lane === 'files' ? maxActive : Math.max(1, maxActive - 1);
-  const leaseSeconds = lane === 'files' ? 180 : 75;
+  const intervalMs = Math.max(0, options.intervalMs ?? 0);
+  const leaseSeconds = 180;
   const token = crypto.randomUUID();
   let held = false;
   try {
@@ -91,7 +93,7 @@ export async function withSharedAdmission<T>(
           ${leaseSeconds},
           ${maxActive},
           ${maxBackground},
-          0
+          ${intervalMs}
         ) as ok
       `);
       if (disabled) return operation();

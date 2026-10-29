@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AdaptiveAdmission } from '@/lib/ai/admission';
+import { AdaptiveAdmission, PACE_AFTER_429_MS, sharedAdmissionLimits } from '@/lib/ai/admission';
 
 /** Deterministic clock + timers so cooldowns can be tested without waiting. */
 function harness(config: Partial<ConstructorParameters<typeof AdaptiveAdmission>[0]> = {}) {
@@ -273,5 +273,23 @@ describe('AdaptiveAdmission', () => {
     expect(admission.snapshot().filesActive).toBe(0);
     g.release();
     await inf;
+  });
+
+  it('hands the shared gate the reduced AIMD target and paces after a 429', () => {
+    const { admission } = harness({ initial: 32, floor: 16, ceiling: 96, filesCeiling: 8 });
+    expect(admission.limitsFor('gemini-3-flash').maxActive).toBe(32);
+    expect(admission.limitsFor('gemini-3-flash').intervalMs).toBe(0);
+    expect(admission.limitsFor('files').maxActive).toBe(8);
+    admission.onThrottle('gemini-3-flash', 8_000, 2_000);
+    const after = admission.limitsFor('gemini-3-flash');
+    expect(after.maxActive).toBe(16);
+    expect(after.intervalMs).toBe(PACE_AFTER_429_MS);
+    expect(sharedAdmissionLimits({
+      lane: 'gemini-3-flash',
+      target: 16,
+      filesTarget: 8,
+      recent429s: 2,
+      cooldownMsRemaining: 0,
+    })).toEqual({ maxActive: 16, intervalMs: PACE_AFTER_429_MS });
   });
 });

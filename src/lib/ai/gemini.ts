@@ -100,7 +100,8 @@ function ai(): GoogleGenAI {
 }
 
 async function admitted<T>(options: AdmissionOptions, operation: () => Promise<T>): Promise<T> {
-  return controller().use(() => withSharedAdmission(options, operation), options);
+  const limits = controller().limitsFor(options.lane);
+  return controller().use(() => withSharedAdmission({ ...options, ...limits }, operation), options);
 }
 
 function controller(): AdaptiveAdmission {

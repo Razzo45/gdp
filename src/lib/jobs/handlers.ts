@@ -7,7 +7,7 @@ import { statementHash } from '@/domain/fingerprint';
 import { scoreBreakdown, STABILITY_PASSES } from '@/domain/gates';
 import { acceptanceCriteriaText, applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
 import { analyzeDiscrimination } from '@/domain/discrimination';
-import { isStatementLane, stabilityGradeBatchSize, stabilityGradesInParallel } from '@/domain/jobs';
+import { autorateSeatsInParallel, isStatementLane, stabilityGradeBatchSize, stabilityGradesInParallel } from '@/domain/jobs';
 import { seatIndexById, tagStyleForGenerate, tagStyleOf } from '@/domain/rubric';
 import { guardLock, packTighten, screenDrafts, TIGHTEN_ROUNDS, tightenNeed, type LockDraft, type TightenReport, type TightenSeat, type VerifiedLock } from '@/domain/tighten';
 import { gradeStatements, inventoriesForObservations } from '@/lib/engines/autorater';
@@ -294,6 +294,7 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
     taskContext: gradeContext,
     taskBody,
     acceptanceCriteria: acceptanceOf(submission),
+    serialBatches: !autorateSeatsInParallel(),
     onBatch: persist,
   });
   await persist(result);
@@ -363,7 +364,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       acceptanceCriteria,
       inventoryByKey,
       batchSize: stabilityGradeBatchSize(job.payload),
-      serialBatches: !stabilityGradesInParallel(job.payload),
+      serialBatches: !autorateSeatsInParallel(),
       onBatch: async (partial) => {
         graded[passIndex] = Object.keys(partial.answers).length + Object.keys(partial.errors).length;
         const total = Object.values(graded).reduce((a, b) => a + b, 0);

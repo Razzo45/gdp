@@ -95,6 +95,24 @@ export interface AdmissionSnapshot {
 
 const FILES = 'files';
 
+/** After a 429, shared admission spaces new leases so replicas cannot dump together. */
+export const PACE_AFTER_429_MS = 2_000;
+
+export function sharedAdmissionLimits(input: {
+  lane: string;
+  target: number;
+  filesTarget: number;
+  recent429s: number;
+  cooldownMsRemaining: number;
+}): { maxActive: number; intervalMs: number } {
+  const files = input.lane === FILES;
+  const hot = input.recent429s > 0 || input.cooldownMsRemaining > 0;
+  return {
+    maxActive: Math.max(1, files ? input.filesTarget : input.target),
+    intervalMs: hot ? PACE_AFTER_429_MS : 0,
+  };
+}
+
 export class AdaptiveAdmission {
   private readonly cfg: Required<Omit<AdmissionConfig, 'now' | 'setTimer' | 'clearTimer'>>;
   private readonly now: () => number;
@@ -281,6 +299,18 @@ export class AdaptiveAdmission {
       lanes,
       recent429s: this.throttleTimes.filter((t) => now - t <= 5 * 60_000).length,
     };
+  }
+
+  /** Cap and spacing the shared Postgres gate should use for this process. */
+  limitsFor(lane: string): { maxActive: number; intervalMs: number } {
+    const snap = this.snapshot();
+    return sharedAdmissionLimits({
+      lane,
+      target: snap.target,
+      filesTarget: this.laneTarget(FILES),
+      recent429s: snap.recent429s,
+      cooldownMsRemaining: lane === FILES ? Math.max(0, this.filesCooldownUntil - this.now()) : snap.cooldownMsRemaining,
+    });
   }
 
   /* ─────────────────────────────────────────── internals ── */
