@@ -275,21 +275,26 @@ describe('AdaptiveAdmission', () => {
     await inf;
   });
 
-  it('hands the shared gate the reduced AIMD target and paces after a 429', () => {
-    const { admission } = harness({ initial: 32, floor: 16, ceiling: 96, filesCeiling: 8 });
-    expect(admission.limitsFor('gemini-3-flash').maxActive).toBe(32);
-    expect(admission.limitsFor('gemini-3-flash').intervalMs).toBe(0);
+  it('paces only during a 429 cooldown, then overlaps again at the recovered target', () => {
+    const { admission, advance } = harness({ initial: 32, floor: 16, ceiling: 96, filesCeiling: 8, increaseAfter: 3 });
+    expect(admission.limitsFor('gemini-3-flash')).toEqual({ maxActive: 32, intervalMs: 0 });
     expect(admission.limitsFor('files').maxActive).toBe(8);
     admission.onThrottle('gemini-3-flash', 8_000, 2_000);
-    const after = admission.limitsFor('gemini-3-flash');
-    expect(after.maxActive).toBe(16);
-    expect(after.intervalMs).toBe(PACE_AFTER_429_MS);
+    const hot = admission.limitsFor('gemini-3-flash');
+    expect(hot.maxActive).toBe(16);
+    expect(hot.intervalMs).toBe(PACE_AFTER_429_MS);
+    advance(8_010);
+    const cooling = admission.limitsFor('gemini-3-flash');
+    expect(cooling.maxActive).toBe(16);
+    expect(cooling.intervalMs).toBe(0);
+    for (let i = 0; i < 3; i += 1) admission.onSuccess('gemini-3-flash', 400);
+    expect(admission.limitsFor('gemini-3-flash')).toEqual({ maxActive: 17, intervalMs: 0 });
     expect(sharedAdmissionLimits({
       lane: 'gemini-3-flash',
       target: 16,
       filesTarget: 8,
       recent429s: 2,
       cooldownMsRemaining: 0,
-    })).toEqual({ maxActive: 16, intervalMs: PACE_AFTER_429_MS });
+    })).toEqual({ maxActive: 16, intervalMs: 0 });
   });
 });

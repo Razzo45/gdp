@@ -107,14 +107,14 @@ describe('shared Gemini admission', () => {
     expect(seen).toEqual(['ok']);
   });
 
-  it('paces the next admit after a 429 so callers cannot dump together', async () => {
-    await database.execute(sql`select app.throttle_gemini_admission('inference', 1000)`);
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
+  it('blocks admits during a 429 cooldown and overlaps again once it lifts', async () => {
     const first = crypto.randomUUID();
     const second = crypto.randomUUID();
+    await database.execute(sql`select app.throttle_gemini_admission('inference', 1000)`);
+    expect(await acquire(first, 16)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
     expect(await acquire(first, 16)).toBe(true);
-    expect(await acquire(second, 16)).toBe(false);
-    await release(first);
-    expect(await acquire(second, 16)).toBe(false);
+    expect(await acquire(second, 16)).toBe(true);
+    await Promise.all([release(first), release(second)]);
   });
 });

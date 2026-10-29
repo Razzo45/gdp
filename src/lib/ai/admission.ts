@@ -95,7 +95,7 @@ export interface AdmissionSnapshot {
 
 const FILES = 'files';
 
-/** After a 429, shared admission spaces new leases so replicas cannot dump together. */
+/** While a 429 cooldown is live, space new leases. After it lifts, overlap again. */
 export const PACE_AFTER_429_MS = 2_000;
 
 export function sharedAdmissionLimits(input: {
@@ -106,10 +106,9 @@ export function sharedAdmissionLimits(input: {
   cooldownMsRemaining: number;
 }): { maxActive: number; intervalMs: number } {
   const files = input.lane === FILES;
-  const hot = input.recent429s > 0 || input.cooldownMsRemaining > 0;
   return {
     maxActive: Math.max(1, files ? input.filesTarget : input.target),
-    intervalMs: hot ? PACE_AFTER_429_MS : 0,
+    intervalMs: input.cooldownMsRemaining > 0 ? PACE_AFTER_429_MS : 0,
   };
 }
 
