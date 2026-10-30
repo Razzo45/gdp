@@ -6,6 +6,7 @@ import {
   conflictingJob,
   isArchiveFile,
   isArchiveJobPayload,
+  isFatJobPayload,
   isHeavyJobPayload,
   isHeavyMedia,
   isStatementLane,
@@ -55,6 +56,9 @@ describe('heavy media jobs', () => {
     expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 100 * 1024 * 1024 })).toBe(true);
     expect(isArchiveJobPayload({ archive: true })).toBe(true);
     expect(isArchiveJobPayload({ heavy: true })).toBe(false);
+    expect(isFatJobPayload({ archive: true })).toBe(true);
+    expect(isFatJobPayload({ heavy: true })).toBe(true);
+    expect(isFatJobPayload({})).toBe(false);
   });
 
   it('stages fat zip members and serialises only archive passes; video still overlaps one-seat calls', () => {

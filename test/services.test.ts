@@ -1013,7 +1013,7 @@ describe('job queue', () => {
     expect(fourth).toBeNull();
   });
 
-  it('lets a site-zip archive run beside a video without taking a second archive slot', async () => {
+  it('counts a site zip toward the same two fat slots as video', async () => {
     await db.update(jobs).set({ status: 'cancelled', finishedAt: new Date().toISOString() }).where(inArray(jobs.status, ['queued', 'running']));
     const rows = await Promise.all(Array.from({ length: 5 }, () => makeSubmission(db)));
     const light = await enqueue(db, {
@@ -1062,7 +1062,45 @@ describe('job queue', () => {
       if (!row) break;
       claimed.push(row.job.id);
     }
-    expect(claimed).toEqual(expect.arrayContaining([light.id, heavy.id, heavy2.id, archive1.id]));
+    expect(claimed).toEqual([light.id, heavy.id, heavy2.id]);
+    expect(claimed).not.toContain(archive1.id);
+    expect(claimed).not.toContain(archive2.id);
+  });
+
+  it('lets one video and one zip share the two fat slots, then holds the next zip', async () => {
+    await db.update(jobs).set({ status: 'cancelled', finishedAt: new Date().toISOString() }).where(inArray(jobs.status, ['queued', 'running']));
+    const rows = await Promise.all(Array.from({ length: 3 }, () => makeSubmission(db)));
+    const heavy = await enqueue(db, {
+      kind: 'golden_autorate',
+      submissionId: rows[0]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { heavy: true },
+      createdBy: creator.id,
+    });
+    const archive1 = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[1]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { archive: true },
+      createdBy: creator.id,
+    });
+    const archive2 = await enqueue(db, {
+      kind: 'stability_run',
+      submissionId: rows[2]!.id,
+      rubricId: null,
+      requestId: crypto.randomUUID(),
+      payload: { archive: true },
+      createdBy: creator.id,
+    });
+    const claimed: string[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const row = await claimNext(['golden_autorate', 'stability_run']);
+      if (!row) break;
+      claimed.push(row.job.id);
+    }
+    expect(claimed).toEqual([heavy.id, archive1.id]);
     expect(claimed).not.toContain(archive2.id);
   });
 

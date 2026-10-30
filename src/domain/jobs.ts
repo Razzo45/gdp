@@ -7,10 +7,8 @@ export const STATEMENT_LANE_MAX = 8;
 export const HEAVY_FILE_BYTES = 100 * 1024 * 1024;
 /** Site zips above this unpack into many HTML/CSS/JS parts; those members go to the Files API instead of the generate body. */
 export const ARCHIVE_STAGE_BYTES = 8 * 1024 * 1024;
-/** Other users keep the remaining worker slots while a video/100 MB+ file runs. */
+/** Video and site-zip share this cap. Light jobs keep the remaining worker slots. */
 export const HEAVY_RUNNING_MAX = 2;
-/** One site-zip unpack/grade at a time. Does not take a video heavy slot. */
-export const ARCHIVE_RUNNING_MAX = 1;
 /** "Get under 50%" runs for many minutes; the rest of the worker stays free for everyone else. */
 export const HELPER_RUNNING_MAX = 1;
 
@@ -34,6 +32,10 @@ export function isHeavyJobPayload(payload: Record<string, unknown> | null | unde
 
 export function isArchiveJobPayload(payload: Record<string, unknown> | null | undefined): boolean {
   return payload?.['archive'] === true;
+}
+
+export function isFatJobPayload(payload: Record<string, unknown> | null | undefined): boolean {
+  return isHeavyJobPayload(payload) || isArchiveJobPayload(payload);
 }
 
 /** Three parallel full-site zip grades OOM the worker. Video/audio keep overlapping one-seat calls. */

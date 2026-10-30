@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { jobs, type Job, type JobKind } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { ARCHIVE_RUNNING_MAX, conflictingJob, HEAVY_RUNNING_MAX, HELPER_RUNNING_MAX } from '@/domain/jobs';
+import { conflictingJob, HEAVY_RUNNING_MAX, HELPER_RUNNING_MAX } from '@/domain/jobs';
 import { pruneFinishedJobs } from '@/lib/services/retention';
 export { conflictingJob };
 
@@ -78,24 +78,20 @@ export async function claimNext(kinds: readonly JobKind[]): Promise<{ job: Job; 
             or(eq(jobs.status, 'queued'), and(eq(jobs.status, 'running'), or(isNull(jobs.leaseUntil), lt(jobs.leaseUntil, now)))),
             lt(jobs.attempts, jobs.maxAttempts),
             sql`(
-              coalesce((${jobs.payload}->>'heavy')::boolean, false) = false
+              (
+                coalesce((${jobs.payload}->>'heavy')::boolean, false) = false
+                and coalesce((${jobs.payload}->>'archive')::boolean, false) = false
+              )
               or (
                 select count(*)::int from app.jobs rh
                 where rh.status = 'running'
                   and rh.lease_until is not null
                   and rh.lease_until >= ${now}::timestamptz
-                  and coalesce((rh.payload->>'heavy')::boolean, false)
+                  and (
+                    coalesce((rh.payload->>'heavy')::boolean, false)
+                    or coalesce((rh.payload->>'archive')::boolean, false)
+                  )
               ) < ${HEAVY_RUNNING_MAX}
-            )`,
-            sql`(
-              coalesce((${jobs.payload}->>'archive')::boolean, false) = false
-              or (
-                select count(*)::int from app.jobs rh
-                where rh.status = 'running'
-                  and rh.lease_until is not null
-                  and rh.lease_until >= ${now}::timestamptz
-                  and coalesce((rh.payload->>'archive')::boolean, false)
-              ) < ${ARCHIVE_RUNNING_MAX}
             )`,
             sql`(
               ${jobs.kind} <> 'rubric_helper'
