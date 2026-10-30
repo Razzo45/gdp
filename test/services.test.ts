@@ -673,7 +673,7 @@ describe('review flow', () => {
     expect(workStateOf(after)).toBe('handoff');
   });
 
-  it('clears Stability acceptance when a seat is reworded so the run can be started again after a platform return', async () => {
+  it('starts Stability on a Platform returned task even when the last result was accepted', async () => {
     process.env['DATABASE_URL'] ??= 'postgres://test@localhost/test';
     process.env['GEMINI_API_KEY'] ??= 'test-key';
     process.env['AUTH_MODE'] ??= 'local';
@@ -703,19 +703,11 @@ describe('review flow', () => {
     );
     await db.insert(stabilityAcceptances).values({ rubricId: rubric!.id, groupId, acceptedBy: creator.id, scores: [26, 26, 26], spread: 0, basis: {} });
 
-    // Catalog bounce: Platform returned with the accepted Stability still on file.
-    await db.update(submissions).set({ stage: 'rubric', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, s.id));
     await expect(startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() })).rejects.toThrow(/accepted/i);
 
-    const seat = statements[0]!;
-    const fixture = seatedRubricInputs().find((row) => row.statement === seat.statement)!;
-    await saveStatements(creator, s.id, {
-      revision: (await currentRubric(db, s.id))!.revision,
-      upserts: [{ ...fixture, id: seat.id, statement: `${seat.statement} Fixed for the bounce.` }],
-      deletes: [],
-    });
-    expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
+    await db.update(submissions).set({ stage: 'rubric', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, s.id));
     await startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() });
+    expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
   });
 
   it('marks a zip Stability run as archive, not heavy', async () => {

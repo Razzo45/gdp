@@ -185,8 +185,9 @@ export function canConfirmStabilityPassFrom(status: string | null): boolean {
   return status === null || status === 'ready_for_review' || status === 'bounced';
 }
 
-/** After accept, another run would replace the handoff scores. Reopen before then. */
-export function stabilityRerunAllowed(input: { acceptedAt: string | null }): boolean {
+/** After accept, another run would replace the handoff scores. Reopen before then. A Catalog return is that reopen. */
+export function stabilityRerunAllowed(input: { acceptedAt: string | null; platformReturned?: boolean }): boolean {
+  if (input.platformReturned) return true;
   return input.acceptedAt == null;
 }
 

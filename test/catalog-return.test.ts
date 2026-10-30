@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { submissionEvents, submissions, watchedProjects } from '@/db/schema';
+import { rubrics, stabilityAcceptances, submissionEvents, submissions, watchedProjects } from '@/db/schema';
 import { classifyCatalogListState } from '@/domain/catalogListState';
 import {
   catalogNoteFromPayload,
@@ -14,7 +14,8 @@ import {
 import { workStateOf } from '@/domain/workState';
 import type { Actor } from '@/lib/auth/permissions';
 import { ServiceError } from '@/lib/services/errors';
-import { acceptCatalogReturn, dismissCatalogReturn, listPendingCatalogReturns } from '@/lib/services/catalogReturn';
+import { acceptCatalogReturn, dismissCatalogReturn, listPendingCatalogReturns, openReturnedWork } from '@/lib/services/catalogReturn';
+import { reopenRubricFromStability } from '@/lib/services/stability';
 import { listSubmissions, noteCatalogReturnIfNeeded } from '@/lib/services/submissions';
 import { submissionView } from '@/lib/services/view';
 import { makeSubmission, makeUser, testDb } from './helpers/db';
@@ -98,10 +99,29 @@ describe('shouldEnqueueCatalogReturn', () => {
     ).toBe(false);
   });
 
-  it('does not enqueue the same Catalog status twice, whether pending, applied, or dismissed', () => {
+  it('does not enqueue the same Catalog status twice while that return is still the open one', () => {
     expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'pending' } })).toBe(false);
-    expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'applied' } })).toBe(false);
     expect(shouldEnqueueCatalogReturn({ ...returned, existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'dismissed' } })).toBe(false);
+    expect(
+      shouldEnqueueCatalogReturn({
+        stage: 'rubric',
+        handoffStatus: 'bounced',
+        catalogLane: 'platform_return',
+        catalogStatusId: WORK,
+        existing: { statusId: WORK, statusName: null, trigger: 'revise', note: null, outcome: 'applied' },
+      }),
+    ).toBe(false);
+  });
+
+  it('enqueues again when a submitted task is returned to the same status it was already returned to', () => {
+    // d971d0a8: applied return to E, resubmitted, Catalog moved H → E again.
+    expect(
+      shouldEnqueueCatalogReturn({
+        ...returned,
+        pushedAt: '2026-10-27T10:00:05.911Z',
+        existing: { statusId: WORK, statusName: 'In progress', trigger: 'revise', note: 'Older feedback.', outcome: 'applied' },
+      }),
+    ).toBe(true);
   });
 
   it('does not bounce a task we just pushed when Catalog still reads as inbound K', () => {
@@ -375,6 +395,37 @@ describe('Catalog return reconciliation', () => {
     });
   }
 
+  it('reopens a resubmitted task returned to the same status and clears the accepted Stability', async () => {
+    const row = await submittedReturn();
+    const [rubric] = await db.insert(rubrics).values({ submissionId: row.id, version: 1, isCurrent: true, createdBy: creator.id }).returning();
+    await db.insert(stabilityAcceptances).values({
+      rubricId: rubric!.id,
+      groupId: crypto.randomUUID(),
+      acceptedBy: creator.id,
+      scores: [30, 30, 30],
+      spread: 0,
+      basis: {},
+    });
+    await db.update(submissions).set({
+      catalogReturn: { statusId: WORK, statusName: 'In progress', trigger: 'revise', note: 'Older feedback.', outcome: 'applied' },
+    }).where(eq(submissions.id, row.id));
+    const stored = (await db.select().from(submissions).where(eq(submissions.id, row.id)))[0]!;
+    const noted = await noteCatalogReturnIfNeeded(db, stored, null);
+    expect(workStateOf(noted)).toBe('platform_returned');
+    expect(noted.stage).toBe('rubric');
+    expect(noted.pushedAt).toBeNull();
+    expect(noted.catalogReturn).toMatchObject({
+      statusId: WORK,
+      note: 'Tighten the fleet hours table.',
+      outcome: 'applied',
+    });
+    expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
+    const again = await noteCatalogReturnIfNeeded(db, noted, null);
+    expect(again.handoffStatus).toBe('bounced');
+    const events = await db.select().from(submissionEvents).where(eq(submissionEvents.submissionId, row.id));
+    expect(events.filter((event) => event.action === 'catalog_returned')).toHaveLength(1);
+  });
+
   it('lands a Catalog return on Platform returned, keeps seats, and stores the why-note', async () => {
     const row = await submittedReturn();
     const noted = await noteCatalogReturnIfNeeded(db, row, null);
@@ -478,6 +529,48 @@ describe('Catalog return reconciliation', () => {
     expect(listed.find((item) => item.id === row.id)?.workState).toBe('platform_returned');
     expect((await listPendingCatalogReturns(pm)).map((item) => item.id)).not.toContain(row.id);
     await expectStatus(acceptCatalogReturn(pm, row.id), 409);
+  });
+
+  it('opens the rubric or Stability on a Platform returned task and keeps the Catalog bounce', async () => {
+    const row = await submittedReturn();
+    await db.update(submissions).set({ stage: 'handoff', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, row.id));
+    const [rubric] = await db.insert(rubrics).values({ submissionId: row.id, version: 1, isCurrent: true, createdBy: creator.id }).returning();
+    await db.insert(stabilityAcceptances).values({
+      rubricId: rubric!.id,
+      groupId: crypto.randomUUID(),
+      acceptedBy: creator.id,
+      scores: [30, 30, 30],
+      spread: 0,
+      basis: {},
+    });
+    await expectStatus(openReturnedWork(reviewer, row.id, 'rubric'), 403);
+    const rubricOpen = await openReturnedWork(creator, row.id, 'rubric');
+    expect(rubricOpen.stage).toBe('rubric');
+    expect(rubricOpen.handoffStatus).toBe('bounced');
+    expect(workStateOf(rubricOpen)).toBe('platform_returned');
+    const stabilityOpen = await openReturnedWork(creator, row.id, 'stability');
+    expect(stabilityOpen.stage).toBe('stability');
+    expect(stabilityOpen.handoffStatus).toBe('bounced');
+    expect(workStateOf(stabilityOpen)).toBe('platform_returned');
+    expect(await db.select().from(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric!.id))).toEqual([]);
+    const back = await openReturnedWork(pm, row.id, 'rubric');
+    expect(back.stage).toBe('rubric');
+    expect(back.handoffStatus).toBe('bounced');
+  });
+
+  it('refuses to open the rubric on a task that is still submitted', async () => {
+    const row = await submittedReturn();
+    await expectStatus(openReturnedWork(creator, row.id, 'rubric'), 409);
+  });
+
+  it('reopening the rubric from Stability on a Platform returned task keeps the Catalog bounce', async () => {
+    const row = await submittedReturn();
+    await db.update(submissions).set({ stage: 'stability', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, row.id));
+    await reopenRubricFromStability(creator, row.id, 'Fix the seats Catalog flagged.');
+    const after = (await db.select().from(submissions).where(eq(submissions.id, row.id)))[0]!;
+    expect(after.stage).toBe('rubric');
+    expect(after.handoffStatus).toBe('bounced');
+    expect(workStateOf(after)).toBe('platform_returned');
   });
 
   it('dismisses a return and leaves the task submitted', async () => {

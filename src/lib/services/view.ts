@@ -46,6 +46,8 @@ export interface SubmissionView {
     lens: TaskLens;
     editRubric: boolean;
     holdsRubricSeat: boolean;
+    openRubric: boolean;
+    openStability: boolean;
     runStability: boolean;
     runGolden: boolean;
     review: boolean;
@@ -202,6 +204,8 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       lens,
       editRubric: holdsRubricSeat(actor, submission) && submission.stage === 'rubric',
       holdsRubricSeat: holdsRubricSeat(actor, submission),
+      openRubric: holdsRubricSeat(actor, submission) && submission.handoffStatus === 'bounced' && submission.stage !== 'done' && submission.stage !== 'rubric',
+      openStability: holdsRubricSeat(actor, submission) && submission.handoffStatus === 'bounced' && submission.stage !== 'done' && submission.stage !== 'stability',
       runStability: canRunStability(actor, submission),
       runGolden: holdsRubricSeat(actor, submission),
       review:

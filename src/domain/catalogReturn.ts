@@ -83,9 +83,12 @@ export function shouldEnqueueCatalogReturn(input: {
   if (!catalogLaneReopensSubmitted(input.catalogLane)) return false;
   const statusId = input.catalogStatusId?.trim() ?? '';
   if (!statusId) return false;
-  if (input.existing?.statusId === statusId && (input.existing.outcome === 'pending' || input.existing.outcome === 'dismissed' || input.existing.outcome === 'applied')) {
-    return false;
-  }
+  const sameStatus = input.existing?.statusId === statusId;
+  // A pending or dismissed return for this status is still that decision.
+  // An applied return only blocks while the task is already reopened. After
+  // another submit, Catalog sending it back to the same status is a new return.
+  if (sameStatus && (input.existing?.outcome === 'pending' || input.existing?.outcome === 'dismissed')) return false;
+  if (sameStatus && input.existing?.outcome === 'applied' && !localIsSubmitted(input)) return false;
   // Catalog revise/reject or an inbound walk-back is only a bounce if GDP
   // actually submitted. A never-pushed task on K/E is inbound pickup.
   if (!localIsSubmitted(input)) return false;

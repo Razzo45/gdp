@@ -3,7 +3,7 @@ import 'server-only';
 import { and, desc, eq, getTableColumns, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '@/db/client';
-import { profiles, submissionEvents, submissions, userRoles, watchedProjects, type Submission } from '@/db/schema';
+import { profiles, rubrics, stabilityAcceptances, submissionEvents, submissions, userRoles, watchedProjects, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
 import { sourceFingerprint } from '@/domain/fingerprint';
 import { canAssignSeatAt, isEligibleAssignee, seatTeamLabel, type AssignmentSeat } from '@/domain/assignment';
@@ -151,6 +151,10 @@ export async function noteCatalogReturnIfNeeded(database: DbOrTx, submission: Su
     })
     .where(eq(submissions.id, submission.id))
     .returning();
+  const currentRubric = (
+    await database.select({ id: rubrics.id }).from(rubrics).where(and(eq(rubrics.submissionId, submission.id), eq(rubrics.isCurrent, true))).limit(1)
+  )[0];
+  if (currentRubric) await database.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, currentRubric.id));
   await recordEvent(database, submission.id, actorId, 'catalog_returned', {
     ...detail,
     previousPushedAt: submission.pushedAt,

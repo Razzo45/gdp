@@ -1,7 +1,8 @@
 import 'server-only';
 
+import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import type { Job } from '@/db/schema';
+import { stabilityAcceptances, type Job } from '@/db/schema';
 import { isArchiveFile, isHeavyMedia } from '@/domain/jobs';
 import { countFamilies, MAX_ROUGH_CHARS, quotaCaption, quotaSpread, RUBRIC_MIN, RUBRIC_TARGET, tagStyleOf } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
@@ -110,7 +111,8 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
       const outputs = await listAiOutputs(tx, submissionId);
       if (outputs.length === 0) throw conflict('No AI output files are attached.');
       const current = await stabilityView(tx, rubric.id);
-      if (current.accepted) throw conflict('This Stability result is accepted. Running it again would replace the handoff scores.');
+      if (current.accepted && submission.handoffStatus !== 'bounced') throw conflict('This Stability result is accepted. Running it again would replace the handoff scores.');
+      if (current.accepted) await tx.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, rubric.id));
       const official = Boolean(await submittedCalibration(tx, rubric.id));
       const inputs = readSource(submission)?.inputFiles ?? [];
       const job = await enqueue(tx, {

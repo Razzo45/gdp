@@ -23,7 +23,8 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const liveTotal = live.total ?? STABILITY_PASSES;
   const official = Boolean(view.stability?.calibrationGateActive);
   const canRun = view.can.runStability;
-  const canStart = canRun && stabilityRerunAllowed({ acceptedAt: stability?.acceptedAt ?? null });
+  const platformReturned = view.submission.handoffStatus === 'bounced' && view.submission.stage !== 'done';
+  const canStart = canRun && stabilityRerunAllowed({ acceptedAt: stability?.acceptedAt ?? null, platformReturned });
   const canAccept = official && canStart && view.submission.stage === 'stability';
   const canContinue =
     official &&

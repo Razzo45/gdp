@@ -1,10 +1,10 @@
 import 'server-only';
 
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { submissions, type Submission } from '@/db/schema';
+import { rubrics, stabilityAcceptances, submissions, type Submission } from '@/db/schema';
 import { parseCatalogReturn, type PendingCatalogReturn } from '@/domain/catalogReturn';
-import { canOversee, isController, type Actor } from '@/lib/auth/permissions';
+import { canOversee, holdsRubricSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden } from './errors';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
@@ -52,6 +52,25 @@ export async function dismissCatalogReturn(actor: Actor, submissionId: string): 
     await recordEvent(tx, submissionId, actor.id, 'catalog_return_dismissed', pending);
     return updated!;
   });
+}
+
+/** Move a Platform returned task onto the rubric or Stability stage without dropping the Catalog bounce. */
+export async function openReturnedWork(actor: Actor, submissionId: string, target: 'rubric' | 'stability'): Promise<Submission> {
+  const result = await db().transaction(async (tx) => {
+    const submission = await getSubmission(tx, submissionId);
+    if (!holdsRubricSeat(actor, submission)) throw forbidden('You do not hold the rubric seat on this task.');
+    if (submission.handoffStatus !== 'bounced' || submission.stage === 'done') throw conflict('This task is not Platform returned.');
+    const current = (
+      await tx.select({ id: rubrics.id }).from(rubrics).where(and(eq(rubrics.submissionId, submissionId), eq(rubrics.isCurrent, true))).limit(1)
+    )[0];
+    if (target === 'stability' && current) await tx.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, current.id));
+    if (submission.stage === target) return { previous: submission, next: submission };
+    const [updated] = await tx.update(submissions).set({ stage: target, handoffStatus: 'bounced' }).where(eq(submissions.id, submissionId)).returning();
+    await recordEvent(tx, submissionId, actor.id, target === 'rubric' ? 'platform_return_opened_rubric' : 'platform_return_opened_stability', {});
+    return { previous: submission, next: updated! };
+  });
+  scheduleWorkStatusSheet(result.previous, result.next);
+  return result.next;
 }
 
 export async function listPendingCatalogReturns(actor: Actor): Promise<PendingCatalogReturn[]> {

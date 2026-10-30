@@ -28,7 +28,7 @@ export const WORK_STATE_HINT: Record<WorkState, string> = {
   in_review: 'Calibrate the AI score, then approve or request changes.',
   review_returned: 'Open the reviewer note, fix the rubric, re-run Stability if you want, then send it back.',
   stability: 'Run 3 Stability checks, then submit.',
-  platform_returned: 'The Catalog bounced the handoff. Fix what they flagged and submit again.',
+  platform_returned: 'The Catalog bounced the handoff. Open the rubric or Stability, fix what they flagged, and submit again.',
   handoff: 'Confirm the gates, then submit to the Data Program.',
   submitted: 'No action needed unless returned.',
   other: 'On a watched project, but not in the GDP work or handoff status.',

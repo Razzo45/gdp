@@ -168,6 +168,10 @@ describe('handoff', () => {
     expect(stabilityRerunAllowed({ acceptedAt: '2026-10-12T20:55:00.000Z' })).toBe(false);
   });
 
+  it('offers another Stability run on Platform returned even when the last result was accepted', () => {
+    expect(stabilityRerunAllowed({ acceptedAt: '2026-10-12T20:55:00.000Z', platformReturned: true })).toBe(true);
+  });
+
   it('lets the rubric seat submit once every gate is closed and the task is on handoff', () => {
     const gates = { golden: true, calibration: true, stability: true };
     expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'stability_pass', pushedAt: null })).toBe(true);

@@ -354,8 +354,10 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
   const canSend = view.can.editRubric && view.golden?.gate.ok && !stabilityBlock && view.aiOutputs.length > 0 && spread.ready;
   const showSend = view.can.editRubric && s.stage === 'rubric';
   const showPush = view.can.push;
+  const showOpenRubric = view.can.openRubric;
+  const showOpenStability = view.can.openStability;
 
-  if (!showSend && !showPush) return null;
+  if (!showSend && !showPush && !showOpenRubric && !showOpenStability) return null;
 
   async function send() {
     setBusy(true);
@@ -365,6 +367,19 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
       await refresh();
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not send to review.', 'bad');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function open(target: 'rubric' | 'stability') {
+    setBusy(true);
+    try {
+      await api(`/api/submissions/${s.id}/return/open`, { body: { target } });
+      notify(target === 'rubric' ? 'The rubric is open.' : 'Stability is open. Run it, then accept the result.');
+      await refresh();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not open that stage.', 'bad');
     } finally {
       setBusy(false);
     }
@@ -397,6 +412,16 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
 
   return (
     <div className="flex max-w-xs flex-col items-stretch gap-1.5 sm:items-end">
+      {showOpenRubric && (
+        <button className="btn" disabled={busy} type="button" onClick={() => void open('rubric')}>
+          Open rubric
+        </button>
+      )}
+      {showOpenStability && (
+        <button className="btn" disabled={busy} type="button" onClick={() => void open('stability')}>
+          Open stability
+        </button>
+      )}
       {showSend && (
         <>
           <button className="btn btn-primary" disabled={busy || !canSend} type="button" onClick={() => void send()}>

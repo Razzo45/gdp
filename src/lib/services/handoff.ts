@@ -223,7 +223,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     await database.transaction(async (tx) => {
       await tx
         .update(submissions)
-        .set({ handoffStatus: 'client_visible', stage: 'done', pushedAt: new Date().toISOString(), statusId: at, pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.items.length, moves, performance } })
+        .set({ handoffStatus: 'client_visible', stage: 'done', pushedAt: new Date().toISOString(), statusId: at, catalogReturn: null, pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.items.length, moves, performance } })
         .where(eq(submissions.id, submissionId));
       await recordEvent(tx, submissionId, actor.id, 'pushed_to_catalog', { rubricItems: items.items.length, moves });
     });
@@ -261,6 +261,7 @@ async function reconcileLocalPush(
         stage: 'done',
         pushedAt: new Date().toISOString(),
         statusId: read.statusId,
+        catalogReturn: null,
         pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.length, moves: [handoffStatusId], recovered: true },
       })
       .where(and(eq(submissions.id, submission.id), sql`${submissions.pushedAt} is null`));
