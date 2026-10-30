@@ -7,6 +7,7 @@ import { statementHash } from '@/domain/fingerprint';
 import { scoreBreakdown, STABILITY_PASSES } from '@/domain/gates';
 import { acceptanceCriteriaText, applyInferredScope, resolveGradeFiles } from '@/domain/fileScope';
 import { analyzeDiscrimination } from '@/domain/discrimination';
+import { jsonbSafe } from '@/domain/jsonbSafe';
 import { isStatementLane, stabilityGradeBatchSize, stabilityGradesInParallel } from '@/domain/jobs';
 import { seatIndexById, tagStyleForGenerate, tagStyleOf } from '@/domain/rubric';
 import { guardLock, packTighten, screenDrafts, TIGHTEN_ROUNDS, tightenNeed, type LockDraft, type TightenReport, type TightenSeat, type VerifiedLock } from '@/domain/tighten';
@@ -275,10 +276,10 @@ export async function runGoldenAutorate(ctx: JobContext): Promise<Record<string,
         jobId: job.id,
         source: 'ai' as const,
         verdict: s.id in partial.answers ? partial.answers[s.id]! : null,
-        evidence: partial.evidence[s.id] ?? '',
-        error: partial.errors[s.id] ?? null,
+        evidence: jsonbSafe(partial.evidence[s.id] ?? ''),
+        error: jsonbSafe(partial.errors[s.id] ?? null),
         model: partial.model,
-        basis: basisFor(s),
+        basis: jsonbSafe(basisFor(s)),
       }));
     if (rows.length === 0) return;
     await database.insert(goldenRatings).values(rows);
@@ -379,11 +380,11 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
       jobId: job.id,
       passIndex,
       answers,
-      evidence: result.evidence,
-      errors: result.errors,
+      evidence: jsonbSafe(result.evidence),
+      errors: jsonbSafe(result.errors),
       scorePercent: Object.keys(result.errors).length ? null : score.percent,
       model: result.model,
-      basis: {
+      basis: jsonbSafe({
         rubricRevision: rubric.revision,
         statementsAt,
         calibrationId: calibration?.id ?? null,
@@ -394,7 +395,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
         delivery: Object.fromEntries(outputs.map((o) => [o.id, o.delivery])),
         defectInventory: result.inventoryByKey,
         usage: result.usage,
-      },
+      }),
     });
     completed += 1;
     liveScores[String(passIndex)] = Object.keys(result.errors).length ? null : score.percent;
