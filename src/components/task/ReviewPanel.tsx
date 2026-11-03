@@ -134,7 +134,7 @@ export function ReviewPanel({ view, refresh, notify, onLiveScore }: PanelProps &
   const approvalInBand = calibrationInBand(approvalPercent);
 
   return (
-    <section className="card space-y-3">
+    <section className="card scroll-mt-4 space-y-3" id="review">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold">Human Calibration</h2>
         <span className="text-xs text-muted">Grade the AI output files against the current rubric. Tab a seat, then Y or N — it moves to the next. Every answer needs an observation of at least {EVIDENCE_MIN_CHARS} characters.</span>
@@ -148,7 +148,7 @@ export function ReviewPanel({ view, refresh, notify, onLiveScore }: PanelProps &
       </div>
 
       {view.review.feedback.length > 0 && (
-        <ul className="space-y-1 text-sm">
+        <ul id="review-feedback" className="scroll-mt-4 space-y-1 text-sm">
           {view.review.feedback.slice(0, 3).map((f, i) => (
             <li key={i} className="rounded-2xl border border-line bg-wash p-2">
               <strong>{f.decision === 'approved' ? 'Approved' : 'Changes requested'}</strong> by {f.reviewerId ? (view.people[f.reviewerId]?.name ?? 'reviewer') : 'reviewer'} · {formatDate(f.createdAt)}

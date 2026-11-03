@@ -20,7 +20,10 @@ export function TaskLabel({
   if (heading) {
     return (
       <>
-        <h1 className="mt-1 font-mono text-2xl font-semibold tracking-[-0.025em] text-ink">{id}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h1 className="font-mono text-2xl font-semibold tracking-[-0.025em] text-ink">{id}</h1>
+          <CopyIdButton value={id} />
+        </div>
         {descriptor ? <p className="mt-1 text-sm text-muted"><CollapsibleCopy text={descriptor} /></p> : null}
       </>
     );
@@ -36,6 +39,28 @@ export function TaskLabel({
         </span>
       ) : null}
     </>
+  );
+}
+
+function CopyIdButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost btn-sm h-8 px-2 text-xs font-semibold text-muted"
+      title="Copy short id"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* clipboard may be denied */
+        }
+      }}
+    >
+      {copied ? 'Copied' : 'Copy id'}
+    </button>
   );
 }
 

@@ -60,7 +60,7 @@ export function JobsPanel({ view, refresh, notify, mode = 'full' }: PanelProps &
   if (live) {
     if (current.length === 0) return null;
     return (
-      <section className="card space-y-3">
+      <section className="card scroll-mt-4 space-y-3" id="jobs">
         <div className="flex items-center gap-2">
           <h2 className="font-semibold">In progress</h2>
           <span className="text-xs text-warn">running</span>
@@ -77,7 +77,7 @@ export function JobsPanel({ view, refresh, notify, mode = 'full' }: PanelProps &
   if (view.jobs.length === 0 && !traffic) return null;
 
   return (
-    <section className="card space-y-3">
+    <section className="card scroll-mt-4 space-y-3" id="jobs">
       <div className="flex items-center gap-2">
         <h2 className="font-semibold">Jobs</h2>
         {active && <span className="text-xs text-warn">running</span>}

@@ -318,7 +318,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
   if (reviewer) {
     return (
-      <section className="card space-y-3" id="rubrics-generated">
+      <section className="card scroll-mt-4 space-y-3" id="golden">
         <h2 className="font-semibold">Rubric Review</h2>
         <p className="text-sm text-muted">Read-only rubric the Reviewer Team is scoring against the AI output.</p>
         <StatementGroups groups={groups} drafts={drafts} headings={headings} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
@@ -327,7 +327,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
   }
 
   return (
-    <section className="card space-y-4" id="rubrics-generated">
+    <section className="card scroll-mt-4 space-y-4" id="golden">
       <div>
         <h2 className="font-semibold">Golden Evaluation</h2>
         <p className="text-sm text-muted">Build the grading rubric, review the Golden files, and autorate the expected result.</p>
@@ -465,17 +465,17 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
               {Object.values(golden.sources).includes('human') && ' · human override'}
             </span>
           )}
-          {(editable || view.can.runGolden) && (
+          {(editable || view.can.runGolden || view.can.control || view.submission.stage === 'done') && (
             <div className="ml-auto flex flex-wrap items-center gap-2">
+              {(editable || view.can.control || view.submission.stage === 'done') && view.rubric ? (
+                <a className="btn btn-ghost btn-sm" href={`/api/submissions/${view.submission.id}/rubric/evidence`}>
+                  Evidence JSON
+                </a>
+              ) : null}
               {editable ? (
-                <>
-                  <a className="btn btn-ghost btn-sm" href={`/api/submissions/${view.submission.id}/rubric/evidence`}>
-                    Evidence JSON
-                  </a>
-                  <button className="btn btn-ghost btn-sm" disabled={busy !== null} type="button" onClick={() => run('lint', `/api/submissions/${view.submission.id}/rubric/lint`, { scope: 'unchecked' }, 'Wording checked.')}>
-                    Check wording
-                  </button>
-                </>
+                <button className="btn btn-ghost btn-sm" disabled={busy !== null} type="button" onClick={() => run('lint', `/api/submissions/${view.submission.id}/rubric/lint`, { scope: 'unchecked' }, 'Wording checked.')}>
+                  Check wording
+                </button>
               ) : null}
               {view.can.runGolden ? (
                 <button

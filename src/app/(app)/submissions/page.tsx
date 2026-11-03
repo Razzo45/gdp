@@ -34,6 +34,8 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   const listed = boardListRows(scoped, { workState, q });
   const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
+  const evidenceColumn =
+    workState === 'submitted' ? 'Evidence' : listed.some((row) => row.workState === 'submitted') ? 'Evidence / activity' : 'Last interaction';
 
   return (
     <Page>
@@ -92,7 +94,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               <th className="px-4 py-3">Task</th>
               <th className="px-4 py-3">Work status</th>
               <th className="px-4 py-3">Assigned to</th>
-              <th className="px-4 py-3">{workState === 'submitted' ? 'Evidence' : 'Last interaction'}</th>
+              <th className="px-4 py-3">{evidenceColumn}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -127,7 +129,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                   {assignee ? <span className="text-sm font-semibold leading-[22px]">{assignee}</span> : <span className="text-quiet">—</span>}
                 </td>
                 <td className="px-4 py-3.5 align-middle text-xs leading-[18px] text-muted">
-                  {workState === 'submitted' ? (
+                  {s.workState === 'submitted' ? (
                     <a
                       className="btn btn-ghost btn-sm relative z-10"
                       href={`/api/submissions/${s.id}/rubric/evidence`}

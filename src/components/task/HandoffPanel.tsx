@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { api } from '../client';
 import { formatDate, pct } from '../format';
 import { Pill } from '../StageBadge';
+import { scrollTaskPanel } from './scrollTask';
 import type { PanelProps } from './TaskWorkspace';
 
 /**
@@ -34,16 +35,16 @@ export function HandoffPanel({ view, refresh, notify }: PanelProps) {
   const control = view.can.control;
 
   return (
-    <section className="card space-y-3" id="handoff">
+    <section className="card scroll-mt-4 space-y-3" id="handoff">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-semibold">Handoff</h2>
         <span className="badge ml-auto border-line text-muted">{status ? status.replaceAll('_', ' ') : 'Not started'}</span>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        <Gate ok={g.golden} label="Golden" value={pct(view.handoff.goldenPercent)} />
-        <Gate ok={g.calibration} label="Human AI eval" value={pct(view.handoff.calibrationPercent)} />
-        <Gate ok={g.stability} label="Stability" value={view.handoff.stabilityScores ? view.handoff.stabilityScores.map(pct).join(' · ') : '—'} />
+        <Gate ok={g.golden} label="Golden" value={pct(view.handoff.goldenPercent)} href="golden" />
+        <Gate ok={g.calibration} label="Human AI eval" value={pct(view.handoff.calibrationPercent)} href="review" />
+        <Gate ok={g.stability} label="Stability" value={view.handoff.stabilityScores ? view.handoff.stabilityScores.map(pct).join(' · ') : '—'} href="stability" />
       </div>
       {g.reasons.length > 0 && (
         <ul className="text-xs text-warn">
@@ -75,14 +76,18 @@ export function HandoffPanel({ view, refresh, notify }: PanelProps) {
   );
 }
 
-function Gate({ ok, label, value }: { ok: boolean; label: string; value: string }) {
+function Gate({ ok, label, value, href }: { ok: boolean; label: string; value: string; href: string }) {
   return (
-    <div className="rounded-xl border border-line p-2 text-sm">
+    <button
+      type="button"
+      className="rounded-xl border border-line p-2 text-left text-sm hover:bg-wash"
+      onClick={() => scrollTaskPanel(href)}
+    >
       <div className="flex items-center justify-between">
         <span className="text-xs uppercase tracking-wide text-muted">{label}</span>
         <Pill tone={ok ? 'ok' : 'muted'}>{ok ? 'pass' : 'open'}</Pill>
       </div>
       <div className="mt-1 font-semibold tabular-nums">{value}</div>
-    </div>
+    </button>
   );
 }

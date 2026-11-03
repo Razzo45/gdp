@@ -10,7 +10,7 @@ import { stabilityReviewBlock } from '@/domain/gates';
 import { staleSinceStability } from '@/domain/helper';
 import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
-import { formatDate } from '../format';
+import { clipWords, formatDate } from '../format';
 import { TimeAgo } from '../TimeAgo';
 import { StageBadge } from '../StageBadge';
 import { ScoreStrip } from '../ScoreStrip';
@@ -26,6 +26,7 @@ import { RubricEditor } from './RubricEditor';
 import { SeatControls, type Assignable } from './SeatControls';
 import { Helper } from './Helper';
 import { StabilityPanel } from './StabilityPanel';
+import { scrollTaskPanel, TASK_SCROLL_ATTR } from './scrollTask';
 
 export interface WorkspaceProps {
   initial: SubmissionView;
@@ -143,6 +144,29 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
   const returnTitle = catalogNote ? 'Catalog sent this back' : 'Reviewer sent this back';
   const panel: PanelProps = { view, actorId, refresh, notify };
 
+  const jumpInTask = useCallback(
+    (id: string) => {
+      const inBrief = id === 'jobs' || id === 'ai-output-files';
+      if (inBrief) toggleBrief(true);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => scrollTaskPanel(id));
+      });
+    },
+    [toggleBrief],
+  );
+
+  const openJobs = useCallback(() => jumpInTask('jobs'), [jumpInTask]);
+
+  const openReturnNote = useCallback(() => {
+    toggleNote(true);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (document.getElementById('review-feedback')) scrollTaskPanel('review-feedback');
+        else if (document.getElementById('review')) scrollTaskPanel('review');
+      });
+    });
+  }, [toggleNote]);
+
   if (!ready) {
     return <div className="card text-sm text-muted">Loading the task…</div>;
   }
@@ -169,6 +193,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
               {s.reviewStatus === 'changes_requested' && s.stage === 'rubric' && <span className="badge badge-warn">changes requested</span>}
             </div>
             <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} heading />
+            {returnNote && !noteOpen ? <ReturnWhyHint message={returnNote.message} onShow={openReturnNote} /> : null}
             <p className="mt-0.5 text-xs text-muted">
               {view.brief.projectName || s.projectId}
               {view.brief.statusName ? ` · ${view.brief.statusName}` : ''}
@@ -193,9 +218,9 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           </div>
           <div className="flex flex-wrap items-start justify-end gap-2">
             {returnNote && !noteOpen ? (
-              <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
+              <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={openReturnNote} />
             ) : null}
-            <HeaderActions view={view} refresh={refresh} notify={notify} />
+            <HeaderActions view={view} refresh={refresh} notify={notify} onJump={jumpInTask} />
             <button className="btn btn-ghost btn-sm" type="button" aria-expanded={true} onClick={() => toggleHeader(false)}>
               Hide
             </button>
@@ -210,47 +235,55 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             golden={view.can.seeScoreGolden}
             stability={view.can.seeScoreStability}
             livePercent={view.can.lens === 'reviewer' ? liveReviewPercent : undefined}
+            onOpenJobs={openJobs}
           />
         </div>
       </header>
       ) : (
-      <div className="card flex shrink-0 items-center gap-3 px-3 py-2 hover:bg-wash">
-        <button
-          className="flex min-w-0 flex-1 items-center gap-3 text-left"
-          type="button"
-          aria-expanded={false}
-          title="Show seats and scores"
-          onClick={() => toggleHeader(true)}
-        >
-          <StageBadge stage={s.stage} />
-          <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} size="compact" />
+      <div className="card flex shrink-0 flex-col gap-1.5 px-3 py-2">
+        <div className="flex items-center gap-3">
+          <button
+            className="flex min-w-0 items-center gap-3 text-left hover:opacity-90"
+            type="button"
+            aria-expanded={false}
+            title="Show seats and scores"
+            onClick={() => toggleHeader(true)}
+          >
+            <StageBadge stage={s.stage} />
+            <TaskLabel catalogId={s.catalogSubmissionId} hero={view.brief.heroDeliverable} size="compact" />
+          </button>
           <ScoreStrip
             view={view}
             golden={view.can.seeScoreGolden}
             stability={view.can.seeScoreStability}
             livePercent={view.can.lens === 'reviewer' ? liveReviewPercent : undefined}
             compact
+            onOpenJobs={openJobs}
           />
-        </button>
-        <div className="ml-auto flex items-center gap-2">
-          {returnNote && !noteOpen ? (
-            <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={() => toggleNote(true)} />
-          ) : null}
-          <button
-            className="shrink-0 text-sm font-semibold text-muted"
-            type="button"
-            aria-expanded={false}
-            onClick={() => toggleHeader(true)}
-          >
-            Show header
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {returnNote && !noteOpen ? (
+              <ReturnNotePill label={catalogNote ? 'Catalog feedback' : 'Reviewer note'} onOpen={openReturnNote} />
+            ) : null}
+            <button
+              className="shrink-0 text-sm font-semibold text-muted"
+              type="button"
+              aria-expanded={false}
+              onClick={() => toggleHeader(true)}
+            >
+              Show header
+            </button>
+          </div>
         </div>
+        {returnNote && !noteOpen ? <ReturnWhyHint message={returnNote.message} onShow={openReturnNote} /> : null}
       </div>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:overflow-hidden">
         {briefOpen ? (
-          <aside className="flex min-h-0 flex-col gap-3 lg:w-[22rem] lg:shrink-0 lg:overflow-y-auto lg:pr-1 xl:w-[26rem]">
+          <aside
+            className="flex min-h-0 flex-col gap-3 lg:w-[22rem] lg:shrink-0 lg:overflow-y-auto lg:pr-1 xl:w-[26rem]"
+            {...{ [TASK_SCROLL_ATTR]: '' }}
+          >
             <BriefPanel {...panel} onHide={() => toggleBrief(false)} />
             {view.can.seeJobsLog ? <JobsPanel {...panel} /> : view.can.seeRunProgress ? <JobsPanel {...panel} mode="live" /> : null}
             {view.can.seeHistory && <EventsPanel {...panel} />}
@@ -266,7 +299,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
             <span className="py-2 tracking-wide lg:[writing-mode:vertical-rl] lg:rotate-180 lg:py-3">Task brief</span>
           </button>
         )}
-        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:overflow-y-auto" {...{ [TASK_SCROLL_ATTR]: '' }}>
           {view.can.seeRubricEditor && (view.rubric || view.can.editRubric) && <RubricEditor {...panel} />}
           {view.can.seeStability && <StabilityPanel {...panel} />}
           {view.can.seeReviewPanel &&
@@ -276,7 +309,19 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           {view.can.seeHandoff && (s.stage === 'handoff' || s.stage === 'done' || s.handoffStatus) && <HandoffPanel {...panel} />}
           {s.stage === 'done' && (
             <p className="card text-sm text-muted">
-              Delivered to the Catalog {formatDate(s.pushedAt)}. <Link className="underline" href="/submissions">Back to tasks</Link>.
+              Delivered to the Catalog {formatDate(s.pushedAt)}.{' '}
+              {view.rubric && !view.can.seeRubricEditor ? (
+                <>
+                  <a className="underline" href={`/api/submissions/${s.id}/rubric/evidence`}>
+                    Evidence JSON
+                  </a>
+                  {' · '}
+                </>
+              ) : null}
+              <Link className="underline" href="/submissions">
+                Back to tasks
+              </Link>
+              .
             </p>
           )}
         </div>
@@ -302,6 +347,23 @@ function ReturnNotePill({ label, onOpen }: { label: string; onOpen: () => void }
     >
       {label}
     </button>
+  );
+}
+
+/** Quiet one-liner under the title when the return banner is collapsed. */
+function ReturnWhyHint({ message, onShow }: { message: string; onShow: () => void }) {
+  const clip = clipWords(message, 14);
+  return (
+    <p className="text-xs leading-[18px] text-muted">
+      Why: {clip.preview}{' '}
+      <button
+        type="button"
+        className="font-semibold text-muted underline decoration-line underline-offset-2 hover:text-ink"
+        onClick={onShow}
+      >
+        Show
+      </button>
+    </p>
   );
 }
 
@@ -336,7 +398,12 @@ function ReviewReturnBanner({
   );
 }
 
-function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'refresh' | 'notify'>) {
+function HeaderActions({
+  view,
+  refresh,
+  notify,
+  onJump,
+}: Pick<PanelProps, 'view' | 'refresh' | 'notify'> & { onJump: (id: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [confirmPush, setConfirmPush] = useState(false);
   const s = view.submission;
@@ -402,12 +469,18 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
   const blocked =
     showSend && !canSend
       ? !spread.ready
-        ? spread.warning
+        ? { text: spread.warning, jump: 'golden' as const }
         : !view.golden?.gate.ok
-          ? goldenStale > 0
-            ? `Re-grade the golden file: ${goldenStale} seat${goldenStale === 1 ? '' : 's'} changed since it was graded.`
-            : 'Golden must be 100% first.'
-          : stabilityBlock ?? 'Attach the AI output first.'
+          ? {
+              text:
+                goldenStale > 0
+                  ? `Re-grade the golden file: ${goldenStale} seat${goldenStale === 1 ? '' : 's'} changed since it was graded.`
+                  : 'Golden must be 100% first.',
+              jump: 'golden' as const,
+            }
+          : stabilityBlock
+            ? { text: stabilityBlock, jump: 'stability' as const }
+            : { text: 'Attach the AI output first.', jump: 'ai-output-files' as const }
       : null;
 
   return (
@@ -427,7 +500,14 @@ function HeaderActions({ view, refresh, notify }: Pick<PanelProps, 'view' | 'ref
           <button className="btn btn-primary" disabled={busy || !canSend} type="button" onClick={() => void send()}>
             {busy ? 'Sending…' : s.reviewStatus === 'changes_requested' ? 'Send to review again' : 'Send to review'}
           </button>
-          {blocked && <p className="text-right text-xs text-muted">{blocked}</p>}
+          {blocked ? (
+            <p className="text-right text-xs text-muted">
+              {blocked.text}{' '}
+              <button type="button" className="font-semibold text-ink underline decoration-line underline-offset-2 hover:text-accent" onClick={() => onJump(blocked.jump)}>
+                Show me
+              </button>
+            </p>
+          ) : null}
         </>
       )}
       {showPush && (
