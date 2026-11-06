@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { catalogAsciiText, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
+import { catalogAsciiText, catalogPushMatchesStored, catalogPushPlan, catalogRubricItems, catalogTaskPerformance, catalogUploadFilename, taskPerformanceSummaries } from '@/lib/catalog/export';
 import { contentDisposition, preferredCatalogBytesUrl, shouldBufferProxiedFile } from '@/lib/catalog/fileUrls';
 import { heroDeliverableFromSource, heroDeliverableOf, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import { readSignature, signatureMatches, timestampFresh } from '@/lib/catalog/webhook';
@@ -116,6 +116,18 @@ describe('readCatalogSubmission', () => {
   it('reads workflow statuses', () => {
     expect(readProjectStatuses(project)?.statuses.map((s) => s.id)).toEqual(['st-work', 'st-review', 'st-done']);
   });
+
+  it('hides fields marked ui:options.hidden, the Catalog pattern for rubrics on Approved', () => {
+    const p = {
+      ...project,
+      workflow: {
+        ...project.workflow,
+        statuses: [{ statusId: 'st-work', name: 'In progress', uiSchema: { prompt: { 'ui:options': { hidden: true } } } }],
+      },
+    };
+    const read = readCatalogSubmission(submission, p)!;
+    expect(read.fields.map((f) => f.key)).not.toContain('prompt');
+  });
 });
 
 describe('catalog file bytes', () => {
@@ -177,6 +189,45 @@ describe('export', () => {
     expect(out['stabilityScores']).toMatch(/Run 1 40%, Run 2 42%, Run 3 44%.*4 percentage points.*within/);
     expect(catalogTaskPerformance({ ...complete, stabilityScores: null }, project, {})).toBeNull();
     expect(taskPerformanceSummaries({ goldenPercent: null, calibrationPercent: 33.33, stabilityScores: [1, 2, 9] }).stabilityScores).toMatch(/outside/);
+  });
+
+  it('detects when Catalog kept the previous rubric after a save', () => {
+    const sent = catalogRubricItems(
+      [
+        { statement: 'The Apple Orchard video has a 4K UHD resolution.', family: 'format', answer: 'Yes' },
+        { statement: 'The Apple Orchard video maintains its exact untrimmed source duration of 2:26.96.', family: 'format', answer: 'Yes' },
+      ],
+      project,
+    );
+    if (!sent.ok) throw new Error('expected items');
+    const performance = { goldenOutput: 'Golden output score: 100%.', aiOutputHumanEval: 'AI output human evaluation score: 48%.', stabilityScores: 'Stability runs: Run 1 50%.' };
+    expect(
+      catalogPushMatchesStored(
+        { rubrics: sent.items, taskPerformance: performance },
+        { items: sent.items, performance },
+      ),
+    ).toBe(true);
+    expect(
+      catalogPushMatchesStored(
+        {
+          rubrics: [
+            { id: 's001', statement: 'Both the Apple Orchard and Fishing Farm videos have a 4K UHD resolution.', tag: 'Format/File', answer: 'Yes' },
+            { id: 's002', statement: 'Both delivered videos maintain their exact untrimmed source durations of 2:26.96 for the Apple Orchard scene and 4:10.68 for the Fishing Farm scene.', tag: 'Format/File', answer: 'Yes' },
+          ],
+          taskPerformance: { ...performance, stabilityScores: 'Stability runs: Run 1 44%.' },
+        },
+        { items: sent.items, performance },
+      ),
+    ).toBe(false);
+  });
+
+  it('saves again when Catalog is already at handoff with a stale rubric', () => {
+    expect(catalogPushPlan({ statusId: 'st-done', handoffStatusId: 'st-done', storedMatches: true })).toEqual({ action: 'recover' });
+    expect(catalogPushPlan({ statusId: 'st-done', handoffStatusId: 'st-done', storedMatches: false })).toEqual({ action: 'save-only' });
+    expect(catalogPushPlan({ statusId: 'st-work', handoffStatusId: 'st-done', storedMatches: false, route: [{ to: 'st-done', trigger: 'next' }] })).toEqual({
+      action: 'save-move-save',
+      route: [{ to: 'st-done', trigger: 'next' }],
+    });
   });
 
   it('validates upload file names', () => {

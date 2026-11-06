@@ -80,6 +80,57 @@ export interface PerformanceSummaryInput {
 
 const ascii = (text: string) => catalogAsciiText(text).replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
 
+function rubricLine(item: unknown): string {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+  const row = item as Record<string, unknown>;
+  return ascii(String(row['statement'] ?? row['question'] ?? ''));
+}
+
+/**
+ * True when Catalog stored the rubric and scores we just PUT. A 200 on
+ * `/save` is not enough — on Approved, Catalog keeps the previous hidden
+ * `rubrics` / `taskPerformance` and GDP used to mark the task delivered anyway.
+ */
+export function catalogPushMatchesStored(
+  stored: Record<string, unknown>,
+  sent: { items: readonly Record<string, string>[]; performance: Record<string, unknown> },
+): boolean {
+  const rubrics = Array.isArray(stored['rubrics']) ? stored['rubrics'] : [];
+  if (rubrics.length !== sent.items.length) return false;
+  for (let i = 0; i < sent.items.length; i++) {
+    if (rubricLine(rubrics[i]) !== rubricLine(sent.items[i])) return false;
+  }
+  const storedPerf =
+    stored['taskPerformance'] && typeof stored['taskPerformance'] === 'object' && !Array.isArray(stored['taskPerformance'])
+      ? (stored['taskPerformance'] as Record<string, unknown>)
+      : {};
+  for (const field of ['goldenOutput', 'aiOutputHumanEval', 'stabilityScores'] as const) {
+    const want = typeof sent.performance[field] === 'string' ? ascii(sent.performance[field] as string) : '';
+    if (!want) continue;
+    const got = typeof storedPerf[field] === 'string' ? ascii(storedPerf[field] as string) : '';
+    if (got !== want) return false;
+  }
+  return true;
+}
+
+export type CatalogPushPlan =
+  | { action: 'recover' }
+  | { action: 'save-only' }
+  | { action: 'save-move-save'; route: { to: string; trigger: string }[] };
+
+/** Already at handoff with our rows → finish locally. At handoff with stale rows → save, do not skip. Else save, walk, save. */
+export function catalogPushPlan(input: {
+  statusId: string | null;
+  handoffStatusId: string;
+  storedMatches: boolean;
+  route?: { to: string; trigger: string }[] | null;
+}): CatalogPushPlan {
+  if (input.statusId && input.statusId === input.handoffStatusId) {
+    return input.storedMatches ? { action: 'recover' } : { action: 'save-only' };
+  }
+  return { action: 'save-move-save', route: input.route ?? [] };
+}
+
 export function taskPerformanceSummaries(input: PerformanceSummaryInput): {
   goldenOutput: string | null;
   aiOutputHumanEval: string | null;

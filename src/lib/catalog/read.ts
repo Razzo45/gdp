@@ -213,12 +213,21 @@ export function inputFileIds(values: Record<string, unknown>, golden: ReadonlySe
   return inputFileEntries(values, golden).map((entry) => entry.id);
 }
 
+/** Catalog uiSchema: `ui:widget=hidden`, `hidden`, or `ui:options.hidden` (Approved / Ready-for-expert). */
+export function catalogUiHidesField(node: unknown): boolean {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+  const rec = node as Record<string, unknown>;
+  if (rec['ui:widget'] === 'hidden' || rec['hidden'] === true) return true;
+  const opts = rec['ui:options'];
+  return Boolean(opts && typeof opts === 'object' && !Array.isArray(opts) && (opts as Record<string, unknown>)['hidden'] === true);
+}
+
 function hiddenKeys(project: ProjectDeclaration | null, statusId: string | null): Set<string> {
   const hidden = new Set<string>();
   const ui = project?.workflow?.statuses?.find((s) => s.statusId === statusId)?.uiSchema;
   if (!ui) return hidden;
   for (const [key, node] of Object.entries(ui)) {
-    if (node && typeof node === 'object' && ((node as Record<string, unknown>)['ui:widget'] === 'hidden' || (node as Record<string, unknown>)['hidden'] === true)) hidden.add(key);
+    if (catalogUiHidesField(node)) hidden.add(key);
   }
   return hidden;
 }

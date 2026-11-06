@@ -7,7 +7,7 @@ import type { DbOrTx } from '@/db/types';
 import { canSubmitToDataPlatform, handoffGates, handoffTransitionGate, type HandoffGates, type HandoffTarget } from '@/domain/gates';
 import { holdsRubricSeat, isController, type Actor } from '@/lib/auth/permissions';
 import { fetchSubmission, saveSubmissionValues, transitionSubmission } from '@/lib/catalog/client';
-import { catalogRubricItems, catalogTaskPerformance, catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
+import { catalogPushMatchesStored, catalogPushPlan, catalogRubricItems, catalogTaskPerformance, catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
 import { ProjectPayload, readCatalogSubmission } from '@/lib/catalog/read';
 import { scheduleReap } from '@/lib/ai/reaper';
 import { env } from '@/lib/env';
@@ -169,9 +169,6 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   }
   if (!watched || !watched.handoffStatusId) throw conflict('This project has no handoff status configured. Ask a PM to set it under Settings → Projects.');
 
-  const recoveredEarly = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);
-  if (recoveredEarly) return recoveredEarly;
-
   if (submission.pushReceipt && !isLivePushLease(submission.pushReceipt)) {
     await database.update(submissions).set({ pushReceipt: null }).where(and(eq(submissions.id, submissionId), sql`${submissions.pushedAt} is null`));
   }
@@ -185,6 +182,7 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   if (leased.length === 0) throw conflict('A push is already in progress for this task.');
 
   let catalogTouched = false;
+  let skipReconcile = false;
   try {
     const fresh = await fetchSubmission(submission.catalogSubmissionId);
     if (!fresh.ok) throw new ServiceError(502, fresh.error);
@@ -198,6 +196,8 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     if (!items.ok) throw invalid(items.error);
     const performance = catalogTaskPerformance({ goldenPercent: view.goldenPercent, calibrationPercent: view.calibrationPercent, stabilityScores: view.stabilityScores }, fresh.project, read.values['taskPerformance']);
     if (!performance) throw conflict('The task performance summary is incomplete; the push was not made.');
+    const expected = { items: items.items, performance };
+    const storedMatches = catalogPushMatchesStored(read.values, expected);
 
     const values = withCatalogViewTask(
       { ...read.values, rubrics: items.items, taskPerformance: performance },
@@ -205,33 +205,48 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
     );
     if (rubric.seeds.length && typeof read.values['prompt'] !== 'string') values['prompt'] = rubric.seeds.join('\n');
 
-    const saved = await saveSubmissionValues(submission.catalogSubmissionId, read.projectId, values);
-    if (!saved.ok) throw new ServiceError(saved.status === 400 ? 422 : 502, saved.error);
+    const from = read.statusId ?? watched.workStatusId;
+    const route = routeForward(fresh.project, from, watched.handoffStatusId);
+    const plan = catalogPushPlan({ statusId: read.statusId, handoffStatusId: watched.handoffStatusId, storedMatches, route });
+    if (plan.action === 'save-move-save' && route === null) throw conflict(`No forward path exists from the current Catalog status to the handoff status.`);
+
+    const finish = async (at: string, moves: string[]) => {
+      await database.transaction(async (tx) => {
+        await tx
+          .update(submissions)
+          .set({ handoffStatus: 'client_visible', stage: 'done', pushedAt: new Date().toISOString(), statusId: at, catalogReturn: null, pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.items.length, moves, performance } })
+          .where(eq(submissions.id, submissionId));
+        await recordEvent(tx, submissionId, actor.id, 'pushed_to_catalog', { rubricItems: items.items.length, moves });
+      });
+      scheduleWorkStatusSheet(submission, { ...submission, stage: 'done', handoffStatus: 'client_visible' });
+      scheduleReap();
+      return { rubricItems: items.items.length, moves };
+    };
+
+    if (plan.action === 'recover') {
+      return (await reconcileLocalPush(database, actor, submission, watched.handoffStatusId, expected)) ?? (await finish(watched.handoffStatusId, [watched.handoffStatusId]));
+    }
+
     catalogTouched = true;
+    await writeCatalogValuesAndConfirm(submission.catalogSubmissionId, read.projectId, values, expected, read.values['rubrics']);
+
+    if (plan.action === 'save-only') {
+      return await finish(watched.handoffStatusId, [watched.handoffStatusId]);
+    }
 
     const moves: string[] = [];
-    let at = read.statusId ?? watched.workStatusId;
-    const route = routeForward(fresh.project, at, watched.handoffStatusId);
-    if (route === null) throw conflict(`No forward path exists from the current Catalog status to the handoff status.`);
-    for (const step of route) {
+    let at = from;
+    for (const step of route ?? []) {
       const moved = await transitionSubmission(submission.catalogSubmissionId, read.projectId, step.to, undefined);
       if (!moved.ok) throw new ServiceError(502, `Values were saved but the move to ${step.to} failed: ${moved.error}`);
       moves.push(step.to);
       at = step.to;
     }
-
-    await database.transaction(async (tx) => {
-      await tx
-        .update(submissions)
-        .set({ handoffStatus: 'client_visible', stage: 'done', pushedAt: new Date().toISOString(), statusId: at, catalogReturn: null, pushReceipt: { by: actor.id, at: new Date().toISOString(), rubricItems: items.items.length, moves, performance } })
-        .where(eq(submissions.id, submissionId));
-      await recordEvent(tx, submissionId, actor.id, 'pushed_to_catalog', { rubricItems: items.items.length, moves });
-    });
-    scheduleWorkStatusSheet(submission, { ...submission, stage: 'done', handoffStatus: 'client_visible' });
-    scheduleReap();
-    return { rubricItems: items.items.length, moves };
+    await writeCatalogValuesAndConfirm(submission.catalogSubmissionId, read.projectId, values, expected, items.items);
+    return await finish(at, moves);
   } catch (error) {
-    if (catalogTouched) {
+    skipReconcile = error instanceof ServiceError && error.detail?.['catalogValuesNotPersisted'] === true;
+    if (catalogTouched && !skipReconcile) {
       const recovered = await reconcileLocalPush(database, actor, submission, watched.handoffStatusId);
       if (recovered) return recovered;
     }
@@ -241,17 +256,50 @@ export async function pushToCatalog(actor: Actor, submissionId: string): Promise
   }
 }
 
+const CATALOG_VALUES_NOT_PERSISTED =
+  'The Catalog kept the previous rubric, so this send was not marked delivered. Move the task to Revised on the Data Platform and send again.';
+
+async function writeCatalogValuesAndConfirm(
+  catalogId: string,
+  projectId: string,
+  values: Record<string, unknown>,
+  expected: { items: Record<string, string>[]; performance: Record<string, unknown> },
+  previousRubrics: unknown,
+): Promise<void> {
+  const save = async (payload: Record<string, unknown>) => {
+    const saved = await saveSubmissionValues(catalogId, projectId, payload);
+    if (!saved.ok) throw new ServiceError(saved.status === 400 ? 422 : 502, saved.error);
+  };
+  const stored = async () => {
+    const fresh = await fetchSubmission(catalogId);
+    if (!fresh.ok) throw new ServiceError(502, fresh.error);
+    const read = readCatalogSubmission(fresh.submission, fresh.project);
+    if (!read) throw new ServiceError(502, 'The Catalog payload could not be read.');
+    return read.values;
+  };
+  await save(values);
+  if (catalogPushMatchesStored(await stored(), expected)) return;
+  // Catalog often ignores updates to already-filled hidden rubrics / scores. Clear, then write.
+  await save({ ...values, rubrics: [], taskPerformance: {} });
+  await save(values);
+  if (catalogPushMatchesStored(await stored(), expected)) return;
+  if (previousRubrics !== undefined) await save({ ...values, rubrics: previousRubrics });
+  throw conflict(CATALOG_VALUES_NOT_PERSISTED, { catalogValuesNotPersisted: true });
+}
+
 /** If the Catalog already has the handoff status, finish the local row so a retry is not a dead end. */
 async function reconcileLocalPush(
   database: ReturnType<typeof db>,
   actor: Actor,
   submission: Submission,
   handoffStatusId: string,
+  expected?: { items: Record<string, string>[]; performance: Record<string, unknown> },
 ): Promise<PushResult | null> {
   const fresh = await fetchSubmission(submission.catalogSubmissionId);
   if (!fresh.ok) return null;
   const read = readCatalogSubmission(fresh.submission, fresh.project);
   if (!read || read.statusId !== handoffStatusId) return null;
+  if (expected && !catalogPushMatchesStored(read.values, expected)) return null;
   const items = Array.isArray(read.values['rubrics']) ? read.values['rubrics'] : [];
   await database.transaction(async (tx) => {
     await tx
