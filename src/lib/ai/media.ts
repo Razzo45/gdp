@@ -15,6 +15,7 @@ import { getObject, putObject } from '@/lib/storage';
 import { describeFileFacts, describeFileFactsAsync, factsCurrent, factsFullyMeasured } from './fileFacts';
 import { mediaPart, SEND_TEXT_CHARS, type MediaPart } from './gemini';
 import { officeBytesForRender, officeEmbeddedImages, officeManifest, officePreviewKind, officeTextDigest, type OfficeKind, type OfficePreviewKind } from './office';
+import { htmlVisualJudgeNote } from './htmlJudgeNote';
 import { DESKTOP, MAX_PAGE_HEIGHT, MOBILE, screenshotHtml, type HtmlShot } from './htmlShots';
 import { MAX_RENDERED_PAGES, rasterizePdfPages } from './pdfPages';
 
@@ -201,9 +202,18 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
             }),
           ),
         );
-        const renderNote = shots.length
-          ? `The page was opened in a browser and screenshotted (${shots.map((shot) => (shot.view === 'desktop' ? `desktop ${DESKTOP.width}px wide, full page up to ${MAX_PAGE_HEIGHT}px tall` : `phone ${MOBILE.width}px wide, first screen`)).join('; ')}). Judge layout, colour, typography, imagery and anything drawn by scripts (canvas, WebGL, three.js) from the screenshots; judge text and structure from the source. States reached only by clicking, hovering or later animation are not in the screenshots; check the source for them.`
-          : 'The page could not be rendered in a browser. Judge visual statements from the source only where the markup states them explicitly.';
+        const renderNote = htmlVisualJudgeNote({
+          hasScreenshots: shots.length > 0,
+          views: shots.length
+            ? shots
+                .map((shot) =>
+                  shot.view === 'desktop'
+                    ? `desktop ${DESKTOP.width}px wide, full page up to ${MAX_PAGE_HEIGHT}px tall`
+                    : `phone ${MOBILE.width}px wide, first screen`,
+                )
+                .join('; ')
+            : undefined,
+        });
         return {
           ...base,
           delivery: 'native',

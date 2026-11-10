@@ -63,6 +63,10 @@ describe('prepareFile edge cases', () => {
     expect(text.length).toBeLessThan(4_000);
     expect(media).toHaveLength(1);
     expect(media[0]).toMatchObject({ kind: 'inline', mime: 'text/html' });
+    expect(text).toMatch(/no screenshot/i);
+    expect(text).toMatch(/Answer visual, canvas, WebGL, three\.js, animation, and gameplay statements No/i);
+    expect(text).not.toMatch(/check the source for them/i);
+    expect(text).not.toMatch(/Judge visual statements from the source only/i);
   });
 
   it('sends SVG as markup, not as a native image', async () => {
