@@ -54,4 +54,37 @@ describe('share pack', () => {
     expect(pack.task).toMatch(/deck for regional leadership/);
     expect(pack.rubric).toEqual([{ id: 's001', statement: 'The delivered video is 16:9.', tag: 'Format/File' }]);
   });
+
+  it('still shows the full Catalog task after handoff hides that field', async () => {
+    const brief =
+      "Hi. I'm a Learning and Development Manager for VitalBridge Health Systems, a large regional healthcare network that provides outpatient care, telehealth services, specialty clinics, and patient support programs across multiple communities. Over the past six months, our company has seen a rise in phishing attempts.";
+    const row = await makeSubmission(db, {
+      title: brief.slice(0, 140),
+      source: {
+        submission: {
+          projectSubmissionId: 'cat-hidden-task',
+          workflowState: { statusId: 'st-ready' },
+          submission: { task: brief },
+          files: [],
+        },
+        project: {
+          name: 'GDP Eval Combined',
+          formSchema: { properties: { task: { title: 'Task', type: 'string' } } },
+          workflow: {
+            statuses: [
+              {
+                statusId: 'st-ready',
+                name: 'L. Ready For Expert Assignment',
+                uiSchema: { task: { 'ui:options': { hidden: true } } },
+              },
+            ],
+          },
+        },
+      },
+    });
+    const pack = await sharePack(row.id, viewTaskToken(SECRET, row.id));
+    expect(pack.task).toBe(brief);
+    expect(pack.task.length).toBeGreaterThan(140);
+    expect(pack.fields.map((f) => f.key)).not.toContain('task');
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
-import { briefVisibleFields, shareVisibleFields } from '@/domain/sharePack';
+import { briefVisibleFields, shareTaskText, shareVisibleFields } from '@/domain/sharePack';
 import { viewTaskHref, viewTaskToken, viewTaskTokenMatches } from '@/domain/viewTask';
 
 describe('viewTask link', () => {
@@ -27,6 +27,38 @@ describe('viewTask link', () => {
       viewTask: 'https://gdp.example/s/x?t=abc',
     });
     expect(withCatalogViewTask({ rubrics: [] }, null)).toEqual({ rubrics: [] });
+  });
+});
+
+describe('share task text', () => {
+  it('reads the Catalog task value even when that field is hidden from the prompt list', () => {
+    const brief =
+      "Hi. I'm a Learning and Development Manager for VitalBridge Health Systems, a large regional healthcare network that provides outpatient care, telehealth services, specialty clinics, and patient support programs across multiple communities.";
+    expect(
+      shareTaskText(
+        {
+          values: { task: brief },
+          fields: [],
+        },
+        brief.slice(0, 140),
+      ),
+    ).toBe(brief);
+  });
+
+  it('drops a prepended Expert Reviewer Note and keeps the client brief', () => {
+    const brief =
+      "Task 1: Trellora Media - Q3 Advertising Health and Q4 Recovery Leadership Briefing\n\nCLIENT BRIEF\n\nI'm the Advertising and Promotions Manager at Trellora Media.";
+    expect(
+      shareTaskText(
+        {
+          values: {
+            task: `*** Expert Reviewer Note: Task revision reflects/addresses all reviewer feedback, including updated brand/company and added validated findings and proposed actions so the Creator can focus on the presentation rather than the analysis. Thank you! ***\n\n${brief}`,
+          },
+          fields: [],
+        },
+        '*** Expert Reviewer Note: Task revision reflects/addresses all reviewer feedback',
+      ),
+    ).toBe(brief);
   });
 });
 

@@ -3,7 +3,7 @@ import 'server-only';
 import { shortTaskDescriptor } from '@/components/format';
 import { db } from '@/db/client';
 import { deliveryId, seatsInDisplayOrder } from '@/domain/rubric';
-import { shareVisibleFields, type SharePack } from '@/domain/sharePack';
+import { shareTaskText, shareVisibleFields, type SharePack } from '@/domain/sharePack';
 import { viewTaskTokenMatches } from '@/domain/viewTask';
 import { env } from '@/lib/env';
 import { taskPerformanceSummaries } from '@/lib/catalog/export';
@@ -30,10 +30,7 @@ export async function sharePack(submissionId: string, token: string | null | und
   const view = await handoffView(database, submission, { rubric, statements });
   const ai = await listAiOutputs(database, submissionId);
   const fields = shareVisibleFields((source?.fields ?? []).filter((f) => f.key !== 'inputFiles'));
-  const task =
-    source?.fields.find((f) => /^(prompt|task|instruction|description)$/i.test(f.key))?.text?.trim() ||
-    source?.title?.trim() ||
-    submission.title;
+  const task = shareTaskText(source, submission.title);
   return {
     submissionId: submission.id,
     title: shortTaskDescriptor(task) || source?.title || submission.title || 'Task',

@@ -22,8 +22,30 @@ export function shareFileHref(submissionId: string, fileId: string, token: strin
   return `/api/s/${encodeURIComponent(submissionId)}/files/${encodeURIComponent(fileId)}?t=${encodeURIComponent(token)}`;
 }
 
+const TASK_VALUE_KEYS = ['task', 'prompt', 'instruction', 'description'] as const;
+const TASK_FIELD_KEY = /^(task|prompt|instruction|description)$/i;
 const HIDDEN_SHARE_FIELD = /^(task|prompt|instruction|description|expert\s*review|acceptance\s*criteria|preview(?:\s*image)?|notes)$/i;
 const HIDDEN_BRIEF_FIELD = /^(expert\s*(qa|review)|preview(?:\s*image)?)$/i;
+const REVIEWER_NOTE_PREFIX = /^(?:\*{2,}\s*)?Expert Reviewer Note:[\s\S]*?(?:\*{2,}\s*)?(?:\r?\n)+/i;
+
+function withoutReviewerNote(text: string): string {
+  const stripped = text.replace(REVIEWER_NOTE_PREFIX, '').trim();
+  return stripped || text;
+}
+
+/** Catalog hides `task` on Ready-for-expert / Independent review; the share page still has to print the brief. */
+export function shareTaskText(
+  source: { values?: Record<string, unknown>; fields?: { key: string; text: string }[] } | null,
+  fallback: string,
+): string {
+  const values = source?.values ?? {};
+  for (const key of TASK_VALUE_KEYS) {
+    const value = values[key];
+    if (typeof value === 'string' && value.trim()) return withoutReviewerNote(value.trim());
+  }
+  const fromFields = source?.fields?.find((field) => TASK_FIELD_KEY.test(field.key) && field.text.trim());
+  return withoutReviewerNote(fromFields?.text.trim() || fallback);
+}
 
 function fieldToken(value: string): string {
   return value
