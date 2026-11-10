@@ -727,6 +727,41 @@ describe('review flow', () => {
     expect(job.payload['heavy']).toBeUndefined();
   });
 
+  it('does not put JPEG Stability in the archive lane because a logo zip is on the catalog', async () => {
+    process.env['DATABASE_URL'] ??= 'postgres://test@localhost/test';
+    process.env['GEMINI_API_KEY'] ??= 'test-key';
+    const zipId = '25f1d724-6d9c-4dd1-bd82-57aeac743c02';
+    const { s } = await readyForReview();
+    await db
+      .update(submissions)
+      .set({
+        source: {
+          submission: {
+            projectSubmissionId: s.catalogSubmissionId,
+            submission: {
+              prompt: 'Three wall graphics.',
+              inputFiles: [{ inputFile: zipId, type: 'Style reference' }],
+            },
+            files: [{ projectSubmissionFileId: zipId, extension: 'zip', originalFileName: 'logo.zip' }],
+          },
+          project: null,
+        },
+      })
+      .where(eq(submissions.id, s.id));
+    await db.insert(aiOutputFiles).values({
+      submissionId: s.id,
+      name: 'wall.jpg',
+      mime: 'image/jpeg',
+      size: 2_000_000,
+      sha256: 'jpeg-light',
+      storagePath: `jpeg-${s.id}`,
+      uploadedBy: creator.id,
+    });
+    const job = await startStabilityRun(creator, s.id, { requestId: crypto.randomUUID() });
+    expect(job.payload['archive']).toBeUndefined();
+    expect(job.payload['heavy']).toBeUndefined();
+  });
+
   it('lets the creator continue to Ready to submit on an already-accepted Stability', async () => {
     const { s, statements } = await readyForReview();
     await db.insert(aiOutputFiles).values({ submissionId: s.id, name: 'ai.pptx', mime: 'application/octet-stream', size: 3, sha256: 'abc-cont', storagePath: `cont-${s.id}`, uploadedBy: creator.id });

@@ -34,6 +34,21 @@ export function isArchiveJobPayload(payload: Record<string, unknown> | null | un
   return payload?.['archive'] === true;
 }
 
+type WeightFile = { mime?: string; name?: string; size?: number };
+
+/**
+ * Archive is the site-zip grade lane (serial passes, heavy slot). Only a zip
+ * that is itself the deliverable belongs there — a logo.zip on catalog inputs
+ * does not. Heavy still looks at every attached file (video / 100 MB+).
+ */
+export function jobWeight(input: { deliverables?: WeightFile[]; attachments?: WeightFile[] }): { heavy?: true; archive?: true } {
+  const deliverables = input.deliverables ?? [];
+  const attachments = input.attachments ?? [];
+  if ([...deliverables, ...attachments].some((file) => isHeavyMedia(file))) return { heavy: true };
+  if (deliverables.some((file) => isArchiveFile(file))) return { archive: true };
+  return {};
+}
+
 export function isFatJobPayload(payload: Record<string, unknown> | null | undefined): boolean {
   return isHeavyJobPayload(payload) || isArchiveJobPayload(payload);
 }

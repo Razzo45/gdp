@@ -10,6 +10,7 @@ import {
   isHeavyJobPayload,
   isHeavyMedia,
   isStatementLane,
+  jobWeight,
   stabilityGradeBatchSize,
   stabilityGradeCalls,
   stabilityGradesInParallel,
@@ -45,6 +46,21 @@ describe('heavy media jobs', () => {
     expect(isHeavyMedia({ mime: 'image/png', name: 'card.png', size: 50 * 1024 * 1024 })).toBe(false);
     expect(isHeavyJobPayload({ heavy: true })).toBe(true);
     expect(isHeavyJobPayload({})).toBe(false);
+  });
+
+  it('flags archive only when a deliverable is a zip, not when a logo zip sits unused on the catalog', () => {
+    expect(
+      jobWeight({
+        deliverables: [{ mime: 'image/jpeg', name: 'wall.jpg', size: 2_000_000 }],
+        attachments: [{ mime: 'application/zip', name: 'logo.zip', size: 367_178 }],
+      }),
+    ).toEqual({});
+    expect(
+      jobWeight({
+        deliverables: [{ mime: 'application/zip', name: 'maison-ai-output.zip', size: 100_899_604 }],
+        attachments: [{ mime: 'application/zip', name: 'logo.zip', size: 367_178 }],
+      }),
+    ).toEqual({ archive: true });
   });
 
   it('puts a site zip in the archive lane, not the 1 GB video heavy lane', () => {

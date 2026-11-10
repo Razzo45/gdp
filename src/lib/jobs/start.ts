@@ -3,7 +3,7 @@ import 'server-only';
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { stabilityAcceptances, type Job } from '@/db/schema';
-import { isArchiveFile, isHeavyMedia } from '@/domain/jobs';
+import { jobWeight } from '@/domain/jobs';
 import { countFamilies, MAX_ROUGH_CHARS, quotaCaption, quotaSpread, RUBRIC_MIN, RUBRIC_TARGET, tagStyleOf } from '@/domain/rubric';
 import { canRunStability, holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { assertGeminiConfigured } from '@/lib/ai/gemini';
@@ -15,12 +15,6 @@ import { currentRubric, ensureCurrentRubric, goldenState, statementsOf } from '@
 import { latestGroup, stabilityView } from '@/lib/services/stability';
 import { getSubmission, readSource, recordEvent } from '@/lib/services/submissions';
 import { enqueue, JobConflict } from './queue';
-
-function weightFlag(files: { mime?: string; name?: string; size?: number }[]): { heavy?: true; archive?: true } {
-  if (files.some((file) => isHeavyMedia(file))) return { heavy: true };
-  if (files.some((file) => isArchiveFile(file))) return { archive: true };
-  return {};
-}
 
 /** User-facing entry points that put work on the queue, with the seat checks. */
 
@@ -60,7 +54,11 @@ export async function startRubricGeneration(actor: Actor, submissionId: string, 
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { source, target, ...weightFlag([...(sourceFiles?.inputFiles ?? []), ...(sourceFiles?.goldenFiles ?? [])]) },
+        payload: {
+          source,
+          target,
+          ...jobWeight({ deliverables: sourceFiles?.goldenFiles ?? [], attachments: sourceFiles?.inputFiles ?? [] }),
+        },
         createdBy: actor.id,
         deadlineMs: 45 * 60_000,
       });
@@ -90,7 +88,10 @@ export async function startGoldenAutorate(actor: Actor, submissionId: string, in
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { ...(ids?.length ? { statementIds: ids } : {}), ...weightFlag([...(files?.goldenFiles ?? []), ...(files?.inputFiles ?? [])]) },
+        payload: {
+          ...(ids?.length ? { statementIds: ids } : {}),
+          ...jobWeight({ deliverables: files?.goldenFiles ?? [], attachments: files?.inputFiles ?? [] }),
+        },
         createdBy: actor.id,
         deadlineMs: 60 * 60_000,
       });
@@ -120,7 +121,11 @@ export async function startStabilityRun(actor: Actor, submissionId: string, inpu
         submissionId,
         rubricId: rubric.id,
         requestId: input.requestId,
-        payload: { groupId: crypto.randomUUID(), calibrationGateActive: official, ...weightFlag([...outputs, ...inputs]) },
+        payload: {
+          groupId: crypto.randomUUID(),
+          calibrationGateActive: official,
+          ...jobWeight({ deliverables: outputs, attachments: inputs }),
+        },
         createdBy: actor.id,
         deadlineMs: 2 * 60 * 60_000,
       });
@@ -154,13 +159,17 @@ export async function startHelper(actor: Actor, submissionId: string, input: { r
       });
       if (!gate.ok) throw conflict(gate.missing.join(' '));
       requireGemini();
-      const files = [...(source?.goldenFiles ?? []), ...(source?.inputFiles ?? []), ...outputs];
       const job = await enqueue(tx, {
         kind: 'rubric_helper',
         submissionId,
         rubricId: rubric!.id,
         requestId: input.requestId,
-        payload: { ...weightFlag(files) },
+        payload: {
+          ...jobWeight({
+            deliverables: [...(source?.goldenFiles ?? []), ...outputs],
+            attachments: source?.inputFiles ?? [],
+          }),
+        },
         createdBy: actor.id,
         deadlineMs: 60 * 60_000,
       });
