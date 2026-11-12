@@ -1,4 +1,5 @@
 import './env';
+import './railway-target';
 import { db } from '@/db/client';
 import { migrate } from '@/db/migrate';
 import { backfillModelTags } from '@/lib/services/submissions';

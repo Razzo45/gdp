@@ -3,9 +3,11 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { BoardFreshness } from '@/components/BoardFreshness';
 import { ClaimTask } from '@/components/ClaimTask';
+import { shortCatalogId } from '@/components/format';
+import { ModelTagPill } from '@/components/ModelTagPill';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
-import { TaskLabel } from '@/components/TaskLabel';
+import { CollapsibleCopy, TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
 import { WorkModeNudge } from '@/components/WorkModeToggle';
@@ -216,10 +218,22 @@ function ClaimQueue({
     <ul className="divide-y divide-line">
       {rows.map((s) => {
         const seat = claimableSeat(actor, s, caps);
+        const shortId = shortCatalogId(s.catalogSubmissionId);
+        const hero = s.heroDeliverable.replace(/\s+/g, ' ').trim();
+        // Rubric claim slots hide the Catalog id; show the model tag there instead.
+        // Review claim slots already show the short id — add the tag beside it.
         return (
           <li key={s.id} className="flex items-center justify-between gap-3 py-3">
             <div className="min-w-0">
-              <TaskLabel catalogId={s.catalogSubmissionId} hero={s.heroDeliverable} size="compact" />
+              <div className="flex flex-wrap items-center gap-2">
+                {shortId !== '—' ? <span className="font-mono text-sm font-semibold leading-[22px] text-ink">{shortId}</span> : null}
+                <ModelTagPill tag={s.modelTag} />
+              </div>
+              {hero ? (
+                <p className="mt-0.5 text-xs leading-[18px] text-muted">
+                  <CollapsibleCopy text={hero} />
+                </p>
+              ) : null}
               <p className="mt-0.5 text-xs text-muted">
                 {s.projectName}
                 {seat === 'review' && s.rubricAssigneeName ? ` · Rubric by ${s.rubricAssigneeName}` : ''}
