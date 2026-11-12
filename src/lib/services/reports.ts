@@ -1,8 +1,9 @@
 import 'server-only';
 
-import { asc, inArray, ne } from 'drizzle-orm';
+import { and, asc, inArray, ne } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { profiles, submissionEvents, submissions } from '@/db/schema';
+import { isActiveModelWork } from '@/domain/modelTag';
 import { CATALOG_MARKED_DONE, REPORT_ACTIONS, replayTask, type ReportEvent, type ReportTask } from '@/domain/reports';
 import { workStateOf } from '@/domain/workState';
 import { canOversee, type Actor } from '@/lib/auth/permissions';
@@ -25,6 +26,7 @@ export async function loadReportData(actor: Actor, now = Date.now()): Promise<Re
         title: submissions.title,
         landedAt: submissions.landedAt,
         stage: submissions.stage,
+        modelTag: submissions.modelTag,
         rubricAssigneeId: submissions.rubricAssigneeId,
         reviewStatus: submissions.reviewStatus,
         handoffStatus: submissions.handoffStatus,
@@ -35,13 +37,16 @@ export async function loadReportData(actor: Actor, now = Date.now()): Promise<Re
       .where(ne(submissions.stage, 'parked')),
     database.select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName }).from(profiles),
   ]);
+  // Gemini 3.8 stays off delivery/activity reporting — those tasks are not in active work.
+  const active = rows.filter((row) => isActiveModelWork(row));
+  const activeIds = active.map((row) => row.id);
   const events =
-    rows.length === 0
+    activeIds.length === 0
       ? []
       : await database
           .select({ submissionId: submissionEvents.submissionId, action: submissionEvents.action, actorId: submissionEvents.actorId, detail: submissionEvents.detail, createdAt: submissionEvents.createdAt })
           .from(submissionEvents)
-          .where(inArray(submissionEvents.action, REPORT_ACTIONS))
+          .where(and(inArray(submissionEvents.action, REPORT_ACTIONS), inArray(submissionEvents.submissionId, activeIds)))
           .orderBy(asc(submissionEvents.id));
   const byTask = new Map<string, ReportEvent[]>();
   for (const event of events) {
@@ -50,7 +55,7 @@ export async function loadReportData(actor: Actor, now = Date.now()): Promise<Re
     byTask.set(event.submissionId, list);
   }
   return {
-    tasks: rows.map((row) => {
+    tasks: active.map((row) => {
       const workState = workStateOf(row);
       const logged = byTask.get(row.id) ?? [];
       let timeline = replayTask({ landedAt: row.landedAt, events: logged, now });

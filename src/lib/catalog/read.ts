@@ -4,6 +4,7 @@
  * blank the page for records the source considers valid.
  */
 import { z } from 'zod';
+import { modelTagFromValues, type ModelTag } from '@/domain/modelTag';
 import { catalogFileUrls } from './fileUrls';
 import type { CatalogField, CatalogFile, CatalogStatus, CatalogSubmission, CatalogTransition } from './types';
 
@@ -387,6 +388,20 @@ export function heroDeliverableOf(values: Record<string, unknown> | null | undef
   return '';
 }
 
+function catalogValuesFromSource(source: unknown): Record<string, unknown> {
+  const root = asRecord(source);
+  if (!root) return {};
+  const wrapped = asRecord(root.submission);
+  const catalog =
+    wrapped && ('submission' in wrapped || 'projectSubmissionId' in wrapped || 'files' in wrapped) ? wrapped : root;
+  return asRecord(catalog.submission) ?? wrapped ?? catalog ?? {};
+}
+
+/** Infer Argon / Carbon / Gemini 3.8 from a stored Catalog source blob. */
+export function modelTagFromSource(source: unknown): ModelTag {
+  return modelTagFromValues(catalogValuesFromSource(source));
+}
+
 /** Reads the field from either a live Catalog wrap or a form-values source blob. */
 export function heroDeliverableFromSource(source: unknown): string {
   const root = asRecord(source);
@@ -394,7 +409,7 @@ export function heroDeliverableFromSource(source: unknown): string {
   const wrapped = asRecord(root.submission);
   const catalog =
     wrapped && ('submission' in wrapped || 'projectSubmissionId' in wrapped || 'files' in wrapped) ? wrapped : root;
-  const values = asRecord(catalog.submission) ?? wrapped ?? catalog;
+  const values = catalogValuesFromSource(source);
   const fromValues = heroDeliverableOf(values);
   if (fromValues) return fromValues;
   const read = readCatalogSubmission(catalog, root.project ?? catalog.project ?? null);

@@ -235,6 +235,26 @@ select {
   @apply border-line bg-transparent text-quiet;
 }
 
+.model-pill {
+  @apply inline-flex h-[22px] items-center rounded-full border px-2.5 text-[11px] font-medium leading-none;
+}
+
+.model-pill-board {
+  @apply h-7 px-3 text-sm font-semibold;
+}
+
+.model-pill-argon {
+  @apply border-accent-light bg-accent-soft text-accent-text;
+}
+
+.model-pill-carbon {
+  @apply border-check bg-check-soft text-check;
+}
+
+.model-pill-gemini_38 {
+  @apply border-line bg-wash text-muted;
+}
+
 .lane-chip {
   @apply inline-flex h-8 items-center gap-1 rounded-full px-3 text-[13px] font-medium text-muted transition-colors hover:text-ink;
 }

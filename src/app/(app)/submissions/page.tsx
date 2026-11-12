@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { BoardFreshness } from '@/components/BoardFreshness';
 import { CatalogReturnQueue } from '@/components/CatalogReturnQueue';
 import { ImportTask } from '@/components/ImportTask';
+import { ModelTagChips } from '@/components/ModelTagChips';
+import { ModelTagPill } from '@/components/ModelTagPill';
 import { Page } from '@/components/Page';
 import { PageHeader } from '@/components/PageHeader';
 import { currentActor } from '@/lib/auth/identity';
@@ -13,6 +15,7 @@ import { CollapsibleCopy, TaskLabel } from '@/components/TaskLabel';
 import { TimeAgo } from '@/components/TimeAgo';
 import { WorkStateChips } from '@/components/WorkStateChips';
 import { WorkStatusPill } from '@/components/WorkStatusPill';
+import { isModelTag, MODEL_TAGS, type ModelTag } from '@/domain/modelTag';
 import { BOARD_STATES, boardListRows, WORK_STATE_HINT, WORK_STATE_LABEL, WORK_STATES, type WorkState } from '@/domain/workState';
 
 export const dynamic = 'force-dynamic';
@@ -22,20 +25,38 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
   if (!actor) redirect('/login');
   const params = await searchParams;
   const workState = WORK_STATES.includes(params['state'] as WorkState) ? (params['state'] as WorkState) : undefined;
+  const modelTag = isModelTag(params['model']) ? params['model'] : undefined;
   const q = params['q']?.trim() || undefined;
   const mine = params['mine'] === '1';
   const operate = isController(actor);
   const oversee = canOversee(actor);
   const [listedQuery, pendingReturns] = await Promise.all([
-    listSubmissions(actor, { mine, q }),
+    listSubmissions(actor, { mine, q, modelTag }),
     oversee ? listPendingCatalogReturns(actor) : Promise.resolve([]),
   ]);
   const scoped = oversee ? listedQuery : listedQuery.filter((r) => !r.blinded);
   const listed = boardListRows(scoped, { workState, q });
-  const countRows = q ? await listSubmissions(actor, { mine }) : listedQuery;
+  const countRows = q ? await listSubmissions(actor, { mine, modelTag }) : listedQuery;
   const counts = Object.fromEntries(BOARD_STATES.map((s) => [s, countRows.filter((r) => r.workState === s).length])) as Record<WorkState, number>;
+  const modelCountSource = q || modelTag ? await listSubmissions(actor, { mine }) : listedQuery;
+  const modelCounts = Object.fromEntries(MODEL_TAGS.map((tag) => [tag, modelCountSource.filter((r) => r.modelTag === tag).length])) as Record<
+    ModelTag,
+    number
+  >;
   const evidenceColumn =
     workState === 'submitted' ? 'Evidence' : listed.some((row) => row.workState === 'submitted') ? 'Evidence / activity' : 'Last interaction';
+
+  const allHref = (() => {
+    const next = new URLSearchParams();
+    if (modelTag) next.set('model', modelTag);
+    const query = next.toString();
+    return query ? `/submissions?${query}` : '/submissions';
+  })();
+  const mineHref = (() => {
+    const next = new URLSearchParams({ mine: '1' });
+    if (modelTag) next.set('model', modelTag);
+    return `/submissions?${next.toString()}`;
+  })();
 
   return (
     <Page>
@@ -46,10 +67,10 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
         actions={
           oversee ? (
             <>
-              <Link href="/submissions" className={`chip ${!mine && (q || !workState) ? 'chip-on' : ''}`}>
+              <Link href={allHref} className={`chip ${!mine && (q || !workState) ? 'chip-on' : ''}`}>
                 All
               </Link>
-              <Link href="/submissions?mine=1" className={`chip ${mine ? 'chip-on' : ''}`}>
+              <Link href={mineHref} className={`chip ${mine ? 'chip-on' : ''}`}>
                 Mine
               </Link>
             </>
@@ -65,7 +86,8 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
               : 'This project’s tasks you already hold. Claim from the dashboard.'}
       </PageHeader>
 
-      {oversee && <WorkStateChips counts={counts} active={q ? undefined : workState} />}
+      {oversee && <ModelTagChips counts={modelCounts} active={modelTag} workState={workState} mine={mine} />}
+      {oversee && <WorkStateChips counts={counts} active={q ? undefined : workState} modelTag={modelTag} mine={mine} />}
 
       {oversee && (
         <form className="flex flex-wrap items-end gap-2" action="/submissions" method="get">
@@ -73,11 +95,13 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
             Full or partial submission ID
             <input className="input" name="q" defaultValue={q ?? ''} placeholder="Catalog submission id or title" />
           </label>
+          {modelTag ? <input type="hidden" name="model" value={modelTag} /> : null}
+          {mine ? <input type="hidden" name="mine" value="1" /> : null}
           <button className="btn" type="submit">
             Search
           </button>
           {q && (
-            <Link href="/submissions" className="btn">
+            <Link href={allHref} className="btn">
               Clear
             </Link>
           )}
@@ -92,6 +116,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
           <thead className="sticky top-0 bg-wash text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
             <tr>
               <th className="px-4 py-3">Task</th>
+              <th className="px-4 py-3">Model</th>
               <th className="px-4 py-3">Work status</th>
               <th className="px-4 py-3">Assigned to</th>
               <th className="px-4 py-3">{evidenceColumn}</th>
@@ -100,7 +125,7 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
           <tbody className="divide-y divide-line">
             {listed.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-muted">
+                <td colSpan={5} className="px-4 py-10 text-center text-muted">
                   {q ? 'No matching submissions' : workState ? `No submissions: ${WORK_STATE_LABEL[workState]}` : 'Nothing here yet'}
                 </td>
               </tr>
@@ -121,6 +146,9 @@ export default async function SubmissionsPage({ searchParams }: { searchParams: 
                       </p>
                     ) : null}
                   </Link>
+                </td>
+                <td className="px-4 py-3.5 align-middle">
+                  <ModelTagPill tag={s.modelTag} size="board" />
                 </td>
                 <td className="px-4 py-3.5 align-middle">
                   <WorkStatusPill state={s.workState} size="board" />

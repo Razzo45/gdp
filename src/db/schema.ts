@@ -19,8 +19,10 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { MODEL_TAGS, type ModelTag } from '@/domain/modelTag';
 
 export const app = pgSchema('app');
+export { MODEL_TAGS, type ModelTag };
 
 export const ROLES = ['admin', 'pm', 'observer', 'rubric_creator', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
@@ -122,6 +124,7 @@ export const submissions = app.table('submissions', {
   title: text('title').notNull().default(''),
   source: jsonb('source').$type<Record<string, unknown>>().notNull(),
   sourceFingerprint: text('source_fingerprint').notNull(),
+  modelTag: text('model_tag', { enum: MODEL_TAGS }).notNull().default('gemini_38'),
   landedAt: ts('landed_at').notNull().defaultNow(),
   lastSeenAt: ts('last_seen_at').notNull().defaultNow(),
   upstreamChangedAt: ts('upstream_changed_at'),

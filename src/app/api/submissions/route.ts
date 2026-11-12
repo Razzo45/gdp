@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { STAGES } from '@/db/schema';
+import { isModelTag } from '@/domain/modelTag';
 import { route } from '@/lib/api';
 import { canCreateRubrics, isController } from '@/lib/auth/permissions';
 import { forbidden } from '@/lib/services/errors';
@@ -10,11 +11,13 @@ export const dynamic = 'force-dynamic';
 export const GET = route({}, async ({ actor, request }) => {
   const url = new URL(request.url);
   const stage = url.searchParams.get('stage');
+  const model = url.searchParams.get('model');
   return {
     submissions: await listSubmissions(actor, {
       stage: STAGES.includes(stage as (typeof STAGES)[number]) ? (stage as (typeof STAGES)[number]) : undefined,
       mine: url.searchParams.get('mine') === '1',
       projectId: url.searchParams.get('projectId') ?? undefined,
+      modelTag: isModelTag(model) ? model : undefined,
     }),
   };
 });
