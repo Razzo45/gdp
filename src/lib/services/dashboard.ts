@@ -16,6 +16,7 @@ import {
   teamSignal,
   type TeamSignal,
 } from '@/domain/dashboard';
+import { isActiveModelWork } from '@/domain/modelTag';
 import { holdAgeHours, WORK_STATE_LABEL, type WorkState } from '@/domain/workState';
 import { canOversee, type Actor } from '@/lib/auth/permissions';
 import { listUsers } from './admin';
@@ -105,8 +106,11 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
   const stuck: StuckTask[] = [];
   const holding = new Map<string, number>();
   const stuckByHolder = new Map<string, number>();
+  // Gemini 3.8 is parked for active development — keep it off ops stuck/team metrics.
+  const activeRows = rows.filter((row) => isActiveModelWork(row));
+  const activeIds = new Set(activeRows.map((row) => row.id));
 
-  for (const row of rows) {
+  for (const row of activeRows) {
     if (row.workState === 'submitted' || row.workState === 'other') continue;
     const enteredAt = statusEnteredAt(row, latestEntryAt(row.workState, eventsByTask.get(row.id) ?? []));
     const holder = holderForState(row);
@@ -131,7 +135,13 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
   stuck.sort((a, b) => b.hours - a.hours);
 
   const weekMoves = (userId: string, action: string) =>
-    events.filter((event) => event.actorId === userId && event.action === action && Date.parse(event.createdAt) >= week).length;
+    events.filter(
+      (event) =>
+        event.actorId === userId &&
+        event.action === action &&
+        Date.parse(event.createdAt) >= week &&
+        activeIds.has(event.submissionId),
+    ).length;
 
   const team = people
     .filter((person) => person.isActive)
@@ -163,14 +173,14 @@ export async function dashboardOverview(actor: Actor, now = Date.now()): Promise
 
   return {
     stuckHours: STUCK_STATUS_HOURS,
-    inFlight: rows.filter((row) => row.workState !== 'submitted').length,
-    unassigned: rows.filter((row) => row.workState === 'unassigned').length,
-    returned: rows.filter((row) => row.workState === 'review_returned').length,
-    landed: countIn(rows.map((row) => row.landedAt), now),
-    pushed: countIn(rows.map((row) => row.pushedAt ?? (row.workState === 'submitted' ? row.lastSeenAt : null)), now),
+    inFlight: activeRows.filter((row) => row.workState !== 'submitted').length,
+    unassigned: activeRows.filter((row) => row.workState === 'unassigned').length,
+    returned: activeRows.filter((row) => row.workState === 'review_returned').length,
+    landed: countIn(activeRows.map((row) => row.landedAt), now),
+    pushed: countIn(activeRows.map((row) => row.pushedAt ?? (row.workState === 'submitted' ? row.lastSeenAt : null)), now),
     stuck,
     team,
-    mine: rows.filter((row) => row.rubricAssigneeId === actor.id || row.reviewerId === actor.id),
+    mine: activeRows.filter((row) => row.rubricAssigneeId === actor.id || row.reviewerId === actor.id),
   };
 }
 

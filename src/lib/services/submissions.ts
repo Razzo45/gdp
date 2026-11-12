@@ -12,9 +12,10 @@ import { canCreateRubrics, canOversee, canReview, canSeeSubmission, claimableSea
 import { catalogReturnFromSync, landFromParked, lastRubricHolder, parseCatalogReturn, shouldEnqueueCatalogReturn } from '@/domain/catalogReturn';
 import { pipelineFromListState } from '@/domain/catalogListState';
 import { isUserInteraction } from '@/domain/dashboard';
+import { isModelTag, modelTagFromValues, type ModelTag } from '@/domain/modelTag';
 import { workStateOf, type WorkState } from '@/domain/workState';
 import { fetchSubmission } from '@/lib/catalog/client';
-import { heroDeliverableFromSource, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
+import { heroDeliverableFromSource, modelTagFromSource, projectDisplayName, readCatalogSubmission, readProjectStatuses } from '@/lib/catalog/read';
 import type { CatalogSubmission } from '@/lib/catalog/types';
 import { scheduleWorkStatusSheet } from '@/lib/sheets/workStatus';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
@@ -45,6 +46,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
 
   const source = { submission: fetched.submission, project: fetched.project };
   const fp = sourceFingerprint(fetched.submission);
+  const modelTag = modelTagFromValues(read.values);
   const now = new Date().toISOString();
 
   const result = await db().transaction(async (tx) => {
@@ -59,6 +61,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
           title: read.title,
           source,
           sourceFingerprint: fp,
+          modelTag,
           landedAt: now,
           lastSeenAt: now,
           stage: 'parked',
@@ -69,6 +72,7 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
     }
     const changed = existing.sourceFingerprint !== fp;
     const statusMoved = existing.statusId !== read.statusId;
+    const tagMoved = existing.modelTag !== modelTag;
     const [updated] = await tx
       .update(submissions)
       .set({
@@ -76,12 +80,14 @@ export async function syncSubmission(catalogSubmissionId: string, actorId: strin
         title: read.title || existing.title,
         source,
         sourceFingerprint: fp,
+        modelTag,
         lastSeenAt: now,
         ...(changed || statusMoved ? { upstreamChangedAt: now } : {}),
       })
       .where(eq(submissions.id, existing.id))
       .returning();
     if (changed || statusMoved) await recordEvent(tx, existing.id, actorId, 'upstream_changed', { statusId: read.statusId });
+    else if (tagMoved) await recordEvent(tx, existing.id, actorId, 'model_tag_set', { modelTag });
     return { previous: existing, next: await noteCatalogReturnIfNeeded(tx, await landParkedIfInbound(tx, updated!), actorId, hint?.returnNote, existing.statusId) };
   });
   scheduleWorkStatusSheet(result.previous, result.next);
@@ -196,7 +202,10 @@ export interface SubmissionListRow extends Omit<Submission, 'source'> {
 
 const { source: _omittedSource, ...submissionListColumns } = getTableColumns(submissions);
 
-export async function listSubmissions(actor: Actor, filter: { stage?: Submission['stage']; mine?: boolean; projectId?: string; q?: string; workState?: WorkState } = {}): Promise<SubmissionListRow[]> {
+export async function listSubmissions(
+  actor: Actor,
+  filter: { stage?: Submission['stage']; mine?: boolean; projectId?: string; q?: string; workState?: WorkState; modelTag?: ModelTag } = {},
+): Promise<SubmissionListRow[]> {
   const database = db();
   const assignee = alias(profiles, 'assignee');
   const reviewer = alias(profiles, 'reviewer');
@@ -205,6 +214,7 @@ export async function listSubmissions(actor: Actor, filter: { stage?: Submission
   if (filter.stage) conditions.push(eq(submissions.stage, filter.stage));
   if (filter.projectId) conditions.push(eq(submissions.projectId, filter.projectId));
   if (filter.mine) conditions.push(or(eq(submissions.rubricAssigneeId, actor.id), eq(submissions.reviewerId, actor.id)));
+  if (filter.modelTag && isModelTag(filter.modelTag)) conditions.push(eq(submissions.modelTag, filter.modelTag));
   const q = filter.q?.trim();
   if (q) conditions.push(or(ilike(submissions.title, `%${q}%`), ilike(submissions.catalogSubmissionId, `%${q}%`)));
   if (filter.workState === 'unassigned') {
@@ -417,6 +427,20 @@ export async function assignSeat(actor: Actor, submissionId: string, seat: Seat,
   });
   scheduleWorkStatusSheet(result.previous, result.next);
   return result.next;
+}
+
+/** Retag every row from its stored Catalog source (no Catalog network call). */
+export async function backfillModelTags(): Promise<{ scanned: number; updated: number }> {
+  const database = db();
+  const rows = await database.select({ id: submissions.id, source: submissions.source, modelTag: submissions.modelTag }).from(submissions);
+  let updated = 0;
+  for (const row of rows) {
+    const next = modelTagFromSource(row.source);
+    if (next === row.modelTag) continue;
+    await database.update(submissions).set({ modelTag: next, updatedAt: new Date().toISOString() }).where(eq(submissions.id, row.id));
+    updated += 1;
+  }
+  return { scanned: rows.length, updated };
 }
 
 /* ─────────────────────────────────────── PM overview ── */

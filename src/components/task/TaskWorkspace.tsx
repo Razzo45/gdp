@@ -12,6 +12,7 @@ import type { SubmissionView } from '@/lib/services/view';
 import { api } from '../client';
 import { clipWords, formatDate } from '../format';
 import { TimeAgo } from '../TimeAgo';
+import { ModelTagPill } from '../ModelTagPill';
 import { StageBadge } from '../StageBadge';
 import { ScoreStrip } from '../ScoreStrip';
 import { TaskLabel } from '../TaskLabel';
@@ -189,6 +190,7 @@ export function TaskWorkspace({ initial, actorId, assignable }: WorkspaceProps) 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <StageBadge stage={s.stage} />
+              <ModelTagPill tag={s.modelTag} />
               {s.handoffStatus && <span className="badge badge-muted">{s.handoffStatus.replaceAll('_', ' ')}</span>}
               {s.reviewStatus === 'changes_requested' && s.stage === 'rubric' && <span className="badge badge-warn">changes requested</span>}
             </div>

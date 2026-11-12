@@ -29,7 +29,7 @@ import { getVisibleSubmission, readSource } from './submissions';
  */
 
 export interface SubmissionView {
-  submission: Pick<Submission, 'id' | 'catalogSubmissionId' | 'projectId' | 'statusId' | 'title' | 'stage' | 'landedAt' | 'lastSeenAt' | 'upstreamChangedAt' | 'lastClaimedAt' | 'rubricAssigneeId' | 'rubricClaimedAt' | 'reviewerId' | 'reviewClaimedAt' | 'reviewStatus' | 'handoffStatus' | 'pushedAt' | 'revision'>;
+  submission: Pick<Submission, 'id' | 'catalogSubmissionId' | 'projectId' | 'statusId' | 'title' | 'stage' | 'modelTag' | 'landedAt' | 'lastSeenAt' | 'upstreamChangedAt' | 'lastClaimedAt' | 'rubricAssigneeId' | 'rubricClaimedAt' | 'reviewerId' | 'reviewClaimedAt' | 'reviewStatus' | 'handoffStatus' | 'pushedAt' | 'revision'>;
   people: Record<string, { name: string; email: string }>;
   brief: { projectName: string; statusName: string | null; author: string | null; heroDeliverable: string; fields: CatalogField[]; hasAcceptanceCriteria: boolean; inputFiles: CatalogFile[]; goldenFiles: CatalogFile[] };
   rubric: { id: string; version: number; revision: number; seeds: string[]; generation: Record<string, unknown>; statements: RubricStatement[]; quotas: Record<string, number>; target: number } | null;
@@ -119,6 +119,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       statusId: submission.statusId,
       title: submission.title,
       stage: submission.stage,
+      modelTag: submission.modelTag,
       landedAt: submission.landedAt,
       lastSeenAt: submission.lastSeenAt,
       upstreamChangedAt: submission.upstreamChangedAt,
