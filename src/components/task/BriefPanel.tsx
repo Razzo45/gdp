@@ -1,20 +1,35 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { prefersDirectAiUpload } from '@/domain/aiUpload';
 import { briefVisibleFields } from '@/domain/sharePack';
 import { FilePreview, FilePreviewList } from '../FilePreview';
 import { api } from '../client';
+import { Modal } from '../ui/Modal';
 import type { PanelProps } from './TaskWorkspace';
+
+type CookStatus = {
+  runId: string | null;
+  status: string | null;
+  live: string | null;
+  progress: number | null;
+  error: string | null;
+  files: { id: string; name: string }[];
+  ingested: boolean;
+};
 
 export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onHide: () => void }) {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [cookOpen, setCookOpen] = useState(false);
+  const [cookBusy, setCookBusy] = useState(false);
+  const [cook, setCook] = useState<CookStatus | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const s = view.submission;
   const reviewer = view.can.lens === 'reviewer';
   const uploadsAllowed = view.can.seeAiUpload && view.can.changeAiOutputs && view.aiOutputs.length < 8;
+  const canCook = view.can.autocook;
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -73,6 +88,69 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
     }
   }
 
+  async function startCook() {
+    setCookOpen(true);
+    setCookBusy(true);
+    setCook({ runId: null, status: 'starting', live: 'Sending brief and inputs to Autocook…', progress: 5, error: null, files: [], ingested: false });
+    try {
+      const started = await api<{ runId: string }>(`/api/submissions/${s.id}/autocook`, { method: 'POST' });
+      setCook({ runId: started.runId, status: 'queued', live: 'Cook queued…', progress: 10, error: null, files: [], ingested: false });
+    } catch (error) {
+      setCook({
+        runId: null,
+        status: 'failed',
+        live: null,
+        progress: null,
+        error: error instanceof Error ? error.message : 'Could not start Autocook.',
+        files: [],
+        ingested: false,
+      });
+      setCookBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    const runId = cook?.runId;
+    if (!cookOpen || !runId) return;
+    let cancelled = false;
+    let id = 0;
+    const stop = () => {
+      cancelled = true;
+      if (id) window.clearInterval(id);
+    };
+    const tick = async () => {
+      try {
+        const next = await api<CookStatus>(`/api/submissions/${s.id}/autocook?runId=${encodeURIComponent(runId)}`);
+        if (cancelled) return;
+        setCook(next);
+        if (next.ingested) {
+          stop();
+          setCookBusy(false);
+          notify(`Cook finished — ${next.files.length} AI file(s) attached.`);
+          await refresh();
+          return;
+        }
+        if (next.status === 'failed' || next.status === 'rejected') {
+          stop();
+          setCookBusy(false);
+          notify(next.error || 'Autocook failed.', 'bad');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        stop();
+        setCookBusy(false);
+        setCook((current) =>
+          current
+            ? { ...current, status: 'failed', error: error instanceof Error ? error.message : 'Could not read Autocook status.', progress: null }
+            : current,
+        );
+      }
+    };
+    id = window.setInterval(() => void tick(), 2500);
+    void tick();
+    return stop;
+  }, [cookOpen, cook?.runId, notify, refresh, s.id]);
+
   const visibleFields = briefVisibleFields(
     reviewer ? view.brief.fields.filter((f) => /general|task|input/i.test(f.key) || /general|task/i.test(f.label)) : view.brief.fields,
   );
@@ -117,16 +195,22 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
       <div className="border-t border-line pt-4" id="ai-output-files">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <h3 className="text-base font-bold">AI output files ({view.aiOutputs.length})</h3>
+          {canCook && (
+            <button className="btn btn-sm ml-auto" disabled={busy || cookBusy} onClick={() => void startCook()} type="button">
+              {cookBusy ? 'Cooking…' : 'Cook'}
+            </button>
+          )}
           {uploadsAllowed && (
             <>
               <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => upload(e.target.files)} />
-              <button className="btn btn-sm ml-auto" disabled={busy || view.aiOutputs.length >= 8} onClick={() => fileInput.current?.click()} type="button">
+              <button className={`btn btn-sm ${canCook ? '' : 'ml-auto'}`} disabled={busy || view.aiOutputs.length >= 8} onClick={() => fileInput.current?.click()} type="button">
                 {busy ? progress ?? 'Uploading…' : 'Upload AI files'}
               </button>
             </>
           )}
         </div>
         {uploadsAllowed && <p className="mb-2 text-xs text-muted">Upload the generated artifacts to be graded (same types as Golden, max 8 files). Large files go straight to storage.</p>}
+        {canCook && <p className="mb-2 text-xs text-muted">Cook sends this brief and the Catalog inputs to Autocook, then replaces the AI output files when it finishes.</p>}
         {view.aiOutputs.length === 0 ? (
           <p className="text-sm text-muted">No AI output yet. The reviewer evaluates it by hand and stability grades it three times.</p>
         ) : (
@@ -144,6 +228,31 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
           </ul>
         )}
       </div>
+      {cookOpen && cook && (
+        <Modal title="Autocook" onClose={() => setCookOpen(false)}>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted">{cook.live || cook.error || (cookBusy ? 'Working…' : 'Idle')}</p>
+            {cook.progress != null ? (
+              <div className="h-2 overflow-hidden rounded-full bg-wash">
+                <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${cook.progress}%` }} />
+              </div>
+            ) : null}
+            {cook.runId ? <p className="font-mono text-xs text-quiet">Run {cook.runId}</p> : null}
+            {cook.error ? <p className="text-bad">{cook.error}</p> : null}
+            {cook.ingested ? (
+              <p className="text-ok">
+                Attached {cook.files.length} file{cook.files.length === 1 ? '' : 's'}
+                {cook.files.length ? `: ${cook.files.map((f) => f.name).join(', ')}` : ''}.
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2 pt-1">
+              <button className="btn" type="button" onClick={() => setCookOpen(false)}>
+                {cookBusy ? 'Hide' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

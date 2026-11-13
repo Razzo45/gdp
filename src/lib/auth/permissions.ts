@@ -1,4 +1,5 @@
 import type { Role } from '@/db/schema';
+import { canAutocookEmail } from '@/domain/autocook';
 
 /**
  * Roles are permission bundles, not personas; a user may hold several.
@@ -72,6 +73,12 @@ export function canRunStability(actor: Actor, seat: SeatView): boolean {
 export function canChangeAiOutputs(actor: Actor, seat: SeatView): boolean {
   if (seat.stage !== 'rubric') return false;
   return holdsRubricSeat(actor, seat);
+}
+
+/** Operator email + mutable AI outputs. Callers also require Autocook env to be configured. */
+export function canAutocook(actor: Actor, seat: SeatView): boolean {
+  if (!canAutocookEmail(actor.email)) return false;
+  return canChangeAiOutputs(actor, seat);
 }
 
 /** May this actor perform the human AI evaluation and decide the review? */

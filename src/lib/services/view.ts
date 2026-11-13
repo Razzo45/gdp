@@ -10,10 +10,11 @@ import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { capsFor } from '@/lib/auth/workMode';
-import { canChangeAiOutputs, canRunStability, claimableSeat, holdsReviewSeat, holdsRubricSeat, isController, isOwnRubricSeat, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
+import { canAutocook, canChangeAiOutputs, canRunStability, claimableSeat, holdsReviewSeat, holdsRubricSeat, isController, isOwnRubricSeat, taskLens, type Actor, type TaskLens } from '@/lib/auth/permissions';
 import { parseCatalogReturn } from '@/domain/catalogReturn';
 import { heroDeliverableFromSource } from '@/lib/catalog/read';
 import type { CatalogField, CatalogFile } from '@/lib/catalog/types';
+import { autocookConfigured } from '@/lib/env';
 import { jobsForSubmission } from '@/lib/jobs/queue';
 import { listAiOutputs } from './files';
 import { handoffView } from './handoff';
@@ -65,6 +66,8 @@ export interface SubmissionView {
     seeHandoff: boolean;
     seeAiUpload: boolean;
     changeAiOutputs: boolean;
+    /** George-only Autocook cook when env is configured. */
+    autocook: boolean;
     seeScoreGolden: boolean;
     seeScoreStability: boolean;
   };
@@ -235,6 +238,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       seeHandoff: lens === 'controller',
       seeAiUpload: lens !== 'reviewer',
       changeAiOutputs: canChangeAiOutputs(actor, submission),
+      autocook: canAutocook(actor, submission) && autocookConfigured(),
       seeScoreGolden: lens !== 'reviewer',
       seeScoreStability: lens !== 'reviewer',
     },

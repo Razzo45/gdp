@@ -59,6 +59,10 @@ const Schema = z
     WIRESTOCK_API_TOKEN: z.string().min(1).optional(),
     WIRESTOCK_WEBHOOK_SECRET: z.string().min(8).optional(),
 
+    /** Mother → Autocook (george-only Cook). Feature stays off until the token is set. */
+    AUTOCOOK_BASE_URL: z.string().url().default('https://web-production-94c5b.up.railway.app'),
+    AUTOCOOK_SERVICE_TOKEN: z.string().min(8).optional(),
+
     /** Comma-separated emails granted admin on first sign-in. */
     BOOTSTRAP_ADMIN_EMAILS: z.string().default(''),
     PUBLIC_APP_URL: z.string().url().optional(),
@@ -151,4 +155,9 @@ export function bootstrapAdminEmails(): Set<string> {
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean),
   );
+}
+
+/** True when GDP can call Autocook as a service client. */
+export function autocookConfigured(): boolean {
+  return Boolean(env().AUTOCOOK_SERVICE_TOKEN?.trim());
 }
