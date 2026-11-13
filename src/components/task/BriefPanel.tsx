@@ -89,6 +89,10 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
   }
 
   async function startCook() {
+    if (cookBusy && cook?.runId) {
+      setCookOpen(true);
+      return;
+    }
     setCookOpen(true);
     setCookBusy(true);
     setCook({ runId: null, status: 'starting', live: 'Sending brief and inputs to Autocook…', progress: 5, error: null, files: [], ingested: false });
@@ -109,9 +113,45 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
     }
   }
 
+  // Resume an in-flight / finished-but-not-ingested cook when the panel mounts (hide-safe).
+  useEffect(() => {
+    if (!canCook) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await api<CookStatus>(`/api/submissions/${s.id}/autocook`);
+        if (cancelled || !next.runId) return;
+        if (next.ingested) {
+          // Only surface if this page load just attached files (e.g. modal was closed before ingest).
+          if (view.aiOutputs.length === 0 && next.files.length > 0) {
+            setCook(next);
+            setCookBusy(false);
+            setCookOpen(true);
+            notify(`Cook finished — ${next.files.length} AI file(s) attached.`);
+            await refresh();
+          }
+          return;
+        }
+        if (next.status === 'failed' || next.status === 'rejected') {
+          setCook(next);
+          setCookBusy(false);
+          return;
+        }
+        setCook(next);
+        setCookBusy(true);
+      } catch {
+        /* no active cook */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canCook, notify, refresh, s.id, view.aiOutputs.length]);
+
+  // Poll while a run is active — modal hide must not stop this.
   useEffect(() => {
     const runId = cook?.runId;
-    if (!cookOpen || !runId) return;
+    if (!cookBusy || !runId) return;
     let cancelled = false;
     let id = 0;
     const stop = () => {
@@ -149,7 +189,10 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
     id = window.setInterval(() => void tick(), 2500);
     void tick();
     return stop;
-  }, [cookOpen, cook?.runId, notify, refresh, s.id]);
+  }, [cookBusy, cook?.runId, notify, refresh, s.id]);
+
+  const cookHidden = Boolean(cook && !cookOpen);
+  const cookLabel = cookBusy ? 'Cooking…' : cook?.ingested ? 'Cooked' : cook?.error ? 'Cook failed' : 'Cook';
 
   const visibleFields = briefVisibleFields(
     reviewer ? view.brief.fields.filter((f) => /general|task|input/i.test(f.key) || /general|task/i.test(f.label)) : view.brief.fields,
@@ -196,9 +239,16 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <h3 className="text-base font-bold">AI output files ({view.aiOutputs.length})</h3>
           {canCook && (
-            <button className="btn btn-sm ml-auto" disabled={busy || cookBusy} onClick={() => void startCook()} type="button">
-              {cookBusy ? 'Cooking…' : 'Cook'}
-            </button>
+            <>
+              <button className="btn btn-sm ml-auto" disabled={busy || (cookBusy && !cook?.runId)} onClick={() => void startCook()} type="button">
+                {cookLabel}
+              </button>
+              {cookHidden ? (
+                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setCookOpen(true)}>
+                  Show cook status
+                </button>
+              ) : null}
+            </>
           )}
           {uploadsAllowed && (
             <>
@@ -210,7 +260,11 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
           )}
         </div>
         {uploadsAllowed && <p className="mb-2 text-xs text-muted">Upload the generated artifacts to be graded (same types as Golden, max 8 files). Large files go straight to storage.</p>}
-        {canCook && <p className="mb-2 text-xs text-muted">Cook sends this brief and the Catalog inputs to Autocook, then replaces the AI output files when it finishes.</p>}
+        {canCook && (
+          <p className="mb-2 text-xs text-muted">
+            Cook sends this brief and the Catalog inputs to Autocook, then replaces the AI output files when it finishes. Hiding the status window does not stop the cook.
+          </p>
+        )}
         {view.aiOutputs.length === 0 ? (
           <p className="text-sm text-muted">No AI output yet. The reviewer evaluates it by hand and stability grades it three times.</p>
         ) : (
@@ -247,7 +301,7 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
             ) : null}
             <div className="flex justify-end gap-2 pt-1">
               <button className="btn" type="button" onClick={() => setCookOpen(false)}>
-                {cookBusy ? 'Hide' : 'Close'}
+                Hide
               </button>
             </div>
           </div>

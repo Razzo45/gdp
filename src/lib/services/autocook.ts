@@ -161,6 +161,8 @@ export async function startAutocook(actor: Actor, submissionId: string): Promise
         if (status && !['exported', 'failed', 'rejected'].includes(status)) {
           throw conflict('A cook is already running for this task.');
         }
+        // Finished on Autocook but not ingested yet — hand the run back so the client can poll/ingest.
+        if (status === 'exported') return { runId: active.runId };
       } catch (error) {
         if (error instanceof ServiceError && error.status === 409) throw error;
       }
