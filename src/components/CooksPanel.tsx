@@ -9,6 +9,8 @@ interface Cook {
   sessionId: string;
   status: string;
   line: string;
+  phase: string;
+  createdAt: string;
   updatedAt: string;
   prompt: string;
   brain: 'Argon' | 'Carbon';
@@ -20,6 +22,14 @@ function badge(status: string): string {
   if (status === 'failed' || status === 'rejected') return 'badge badge-bad';
   if (status === 'queued' || status === 'generating' || status === 'stitching') return 'badge badge-warn';
   return 'badge badge-muted';
+}
+
+function sessionLabel(sessionId: string): string {
+  const raw = sessionId.trim();
+  if (!raw) return '';
+  const cut = raw.match(/gdp-([a-f0-9]+)/i)?.[1];
+  if (cut) return `task ${cut.slice(0, 8)}`;
+  return raw.length > 28 ? `${raw.slice(0, 28)}…` : raw;
 }
 
 export function CooksPanel() {
@@ -67,12 +77,22 @@ export function CooksPanel() {
       {error ? <p className="text-sm text-warn">{error}</p> : null}
       <section className="card">
         <h2 className="section-title mb-1 text-lg">In progress ({active.length})</h2>
-        <p className="mb-4 text-sm text-muted">Cancel removes that cook. An encode already running keeps the worker until it finishes.</p>
-        {active.length === 0 ? <p className="text-sm text-muted">Nothing is cooking.</p> : <CookList cooks={active} busy={busy} onCancel={cancel} />}
+        <p className="mb-4 text-sm text-muted">
+          Order stays fixed while a cook is live. Cancel removes that cook. An encode already running keeps the worker until it finishes.
+        </p>
+        {active.length === 0 ? (
+          <p className="text-sm text-muted">Nothing is cooking.</p>
+        ) : (
+          <CookList cooks={active} busy={busy} onCancel={cancel} />
+        )}
       </section>
       <section className="card">
         <h2 className="section-title mb-4 text-lg">Recent ({finished.length})</h2>
-        {finished.length === 0 ? <p className="text-sm text-muted">No finished cooks yet.</p> : <CookList cooks={finished} busy={busy} onCancel={cancel} />}
+        {finished.length === 0 ? (
+          <p className="text-sm text-muted">No finished cooks yet.</p>
+        ) : (
+          <CookList cooks={finished} busy={busy} onCancel={cancel} />
+        )}
       </section>
     </div>
   );
@@ -81,27 +101,36 @@ export function CooksPanel() {
 function CookList({ cooks, busy, onCancel }: { cooks: Cook[]; busy: string | null; onCancel: (cook: Cook) => void }) {
   return (
     <ul className="divide-y divide-line">
-      {cooks.map((cook) => (
-        <li key={cook.id} className="flex items-start justify-between gap-4 py-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={badge(cook.status)}>{cook.status}</span>
-              <span className="badge badge-muted">{cook.brain ?? 'Argon'}</span>
-              <span className="font-mono text-xs text-muted">{cook.id}</span>
-              {cook.updatedAt ? (
-                <span className="text-xs text-muted">
-                  <TimeAgo iso={cook.updatedAt} />
-                </span>
-              ) : null}
+      {cooks.map((cook) => {
+        const task = sessionLabel(cook.sessionId);
+        return (
+          <li key={cook.id} className="flex items-start justify-between gap-4 py-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={badge(cook.status)}>{cook.phase || cook.status}</span>
+                <span className="badge badge-muted">{cook.brain ?? 'Argon'}</span>
+                {task ? <span className="text-xs font-medium text-ink">{task}</span> : null}
+                {cook.updatedAt ? (
+                  <span className="text-xs text-muted">
+                    <TimeAgo iso={cook.updatedAt} />
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm font-medium leading-6 text-ink">{cook.line}</p>
+              {cook.prompt ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{cook.prompt}</p> : null}
+              <p className="mt-1 font-mono text-[11px] text-quiet">{cook.id}</p>
             </div>
-            <p className="mt-1 text-sm text-ink">{cook.line}</p>
-            {cook.prompt ? <p className="mt-1 line-clamp-2 text-xs text-muted">{cook.prompt}</p> : null}
-          </div>
-          <button className="btn btn-danger btn-sm shrink-0" type="button" disabled={busy === cook.id} onClick={() => onCancel(cook)}>
-            {busy === cook.id ? '…' : cook.active ? 'Cancel' : 'Delete'}
-          </button>
-        </li>
-      ))}
+            <button
+              className="btn btn-danger btn-sm shrink-0"
+              type="button"
+              disabled={busy === cook.id}
+              onClick={() => onCancel(cook)}
+            >
+              {busy === cook.id ? '…' : cook.active ? 'Cancel' : 'Delete'}
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }

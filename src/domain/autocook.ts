@@ -32,6 +32,8 @@ export interface OperatorCookRow {
   sessionId: string;
   status: string;
   line: string;
+  phase: string;
+  createdAt: string;
   updatedAt: string;
   prompt: string;
   brain: 'Argon' | 'Carbon';
@@ -43,6 +45,47 @@ function cookBrainLabel(model: string | null | undefined): 'Argon' | 'Carbon' {
   return value === 'carbon' || value === 'gemini-4-carbon' ? 'Carbon' : 'Argon';
 }
 
+/** Short label for the panel. The live line stays under it. */
+export function cookPhase(status: string, line: string): string {
+  const live = line.trim();
+  const lower = live.toLowerCase();
+  if (status === 'exported') return 'Done';
+  if (status === 'failed' || status === 'rejected') return 'Failed';
+  if (status === 'stitching') return 'Stitching';
+  if (/fetching the task files/i.test(lower)) return 'Fetching files';
+  if (/reading the task/i.test(lower)) return 'Planning';
+  if (/queued for deliverables/i.test(lower)) return 'Waiting in queue';
+  if (/writing the deliverables/i.test(lower)) return 'Writing files';
+  if (/\btool\s+(\w+)/i.test(live)) {
+    const tool = live.match(/\btool\s+(\w+)/i)?.[1] ?? 'tool';
+    return `Tool · ${tool}`;
+  }
+  if (/writing\s+/i.test(lower)) return 'Writing a file';
+  if (status === 'queued') return 'Queued';
+  if (status === 'generating') return 'Working';
+  return status || 'Working';
+}
+
+/** Active cooks keep a fixed order. Finished cooks stay newest first. */
+export function sortOperatorCooks(cooks: OperatorCookRow[]): OperatorCookRow[] {
+  const active = cooks
+    .filter((row) => row.active)
+    .sort((a, b) => {
+      const byCreated = a.createdAt.localeCompare(b.createdAt);
+      if (byCreated) return byCreated;
+      return a.id.localeCompare(b.id);
+    });
+  const finished = cooks
+    .filter((row) => !row.active)
+    .sort((a, b) => {
+      const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
+      if (byUpdated) return byUpdated;
+      return b.id.localeCompare(a.id);
+    })
+    .slice(0, 20);
+  return [...active, ...finished];
+}
+
 /** One row for the operator's cook list. Drops anything that is not a run id. */
 export function operatorCookFromRun(run: {
   id?: string;
@@ -50,6 +93,7 @@ export function operatorCookFromRun(run: {
   status?: string;
   error?: string | null;
   initial_prompt?: string | null;
+  created_at?: string;
   updated_at?: string;
   script_model?: string | null;
   live?: { text?: string } | null;
@@ -58,12 +102,15 @@ export function operatorCookFromRun(run: {
   if (!/^run_[A-Za-z0-9_-]{4,80}$/.test(id)) return null;
   const status = run.status?.trim() || 'unknown';
   const line = run.live?.text?.trim() || run.error?.trim() || status;
+  const updatedAt = run.updated_at?.trim() || '';
   return {
     id,
     sessionId: run.session_id?.trim() || '',
     status,
     line,
-    updatedAt: run.updated_at?.trim() || '',
+    phase: cookPhase(status, line),
+    createdAt: run.created_at?.trim() || updatedAt,
+    updatedAt,
     prompt: (run.initial_prompt ?? '').replace(/\s+/g, ' ').trim(),
     brain: cookBrainLabel(run.script_model),
     active: !FINISHED_COOK.has(status),
