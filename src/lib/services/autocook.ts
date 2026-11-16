@@ -3,12 +3,12 @@ import 'server-only';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissionEvents } from '@/db/schema';
-import { brainFromModelTag, cookPromptFromFields, mediaPathFromAbs } from '@/domain/autocook';
+import { brainFromModelTag, canAutocookEmail, cookPromptFromFields, mediaPathFromAbs, operatorCookFromRun, type OperatorCookRow } from '@/domain/autocook';
 import { canAutocook, type Actor, type SeatView } from '@/lib/auth/permissions';
 import { autocookConfigured, env } from '@/lib/env';
 import { normaliseMime } from '@/lib/ai/media';
 import { addAiOutput, catalogSourceLocations, listAiOutputs, removeAiOutput } from './files';
-import { conflict, forbidden, invalid, ServiceError } from './errors';
+import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
 import { getVisibleSubmission, readSource, recordEvent } from './submissions';
 
 const SERVICE_STATUSES = new Set([400, 403, 404, 409, 422, 502, 503]);
@@ -239,4 +239,44 @@ export async function autocookStatus(actor: Actor, submissionId: string, runIdHi
     files: [],
     ingested: false,
   };
+}
+
+function assertOperator(actor: Actor): void {
+  if (!canAutocookEmail(actor.email)) throw forbidden('Cooks are only available to the operator.');
+  if (!autocookConfigured()) throw invalid('Autocook is not configured on this GDP instance.');
+}
+
+/** The operator's own cooks, active first. */
+export async function listOperatorCooks(actor: Actor): Promise<OperatorCookRow[]> {
+  assertOperator(actor);
+  const res = await fetch(`${baseUrl()}/api/runs`, { headers: authHeaders(), cache: 'no-store' });
+  const json = (await res.json().catch(() => ({}))) as { runs?: unknown; error?: string };
+  if (!res.ok) throw new ServiceError(serviceStatus(res.status), json.error || `Autocook returned ${res.status}.`);
+  const rows = Array.isArray(json.runs) ? json.runs : [];
+  const cooks = rows
+    .map((row) => (row && typeof row === 'object' ? operatorCookFromRun(row as Parameters<typeof operatorCookFromRun>[0]) : null))
+    .filter((row): row is OperatorCookRow => row !== null);
+  cooks.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+  const active = cooks.filter((row) => row.active);
+  const finished = cooks.filter((row) => !row.active).slice(0, 20);
+  return [...active, ...finished];
+}
+
+/** Removes one of the operator's cooks. Same call as Delete on the Autocook run page. */
+export async function cancelOperatorCook(actor: Actor, runId: string): Promise<void> {
+  assertOperator(actor);
+  if (!/^run_[A-Za-z0-9_-]{4,80}$/.test(runId)) throw invalid('Unknown cook.');
+  const res = await fetch(`${baseUrl()}/api/runs/${encodeURIComponent(runId)}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+    cache: 'no-store',
+  });
+  if (res.status === 404) throw notFound('That cook');
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ServiceError(serviceStatus(res.status), json.error || `Autocook returned ${res.status}.`);
+  }
 }

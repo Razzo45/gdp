@@ -25,6 +25,51 @@ export function cookPromptFromFields(fields: readonly { label: string; text: str
     .join('\n\n');
 }
 
+const FINISHED_COOK = new Set(['exported', 'failed', 'rejected']);
+
+export interface OperatorCookRow {
+  id: string;
+  sessionId: string;
+  status: string;
+  line: string;
+  updatedAt: string;
+  prompt: string;
+  brain: 'Argon' | 'Carbon';
+  active: boolean;
+}
+
+function cookBrainLabel(model: string | null | undefined): 'Argon' | 'Carbon' {
+  const value = (model ?? '').trim().toLowerCase();
+  return value === 'carbon' || value === 'gemini-4-carbon' ? 'Carbon' : 'Argon';
+}
+
+/** One row for the operator's cook list. Drops anything that is not a run id. */
+export function operatorCookFromRun(run: {
+  id?: string;
+  session_id?: string;
+  status?: string;
+  error?: string | null;
+  initial_prompt?: string | null;
+  updated_at?: string;
+  script_model?: string | null;
+  live?: { text?: string } | null;
+}): OperatorCookRow | null {
+  const id = run.id?.trim() ?? '';
+  if (!/^run_[A-Za-z0-9_-]{4,80}$/.test(id)) return null;
+  const status = run.status?.trim() || 'unknown';
+  const line = run.live?.text?.trim() || run.error?.trim() || status;
+  return {
+    id,
+    sessionId: run.session_id?.trim() || '',
+    status,
+    line,
+    updatedAt: run.updated_at?.trim() || '',
+    prompt: (run.initial_prompt ?? '').replace(/\s+/g, ' ').trim(),
+    brain: cookBrainLabel(run.script_model),
+    active: !FINISHED_COOK.has(status),
+  };
+}
+
 /** Autocook deliverable abs paths → `/api/media?path=` relative form. */
 export function mediaPathFromAbs(abs: string): string {
   const normalized = abs.replaceAll('\\', '/');

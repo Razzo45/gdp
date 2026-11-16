@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { AppShell, type NavLink } from '@/components/AppShell';
 import { FetchShortcut } from '@/components/FetchShortcut';
+import { canAutocookEmail } from '@/domain/autocook';
 import { usesWorkMode } from '@/domain/workMode';
 import { currentActor } from '@/lib/auth/identity';
 import { canManageUsers, canOversee, isController } from '@/lib/auth/permissions';
@@ -20,6 +21,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (canOversee(actor)) {
     links.push({ href: '/submissions/claims', label: 'Who holds what', group: 'Operations' });
     links.push({ href: '/reports', label: 'Reports', group: 'Operations' });
+  }
+  if (canAutocookEmail(actor.email)) {
+    links.push({ href: '/cooks', label: 'Cooks', group: 'Operations' });
   }
   if (canManageUsers(actor)) {
     links.push({ href: '/settings/users', label: 'Settings', group: 'Administration' });
