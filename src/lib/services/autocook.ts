@@ -7,7 +7,7 @@ import { brainFromModelTag, cookPromptFromFields, mediaPathFromAbs } from '@/dom
 import { canAutocook, type Actor, type SeatView } from '@/lib/auth/permissions';
 import { autocookConfigured, env } from '@/lib/env';
 import { normaliseMime } from '@/lib/ai/media';
-import { addAiOutput, catalogSourceFiles, listAiOutputs, removeAiOutput } from './files';
+import { addAiOutput, catalogSourceLocations, listAiOutputs, removeAiOutput } from './files';
 import { conflict, forbidden, invalid, ServiceError } from './errors';
 import { getVisibleSubmission, readSource, recordEvent } from './submissions';
 
@@ -175,22 +175,18 @@ export async function startAutocook(actor: Actor, submissionId: string): Promise
   if (!prompt.trim()) throw invalid('This task has no brief text to cook.');
 
   const brain = brainFromModelTag(submission.modelTag);
-  const inputs = await catalogSourceFiles(submission, 'inputs');
-
-  const form = new FormData();
-  form.set('prompt', prompt);
-  form.set('brain', brain);
-  form.set('requestId', `gdp:${submissionId}:${Date.now()}`);
-  form.set('sessionLabel', `GDP ${submission.catalogSubmissionId.slice(0, 8)}`);
-  for (const file of inputs.files) {
-    const part = new Blob([Buffer.from(file.bytes)], { type: file.mime });
-    form.append('inputs', part, file.name);
-  }
+  const sources = await catalogSourceLocations(submission, 'inputs');
 
   const res = await fetch(`${baseUrl()}/api/cook`, {
     method: 'POST',
-    headers: authHeaders(),
-    body: form,
+    headers: { ...(authHeaders() as Record<string, string>), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      brain,
+      requestId: `gdp:${submissionId}:${Date.now()}`,
+      sessionLabel: `GDP ${submission.catalogSubmissionId.slice(0, 8)}`,
+      sources,
+    }),
   });
   const json = (await res.json().catch(() => ({}))) as { error?: string; run?: { id?: string }; blocked?: boolean };
   if (!res.ok || json.error) throw new ServiceError(serviceStatus(res.status), json.error || `Autocook cook failed (${res.status}).`);
