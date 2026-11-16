@@ -128,6 +128,20 @@ export async function catalogSourceFiles(submission: Submission, kind: 'golden' 
   return { files, fingerprint: sha256(files.map((f) => `${f.id}:${sha256(f.bytes)}`).join('|')) };
 }
 
+/** Addresses only. Autocook downloads the objects; this process does not read the bytes. */
+export async function catalogSourceLocations(
+  submission: Submission,
+  kind: 'golden' | 'inputs',
+): Promise<{ name: string; url: string }[]> {
+  const resolved = await catalogList(submission, kind);
+  const sources: { name: string; url: string }[] = [];
+  for (const file of resolved.list) {
+    if (!file.downloadUrl) throw new ServiceError(502, `The Catalog gave no download address for ${file.name}.`);
+    sources.push({ name: file.name, url: file.downloadUrl });
+  }
+  return sources;
+}
+
 export async function prepareAiOutputs(database: DbOrTx, submissionId: string, role: string): Promise<{ files: PreparedFile[]; fingerprint: string }> {
   const rows = await listAiOutputs(database, submissionId);
   const files: PreparedFile[] = [];
