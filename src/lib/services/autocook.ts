@@ -3,7 +3,15 @@ import 'server-only';
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissionEvents } from '@/db/schema';
-import { brainFromModelTag, canAutocookEmail, cookPromptFromFields, mediaPathFromAbs, operatorCookFromRun, type OperatorCookRow } from '@/domain/autocook';
+import {
+  brainFromModelTag,
+  canAutocookEmail,
+  cookPromptFromFields,
+  mediaPathFromAbs,
+  operatorCookFromRun,
+  sortOperatorCooks,
+  type OperatorCookRow,
+} from '@/domain/autocook';
 import { canAutocook, type Actor, type SeatView } from '@/lib/auth/permissions';
 import { autocookConfigured, env } from '@/lib/env';
 import { normaliseMime } from '@/lib/ai/media';
@@ -256,13 +264,7 @@ export async function listOperatorCooks(actor: Actor): Promise<OperatorCookRow[]
   const cooks = rows
     .map((row) => (row && typeof row === 'object' ? operatorCookFromRun(row as Parameters<typeof operatorCookFromRun>[0]) : null))
     .filter((row): row is OperatorCookRow => row !== null);
-  cooks.sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return b.updatedAt.localeCompare(a.updatedAt);
-  });
-  const active = cooks.filter((row) => row.active);
-  const finished = cooks.filter((row) => !row.active).slice(0, 20);
-  return [...active, ...finished];
+  return sortOperatorCooks(cooks);
 }
 
 /** Removes one of the operator's cooks. Same call as Delete on the Autocook run page. */
