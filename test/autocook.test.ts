@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { AUTOCOOK_OPERATOR_EMAIL, brainFromModelTag, canAutocookEmail, cookPromptFromFields, mediaPathFromAbs } from '@/domain/autocook';
+import { AUTOCOOK_OPERATOR_EMAIL, brainFromModelTag, canAutocookEmail, cookPromptFromFields, mediaPathFromAbs, operatorCookFromRun } from '@/domain/autocook';
+
+describe('operatorCookFromRun', () => {
+  it('keeps an active cook and its status line', () => {
+    const row = operatorCookFromRun({
+      id: 'run_e5a063de',
+      session_id: 'sess_drama_gdp-eeb7dc91',
+      status: 'generating',
+      error: 'Argon tool join_videos (tokyo_top_5_video-joined, 10 clips)…',
+      live: { text: 'Argon tool join_videos (tokyo_top_5_video-joined, 10 clips)…' },
+      updated_at: '2026-11-16T12:27:41.025Z',
+      initial_prompt: 'Make the film',
+    });
+    expect(row?.active).toBe(true);
+    expect(row?.brain).toBe('Argon');
+    expect(row?.line).toMatch(/join_videos/);
+    expect(row?.id).toBe('run_e5a063de');
+  });
+
+  it('drops a row that is not a run id', () => {
+    expect(operatorCookFromRun({ id: 'not-a-run', status: 'queued' })).toBeNull();
+  });
+
+  it('reads a carbon model id as Carbon', () => {
+    const row = operatorCookFromRun({ id: 'run_393d219f', status: 'generating', script_model: 'gemini-4-carbon' });
+    expect(row?.brain).toBe('Carbon');
+  });
+
+  it('marks an exported cook finished', () => {
+    const row = operatorCookFromRun({ id: 'run_53e150b9', status: 'exported', live: { text: 'Exported' } });
+    expect(row?.active).toBe(false);
+  });
+});
 
 describe('canAutocookEmail', () => {
   it('allows only george@wirestock.io', () => {
