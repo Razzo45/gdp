@@ -1,7 +1,8 @@
+import { startAutocookIngestWatch } from '@/lib/autocook/ingestWatch';
 import { startCatalogWatch } from '@/lib/catalog/watchLoop';
 import { startWorker } from '@/lib/jobs/worker';
 
-export { startCatalogWatch };
+export { startCatalogWatch, startAutocookIngestWatch };
 
 const boot = globalThis as typeof globalThis & { __gdpWorkerStarted?: boolean };
 
