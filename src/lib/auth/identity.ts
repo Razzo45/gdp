@@ -109,3 +109,12 @@ export async function requireActor(): Promise<Actor> {
   if (!actor) throw new AuthError(401, 'Sign in to continue.');
   return actor;
 }
+
+/** Load an actor by profile id (background jobs that already know who started the work). */
+export async function actorById(userId: string): Promise<Actor | null> {
+  const id = userId.trim();
+  if (!id) return null;
+  const actor = await loadActor(id, null);
+  if (!actor || !actor.isActive) return null;
+  return actor;
+}

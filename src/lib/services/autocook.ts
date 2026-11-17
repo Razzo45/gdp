@@ -12,6 +12,7 @@ import {
   sortOperatorCooks,
   type OperatorCookRow,
 } from '@/domain/autocook';
+import { actorById } from '@/lib/auth/identity';
 import { canAutocook, type Actor, type SeatView } from '@/lib/auth/permissions';
 import { autocookConfigured, env } from '@/lib/env';
 import { normaliseMime } from '@/lib/ai/media';
@@ -281,4 +282,96 @@ export async function cancelOperatorCook(actor: Actor, runId: string): Promise<v
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ServiceError(serviceStatus(res.status), json.error || `Autocook returned ${res.status}.`);
   }
+}
+
+type PendingCook = { submissionId: string; runId: string; actorId: string | null };
+
+/** Latest autocook_started per submission that has not been ingested for that runId. */
+async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
+  const rows = await db()
+    .select({
+      id: submissionEvents.id,
+      submissionId: submissionEvents.submissionId,
+      actorId: submissionEvents.actorId,
+      detail: submissionEvents.detail,
+    })
+    .from(submissionEvents)
+    .where(eq(submissionEvents.action, 'autocook_started'))
+    .orderBy(desc(submissionEvents.id))
+    .limit(200);
+
+  const seen = new Set<string>();
+  const pending: PendingCook[] = [];
+  for (const row of rows) {
+    if (seen.has(row.submissionId)) continue;
+    seen.add(row.submissionId);
+    const runId = typeof row.detail?.['runId'] === 'string' ? row.detail['runId'].trim() : '';
+    if (!runId) continue;
+    const ingested = await latestCookEvent(row.submissionId, 'autocook_ingested');
+    if (ingested?.runId === runId) continue;
+    const closed = await latestCookEvent(row.submissionId, 'autocook_closed');
+    if (closed?.runId === runId) continue;
+    pending.push({ submissionId: row.submissionId, runId, actorId: row.actorId });
+    if (pending.length >= limit) break;
+  }
+  return pending;
+}
+
+/**
+ * Background writeback: when Autocook exports, pull deliverables into AI outputs
+ * without requiring the task page to be open. Safe to call on an interval —
+ * idempotent via autocook_ingested.
+ */
+export async function reconcilePendingAutocookIngests(): Promise<{
+  checked: number;
+  ingested: number;
+  failed: number;
+  skipped: number;
+}> {
+  if (!autocookConfigured()) return { checked: 0, ingested: 0, failed: 0, skipped: 0 };
+
+  const pending = await listPendingCookIngests();
+  let ingested = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const item of pending) {
+    try {
+      const detail = await fetchRun(item.runId);
+      const status = detail.run?.status ?? null;
+      if (status === 'failed' || status === 'rejected') {
+        await recordEvent(db(), item.submissionId, item.actorId, 'autocook_closed', {
+          runId: item.runId,
+          status,
+          error: detail.run?.error ?? null,
+        });
+        skipped += 1;
+        continue;
+      }
+      if (status !== 'exported') {
+        skipped += 1;
+        continue;
+      }
+      if (!item.actorId) {
+        console.warn(`[autocook-ingest] ${item.submissionId} run ${item.runId} has no actor — cannot write AI outputs`);
+        failed += 1;
+        continue;
+      }
+      const actor = await actorById(item.actorId);
+      if (!actor) {
+        console.warn(`[autocook-ingest] actor ${item.actorId} missing for ${item.submissionId}`);
+        failed += 1;
+        continue;
+      }
+      await ingestRun(actor, item.submissionId, item.runId, detail);
+      ingested += 1;
+      console.log(`[autocook-ingest] ingested ${item.runId} → ${item.submissionId}`);
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[autocook-ingest] ${item.submissionId} ${item.runId}: ${message}`);
+    }
+  }
+
+  return { checked: pending.length, ingested, failed, skipped };
 }

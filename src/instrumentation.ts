@@ -8,8 +8,9 @@
  */
 export async function register(): Promise<void> {
   if (process.env['NEXT_RUNTIME'] !== 'nodejs') return;
-  const { startCatalogWatch, startEmbeddedWorker } = await import('./instrumentation.node');
+  const { startAutocookIngestWatch, startCatalogWatch, startEmbeddedWorker } = await import('./instrumentation.node');
   startCatalogWatch();
+  startAutocookIngestWatch();
   if ((process.env['RUN_WORKER'] ?? '1') === '0') {
     console.log('[worker] disabled (RUN_WORKER=0)');
     return;
