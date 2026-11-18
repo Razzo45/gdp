@@ -299,7 +299,7 @@ async function prepareOffice(file: SourceFile, kind: OfficePreviewKind, label: s
         ...base,
         delivery: 'pdf_from_office',
         parts: [
-          `${label}${facts}\nThe deliverable is a ${kind.toUpperCase()} file. The ${pages.length} JPEG image(s) below are rendered ${unit} stills of that file — they are not the deliverable format. FILE FACTS decide kind, ${unit} count and packaged size. Inspect each still for layout, colour, typography and photographs. Animations, transitions and embedded video are not in the stills.${extra}${digest}`,
+          `${label}${facts}\nThe deliverable is a ${kind.toUpperCase()} file. The ${pages.length} JPEG image(s) below are rendered ${unit} stills of that file — they are not the deliverable format. FILE FACTS decide kind, ${unit} count, packaged size, and whether embedded pictures are stretched. Inspect each still for layout, colour, typography and photographs. Stills may crop instead of stretch; FILE FACTS Pictures lines are authoritative for stretch/squash. Animations, transitions and embedded video are not in the stills.${extra}${digest}`,
           ...pageParts,
           await mediaPart({ bytes: pdf, mime: 'application/pdf', sha256: sha256(pdf), name: file.name.replace(/\.[a-z0-9]+$/i, '.pdf'), label: `${label} — PDF render of the ${kind.toUpperCase()}` }),
         ],

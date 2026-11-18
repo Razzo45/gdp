@@ -46,6 +46,7 @@ describe('office manifest', () => {
     expect(manifest).toContain('Theme fonts: Calibri');
     expect(manifest).toContain('Fonts used on slides: Inter');
     expect(manifest).toMatch(/1\. Q3 R&D Review\n\s+2\. Pipeline\n\s+3\. Appendix/);
+    expect(manifest).not.toContain('Pictures (');
   });
 
   it('digests text with notes and decodes entities', async () => {
@@ -152,6 +153,114 @@ describe('rewriteOfficeXml', () => {
   it('leaves already-standard Office prefixes alone', () => {
     const xml = '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>';
     expect(rewriteOfficeXml(xml)).toBe(xml);
+  });
+});
+
+function png(width: number, height: number): Uint8Array {
+  const out = new Uint8Array(29);
+  out.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  out[12] = 0x49;
+  out[13] = 0x48;
+  out[14] = 0x44;
+  out[15] = 0x52;
+  out[16] = (width >>> 24) & 0xff;
+  out[17] = (width >>> 16) & 0xff;
+  out[18] = (width >>> 8) & 0xff;
+  out[19] = width & 0xff;
+  out[20] = (height >>> 24) & 0xff;
+  out[21] = (height >>> 16) & 0xff;
+  out[22] = (height >>> 8) & 0xff;
+  out[23] = height & 0xff;
+  out[24] = 8;
+  out[25] = 2;
+  return out;
+}
+
+function picXml(embed: string, cx: number, cy: number, extraFill = ''): string {
+  return `<p:pic xmlns:r="r"><p:blipFill><a:blip r:embed="${embed}"/>${extraFill}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm></p:spPr></p:pic>`;
+}
+
+async function pptxWithPics(
+  slides: { file: string; xml: string; rels?: string }[],
+  media: { name: string; bytes: Uint8Array }[],
+): Promise<Uint8Array> {
+  const zip = new JSZip();
+  zip.file('ppt/presentation.xml', '<p:presentation xmlns:p="p"><p:sldSz cx="12192000" cy="6858000"/></p:presentation>');
+  zip.file('ppt/theme/theme1.xml', '<a:theme xmlns:a="a"><a:latin typeface="Calibri"/></a:theme>');
+  for (const [i, row] of slides.entries()) {
+    const name = `ppt/slides/slide${i + 1}.xml`;
+    zip.file(name, row.xml);
+    if (row.rels) zip.file(`ppt/slides/_rels/slide${i + 1}.xml.rels`, row.rels);
+  }
+  for (const file of media) zip.file(`ppt/media/${file.name}`, file.bytes);
+  return zip.generateAsync({ type: 'uint8array' });
+}
+
+describe('office manifest picture skew', () => {
+  it('reports locked-aspect, stretched, and cropped pictures from the package, not from stills', async () => {
+    const locked = await pptxWithPics(
+      [
+        {
+          file: 'slide1.xml',
+          xml: `<p:sld xmlns:p="p" xmlns:a="a">${picXml('rId2', 1_828_800, 914_400)}</p:sld>`,
+          rels: '<Relationships><Relationship Id="rId2" Target="../media/wide.png"/></Relationships>',
+        },
+      ],
+      [{ name: 'wide.png', bytes: png(100, 50) }],
+    );
+    const lockedFacts = await officeManifest(locked, 'pptx');
+    expect(lockedFacts).toContain('Pictures (skew outside 0.97-1.03 = stretched; stills may crop instead of stretch):');
+    expect(lockedFacts).toContain(
+      'Slide 1 wide.png: native 100x50 (2.00:1), placed 2.00x1.00 in (2.00:1), crop none, skew 1.00, ok',
+    );
+
+    const stretched = await pptxWithPics(
+      [
+        {
+          file: 'slide1.xml',
+          xml: `<p:sld xmlns:p="p" xmlns:a="a">${picXml('rId2', 6_096_000, 903_199)}</p:sld>`,
+          rels: '<Relationships><Relationship Id="rId2" Target="../media/logo.png"/></Relationships>',
+        },
+      ],
+      [{ name: 'logo.png', bytes: png(4000, 810) }],
+    );
+    expect(await officeManifest(stretched, 'pptx')).toContain(
+      'Slide 1 logo.png: native 4000x810 (4.94:1), placed 6.67x0.99 in (6.75:1), crop none, skew 1.37, stretched',
+    );
+
+    const cropped = await pptxWithPics(
+      [
+        {
+          file: 'slide1.xml',
+          xml: `<p:sld xmlns:p="p" xmlns:a="a">${picXml('rId2', 1_828_800, 914_400, '<a:srcRect t="25000" b="25000"/>')}</p:sld>`,
+          rels: '<Relationships><Relationship Id="rId2" Target="../media/square.png"/></Relationships>',
+        },
+      ],
+      [{ name: 'square.png', bytes: png(100, 100) }],
+    );
+    expect(await officeManifest(cropped, 'pptx')).toContain(
+      'Slide 1 square.png: native 100x100 (1.00:1), placed 2.00x1.00 in (2.00:1), crop srcRect, skew 1.00, ok',
+    );
+  });
+
+  it('lists every picture on a slide', async () => {
+    const bytes = await pptxWithPics(
+      [
+        {
+          file: 'slide1.xml',
+          xml: `<p:sld xmlns:p="p" xmlns:a="a">${picXml('rId2', 1_828_800, 914_400)}${picXml('rId3', 2_743_200, 914_400)}</p:sld>`,
+          rels:
+            '<Relationships><Relationship Id="rId2" Target="../media/a.png"/><Relationship Id="rId3" Target="../media/b.png"/></Relationships>',
+        },
+      ],
+      [
+        { name: 'a.png', bytes: png(100, 50) },
+        { name: 'b.png', bytes: png(100, 50) },
+      ],
+    );
+    const facts = await officeManifest(bytes, 'pptx');
+    expect(facts).toContain('Slide 1 a.png: native 100x50 (2.00:1), placed 2.00x1.00 in (2.00:1), crop none, skew 1.00, ok');
+    expect(facts).toContain('Slide 1 b.png: native 100x50 (2.00:1), placed 3.00x1.00 in (3.00:1), crop none, skew 1.50, stretched');
   });
 });
 

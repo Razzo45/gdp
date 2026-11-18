@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { imageSize } from './fileFacts';
 import { nsAttr, nsInners, nsTexts } from './xmlTags';
 
 /**
@@ -202,6 +203,10 @@ export async function officeManifest(bytes: Uint8Array, kind: OfficeKind): Promi
     if (themeFonts.length) lines.push(`Theme fonts: ${themeFonts.join(', ')}`);
     if (fonts.size) lines.push(`Fonts used on slides: ${[...fonts].sort().join(', ')}`);
     lines.push('Slide titles:', ...titles);
+    const pictures = await picturesOf(zip, slides);
+    if (pictures.length) {
+      lines.push('Pictures (skew outside 0.97-1.03 = stretched; stills may crop instead of stretch):', ...pictures);
+    }
     return lines.join('\n');
   }
 
@@ -267,6 +272,108 @@ export async function officeTextDigest(bytes: Uint8Array, kind: OfficeKind): Pro
 
   const text = lines.join('\n').trim();
   return text.length > MAX_DIGEST_CHARS ? `${text.slice(0, MAX_DIGEST_CHARS)}\n…(digest truncated)` : text;
+}
+
+const EMU_PER_INCH = 914400;
+const SKEW_OK_MIN = 0.97;
+const SKEW_OK_MAX = 1.03;
+const MAX_PICTURE_FACTS = 40;
+
+function ratioLabel(width: number, height: number): string {
+  if (!width || !height) return 'unknown';
+  return `${(width / height).toFixed(2)}:1`;
+}
+
+function relTargetName(target: string): string {
+  const path = decode(target).replace(/\\/g, '/');
+  return path.split('/').pop() ?? path;
+}
+
+function cropOf(xml: string): { kind: 'srcRect' | 'fillRect'; l: number; t: number; r: number; b: number } | null {
+  const src = nsInners(xml, 'srcRect')[0];
+  if (src) {
+    return {
+      kind: 'srcRect',
+      l: Number(nsAttr(src.attrs, 'l') ?? 0),
+      t: Number(nsAttr(src.attrs, 't') ?? 0),
+      r: Number(nsAttr(src.attrs, 'r') ?? 0),
+      b: Number(nsAttr(src.attrs, 'b') ?? 0),
+    };
+  }
+  const fill = nsInners(xml, 'fillRect')[0];
+  if (!fill) return null;
+  const l = Number(nsAttr(fill.attrs, 'l') ?? 0);
+  const t = Number(nsAttr(fill.attrs, 't') ?? 0);
+  const r = Number(nsAttr(fill.attrs, 'r') ?? 0);
+  const b = Number(nsAttr(fill.attrs, 'b') ?? 0);
+  if (!l && !t && !r && !b) return null;
+  return { kind: 'fillRect', l, t, r, b };
+}
+
+async function picturesOf(zip: JSZip, slides: string[]): Promise<string[]> {
+  const lines: string[] = [];
+  const sizeByMedia = new Map<string, { width: number; height: number } | null>();
+  for (const [index, name] of slides.entries()) {
+    if (lines.length >= MAX_PICTURE_FACTS) break;
+    const xml = await zip.file(name)!.async('string');
+    const relsPath = name.replace(/^(.*\/)([^/]+)$/, '$1_rels/$2.rels');
+    const rels = new Map<string, string>();
+    for (const rel of nsInners((await zip.file(relsPath)?.async('string')) ?? '', 'Relationship')) {
+      const id = nsAttr(rel.attrs, 'Id');
+      const target = nsAttr(rel.attrs, 'Target');
+      if (id && target) rels.set(id, relTargetName(target));
+    }
+    for (const pic of nsInners(xml, 'pic')) {
+      if (lines.length >= MAX_PICTURE_FACTS) break;
+      if (!pic.inner) continue;
+      const xfrm = nsInners(pic.inner, 'xfrm')[0];
+      const ext = xfrm ? nsInners(xfrm.inner, 'ext')[0] : undefined;
+      const cx = Number(nsAttr(ext?.attrs ?? '', 'cx') ?? 0);
+      const cy = Number(nsAttr(ext?.attrs ?? '', 'cy') ?? 0);
+      if (!cx || !cy) continue;
+      const embed = nsAttr(nsInners(pic.inner, 'blip')[0]?.attrs ?? '', 'embed');
+      const mediaName = embed ? rels.get(embed) : undefined;
+      if (!mediaName) continue;
+      if (!sizeByMedia.has(mediaName)) {
+        const mediaPath = Object.keys(zip.files).find((n) => n.replace(/\\/g, '/').endsWith(`/media/${mediaName}`));
+        const bytes = mediaPath ? new Uint8Array(await zip.files[mediaPath]!.async('uint8array')) : null;
+        sizeByMedia.set(mediaName, bytes ? imageSize(bytes) : null);
+      }
+      const size = sizeByMedia.get(mediaName) ?? null;
+      const crop = cropOf(pic.inner);
+      const placedW = cx / EMU_PER_INCH;
+      const placedH = cy / EMU_PER_INCH;
+      if (!size) {
+        lines.push(
+          `  Slide ${index + 1} ${mediaName}: native unverified, placed ${placedW.toFixed(2)}x${placedH.toFixed(2)} in (${ratioLabel(cx, cy)}), crop ${crop?.kind ?? 'none'}, skew unverified`,
+        );
+        continue;
+      }
+      let nativeW = size.width;
+      let nativeH = size.height;
+      let destW = cx;
+      let destH = cy;
+      if (crop?.kind === 'srcRect') {
+        nativeW = size.width * (1 - crop.l / 100_000 - crop.r / 100_000);
+        nativeH = size.height * (1 - crop.t / 100_000 - crop.b / 100_000);
+      } else if (crop?.kind === 'fillRect') {
+        destW = cx * (1 - crop.l / 100_000 - crop.r / 100_000);
+        destH = cy * (1 - crop.t / 100_000 - crop.b / 100_000);
+      }
+      if (!nativeW || !nativeH || !destW || !destH) {
+        lines.push(
+          `  Slide ${index + 1} ${mediaName}: native ${size.width}x${size.height} (${ratioLabel(size.width, size.height)}), placed ${placedW.toFixed(2)}x${placedH.toFixed(2)} in (${ratioLabel(cx, cy)}), crop ${crop?.kind ?? 'none'}, skew unverified`,
+        );
+        continue;
+      }
+      const skew = destW / destH / (nativeW / nativeH);
+      const verdict = skew >= SKEW_OK_MIN && skew <= SKEW_OK_MAX ? 'ok' : 'stretched';
+      lines.push(
+        `  Slide ${index + 1} ${mediaName}: native ${size.width}x${size.height} (${ratioLabel(size.width, size.height)}), placed ${placedW.toFixed(2)}x${placedH.toFixed(2)} in (${ratioLabel(cx, cy)}), crop ${crop?.kind ?? 'none'}, skew ${skew.toFixed(2)}, ${verdict}`,
+      );
+    }
+  }
+  return lines;
 }
 
 function xlsxCell(attrs: string, inner: string, shared: string[]): string {

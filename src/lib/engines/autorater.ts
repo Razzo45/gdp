@@ -115,7 +115,8 @@ Rules:
   PPTX/DOCX/XLSX are views of that Office file. FILE FACTS Kind is the
   deliverable format. Do not answer that the file is a JPEG rather than a PPTX.
   Packaged slide/page size and aspect come from FILE FACTS, not from a still's
-  pixel dimensions.
+  pixel dimensions. Stretch or squash of an embedded picture comes from FILE FACTS
+  Pictures lines; stills may crop instead of stretch.
 - For video/audio: only claim events, dialogue or specs evidenced in the clip.
   If you did not hear the required words or see the required beat, answer No.
   Exact wording: a paraphrase is a No.
@@ -152,10 +153,11 @@ Rules:
 - A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
   that file; answer No and say why.
 - FILE FACTS are authoritative for file size, slide/page counts, packaged aspect, fonts,
-  embedded-media presence, duration, codec, channel layout, loudness, peak/RMS
+  embedded-media presence, embedded-picture stretch or squash (Pictures lines), duration, codec, channel layout, loudness, peak/RMS
   level, left-right channel level difference, clipping, silence gaps, stereo
   correlation, DC offset and bit depth. They do not decide picture-level
-  letterboxing, colour look, or spoken content. Use the FILE FACTS file-size line
+  letterboxing, colour look, or spoken content. For stretch/squash of an Office
+  picture, believe FILE FACTS Pictures — stills may crop instead of stretch. Use the FILE FACTS file-size line
   for any MB/KB size claim; do not infer size from page count or how "lightweight"
   the document looks. Use the FILE FACTS loudness / channel-level / clipping /
   silence / stereo lines for those claims; do not guess them by ear.

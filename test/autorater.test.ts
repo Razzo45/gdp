@@ -32,6 +32,12 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).toMatch(/not (change|the) (the )?file kind|still a (PPTX|PowerPoint)|do not answer .*(JPEG|jpeg).*(PPTX|pptx)/i);
   });
 
+  it('treats FILE FACTS picture skew as authoritative over LibreOffice stills', () => {
+    expect(AUTORATER_SYSTEM).toMatch(/stretch|squash/i);
+    expect(AUTORATER_SYSTEM).toMatch(/Pictures/i);
+    expect(AUTORATER_SYSTEM).toMatch(/stills may crop instead of stretch/i);
+  });
+
   it('grades each seat as if it travelled alone even when several share a call', () => {
     expect(AUTORATER_SYSTEM).toMatch(/as if it were (the only statement|sent alone)/i);
     expect(AUTORATER_SYSTEM).toMatch(/shared files\s+are not shared verdicts/i);
