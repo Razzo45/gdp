@@ -56,12 +56,24 @@ export function CooksPanel() {
   async function cancel(cook: Cook) {
     const word = cook.active ? 'Cancel' : 'Delete';
     if (!confirm(`${word} ${cook.id}?`)) return;
-    setBusy(cook.id);
+    setBusy(`${cook.id}:delete`);
     try {
       await api(`/api/cooks/${encodeURIComponent(cook.id)}`, { method: 'DELETE' });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not cancel that cook.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function retry(cook: Cook) {
+    setBusy(`${cook.id}:retry`);
+    try {
+      await api(`/api/cooks/${encodeURIComponent(cook.id)}`, { method: 'POST' });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not retry that cook.');
     } finally {
       setBusy(null);
     }
@@ -83,7 +95,7 @@ export function CooksPanel() {
         {active.length === 0 ? (
           <p className="text-sm text-muted">Nothing is cooking.</p>
         ) : (
-          <CookList cooks={active} busy={busy} onCancel={cancel} />
+          <CookList cooks={active} busy={busy} onCancel={cancel} onRetry={retry} />
         )}
       </section>
       <section className="card">
@@ -91,18 +103,29 @@ export function CooksPanel() {
         {finished.length === 0 ? (
           <p className="text-sm text-muted">No finished cooks yet.</p>
         ) : (
-          <CookList cooks={finished} busy={busy} onCancel={cancel} />
+          <CookList cooks={finished} busy={busy} onCancel={cancel} onRetry={retry} />
         )}
       </section>
     </div>
   );
 }
 
-function CookList({ cooks, busy, onCancel }: { cooks: Cook[]; busy: string | null; onCancel: (cook: Cook) => void }) {
+function CookList({
+  cooks,
+  busy,
+  onCancel,
+  onRetry,
+}: {
+  cooks: Cook[];
+  busy: string | null;
+  onCancel: (cook: Cook) => void;
+  onRetry: (cook: Cook) => void;
+}) {
   return (
     <ul className="divide-y divide-line">
       {cooks.map((cook) => {
         const task = sessionLabel(cook.sessionId);
+        const working = busy === `${cook.id}:retry` || busy === `${cook.id}:delete`;
         return (
           <li key={cook.id} className="flex items-start justify-between gap-4 py-4">
             <div className="min-w-0 flex-1">
@@ -120,14 +143,16 @@ function CookList({ cooks, busy, onCancel }: { cooks: Cook[]; busy: string | nul
               {cook.prompt ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{cook.prompt}</p> : null}
               <p className="mt-1 font-mono text-[11px] text-quiet">{cook.id}</p>
             </div>
-            <button
-              className="btn btn-danger btn-sm shrink-0"
-              type="button"
-              disabled={busy === cook.id}
-              onClick={() => onCancel(cook)}
-            >
-              {busy === cook.id ? '…' : cook.active ? 'Cancel' : 'Delete'}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {cook.status === 'failed' ? (
+                <button className="btn btn-sm" type="button" disabled={working} onClick={() => onRetry(cook)}>
+                  {busy === `${cook.id}:retry` ? '…' : 'Retry'}
+                </button>
+              ) : null}
+              <button className="btn btn-danger btn-sm" type="button" disabled={working} onClick={() => onCancel(cook)}>
+                {busy === `${cook.id}:delete` ? '…' : cook.active ? 'Cancel' : 'Delete'}
+              </button>
+            </div>
           </li>
         );
       })}

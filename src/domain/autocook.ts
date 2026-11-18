@@ -117,6 +117,34 @@ export function operatorCookFromRun(run: {
   };
 }
 
+/**
+ * One copy of each deliverable name.
+ * A new run replaces the task's AI outputs. The same run only adds what is missing
+ * and drops extra copies of those names, so a second upload cannot append duplicates
+ * or wipe a file the first pass already stored.
+ */
+export function ingestFilePlan(
+  existing: { id: string; name: string }[],
+  wanted: string[],
+  sameRun: boolean,
+): { removeIds: string[]; add: string[] } {
+  const wantedNames = wanted.map((name) => name.replace(/[\\/]/g, '_').trim().slice(0, 200)).filter(Boolean);
+  if (!sameRun) return { removeIds: existing.map((file) => file.id), add: wantedNames };
+  const byName = new Map<string, string[]>();
+  for (const file of existing) {
+    const ids = byName.get(file.name) ?? [];
+    ids.push(file.id);
+    byName.set(file.name, ids);
+  }
+  const removeIds: string[] = [];
+  const wantedSet = new Set(wantedNames);
+  for (const [name, ids] of byName) {
+    if (!wantedSet.has(name)) continue;
+    removeIds.push(...ids.slice(1));
+  }
+  return { removeIds, add: wantedNames.filter((name) => !byName.has(name)) };
+}
+
 /** Autocook deliverable abs paths → `/api/media?path=` relative form. */
 export function mediaPathFromAbs(abs: string): string {
   const normalized = abs.replaceAll('\\', '/');

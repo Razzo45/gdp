@@ -5,6 +5,7 @@ import {
   canAutocookEmail,
   cookPhase,
   cookPromptFromFields,
+  ingestFilePlan,
   mediaPathFromAbs,
   operatorCookFromRun,
   sortOperatorCooks,
@@ -119,6 +120,61 @@ describe('cookPromptFromFields', () => {
 
   it('skips empty fields', () => {
     expect(cookPromptFromFields([{ label: 'X', text: '  ' }, { label: 'Y', text: 'Keep' }])).toBe('Y:\nKeep');
+  });
+});
+
+describe('ingestFilePlan', () => {
+  it('adds the file a short upload missed and drops a second copy of one that landed twice', () => {
+    const plan = ingestFilePlan(
+      [
+        { id: 'a', name: 'Deck.pptx' },
+        { id: 'b', name: 'Deck.pptx' },
+        { id: 'c', name: 'Notes.pdf' },
+      ],
+      ['Deck.pptx', 'Notes.pdf', 'Hero.png'],
+      true,
+    );
+    expect(plan.removeIds).toEqual(['b']);
+    expect(plan.add).toEqual(['Hero.png']);
+  });
+
+  it('replaces the task outputs when the cook is a new run', () => {
+    const plan = ingestFilePlan([{ id: 'a', name: 'Old.pdf' }], ['Hero.png'], false);
+    expect(plan.removeIds).toEqual(['a']);
+    expect(plan.add).toEqual(['Hero.png']);
+  });
+
+  it('drops every extra copy once the same cook is uploaded again', () => {
+    const existing = [
+      { id: '1', name: 'Deck.pptx' },
+      { id: '2', name: 'Deck.pptx' },
+      { id: '3', name: 'Deck.pptx' },
+      { id: '4', name: 'Notes.pdf' },
+      { id: '5', name: 'Notes.pdf' },
+      { id: '6', name: 'Hero.png' },
+      { id: '7', name: 'Hero.png' },
+      { id: '8', name: 'Hero.png' },
+      { id: '9', name: 'Hero.png' },
+      { id: '10', name: 'Hero.png' },
+      { id: '11', name: 'Hero.png' },
+      { id: '12', name: 'Hero.png' },
+    ];
+    const plan = ingestFilePlan(existing, ['Deck.pptx', 'Notes.pdf', 'Hero.png'], true);
+    expect(plan.add).toEqual([]);
+    expect(plan.removeIds).toEqual(['2', '3', '5', '7', '8', '9', '10', '11', '12']);
+  });
+
+  it('leaves a stored file alone when a later list is missing it', () => {
+    const plan = ingestFilePlan(
+      [
+        { id: 'a', name: 'Deck.pptx' },
+        { id: 'b', name: 'Hero.png' },
+      ],
+      ['Deck.pptx'],
+      true,
+    );
+    expect(plan.removeIds).toEqual([]);
+    expect(plan.add).toEqual([]);
   });
 });
 
