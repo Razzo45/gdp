@@ -158,7 +158,10 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
       cancelled = true;
       if (id) window.clearInterval(id);
     };
+    let ticking = false;
     const tick = async () => {
+      if (ticking || cancelled) return;
+      ticking = true;
       try {
         const next = await api<CookStatus>(`/api/submissions/${s.id}/autocook?runId=${encodeURIComponent(runId)}`);
         if (cancelled) return;
@@ -184,6 +187,8 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
             ? { ...current, status: 'failed', error: error instanceof Error ? error.message : 'Could not read Autocook status.', progress: null }
             : current,
         );
+      } finally {
+        ticking = false;
       }
     };
     id = window.setInterval(() => void tick(), 2500);

@@ -211,6 +211,64 @@ export async function addAiOutput(actor: Actor, submissionId: string, upload: { 
   return insertAiOutput(database, actor, submissionId, { name, mime, size: upload.bytes.byteLength, sha256: digest, storagePath: path });
 }
 
+/**
+ * Apply a cook's file plan on the caller's transaction.
+ * Removes happen before adds, and a name that is already stored is not inserted again.
+ */
+export async function writeCookOutputs(
+  database: DbOrTx,
+  actor: Actor,
+  submissionId: string,
+  change: { removeIds: string[]; add: { name: string; mime: string; bytes: Uint8Array }[] },
+): Promise<{ files: { id: string; name: string }[]; added: number; removedPaths: string[] }> {
+  const submission = await getSubmission(database, submissionId);
+  if (!canChangeAiOutputs(actor, submission)) {
+    if (submission.stage !== 'rubric') throw conflict('AI output files can only change while the task is in the rubric stage.');
+    throw forbidden('You do not hold the rubric seat on this task.');
+  }
+
+  const removedPaths: string[] = [];
+  for (const fileId of change.removeIds) {
+    const row = (
+      await database
+        .select()
+        .from(aiOutputFiles)
+        .where(and(eq(aiOutputFiles.id, fileId), eq(aiOutputFiles.submissionId, submissionId), isNull(aiOutputFiles.removedAt)))
+        .limit(1)
+    )[0];
+    if (!row) continue;
+    await database.update(aiOutputFiles).set({ removedAt: new Date().toISOString() }).where(eq(aiOutputFiles.id, fileId));
+    removedPaths.push(row.storagePath);
+    await recordEvent(database, submissionId, actor.id, 'ai_output_removed', { fileId, name: row.name });
+  }
+
+  const kept = await listAiOutputs(database, submissionId);
+  const room = MAX_AI_OUTPUTS - kept.length;
+  if (change.add.length > room) throw invalid(`At most ${MAX_AI_OUTPUTS} AI output files per task.`);
+
+  let added = 0;
+  const seen = new Set(kept.map((file) => file.name));
+  for (const upload of change.add) {
+    const name = cleanName(upload.name);
+    if (!name || seen.has(name)) continue;
+    if (upload.bytes.byteLength === 0) throw invalid('The file is empty.');
+    if (upload.bytes.byteLength > MAX_AI_OUTPUT_BYTES) throw invalid(`Files above ${Math.round(MAX_AI_OUTPUT_BYTES / 1_048_576)} MB cannot be graded.`);
+    const mime = normaliseMime(name, upload.mime);
+    const path = `ai-outputs/${submissionId}/${crypto.randomUUID()}-${name}`;
+    await putObject(path, upload.bytes, mime);
+    await insertAiOutput(database, actor, submissionId, { name, mime, size: upload.bytes.byteLength, sha256: sha256(upload.bytes), storagePath: path });
+    seen.add(name);
+    added += 1;
+  }
+
+  const files = (await listAiOutputs(database, submissionId)).map((file) => ({ id: file.id, name: file.name }));
+  return { files, added, removedPaths };
+}
+
+export async function discardStoredObjects(paths: string[]): Promise<void> {
+  await Promise.all(paths.map((path) => removeObject(path).catch(() => undefined)));
+}
+
 const UPLOAD_TTL_SEC = 60 * 60;
 
 export interface AiOutputUploadTicket {

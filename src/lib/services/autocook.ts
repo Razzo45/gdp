@@ -1,12 +1,13 @@
 import 'server-only';
 
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissionEvents } from '@/db/schema';
 import {
   brainFromModelTag,
   canAutocookEmail,
   cookPromptFromFields,
+  ingestFilePlan,
   mediaPathFromAbs,
   operatorCookFromRun,
   sortOperatorCooks,
@@ -16,7 +17,8 @@ import { actorById } from '@/lib/auth/identity';
 import { canAutocook, type Actor, type SeatView } from '@/lib/auth/permissions';
 import { autocookConfigured, env } from '@/lib/env';
 import { normaliseMime } from '@/lib/ai/media';
-import { addAiOutput, catalogSourceLocations, listAiOutputs, removeAiOutput } from './files';
+import type { DbOrTx } from '@/db/types';
+import { discardStoredObjects, catalogSourceLocations, listAiOutputs, writeCookOutputs } from './files';
 import { conflict, forbidden, invalid, notFound, ServiceError } from './errors';
 import { getVisibleSubmission, readSource, recordEvent } from './submissions';
 
@@ -62,9 +64,13 @@ function baseUrl(): string {
   return env().AUTOCOOK_BASE_URL.replace(/\/$/, '');
 }
 
-async function latestCookEvent(submissionId: string, action: string): Promise<{ runId: string; detail: Record<string, unknown> } | null> {
+async function latestCookEvent(
+  submissionId: string,
+  action: string,
+  database: DbOrTx = db(),
+): Promise<{ runId: string; detail: Record<string, unknown> } | null> {
   const row = (
-    await db()
+    await database
       .select()
       .from(submissionEvents)
       .where(and(eq(submissionEvents.submissionId, submissionId), eq(submissionEvents.action, action)))
@@ -113,37 +119,94 @@ async function downloadDeliverable(relPath: string): Promise<{ bytes: Uint8Array
   return { bytes, mime };
 }
 
-async function ingestRun(actor: Actor, submissionId: string, runId: string, detail: AutocookRunDetail): Promise<{ id: string; name: string }[]> {
-  const already = await latestCookEvent(submissionId, 'autocook_ingested');
-  if (already?.runId === runId) {
-    const files = await listAiOutputs(db(), submissionId);
-    return files.map((f) => ({ id: f.id, name: f.name }));
-  }
+const ingesting = new Map<string, Promise<{ files: { id: string; name: string }[]; changed: boolean }>>();
 
+async function ingestRun(
+  actor: Actor,
+  submissionId: string,
+  runId: string,
+  detail: AutocookRunDetail,
+): Promise<{ files: { id: string; name: string }[]; changed: boolean }> {
+  const key = `${submissionId}:${runId}`;
+  const pending = ingesting.get(key);
+  if (pending) return pending;
+  const work = ingestRunOnce(actor, submissionId, runId, detail);
+  ingesting.set(key, work);
+  try {
+    return await work;
+  } finally {
+    if (ingesting.get(key) === work) ingesting.delete(key);
+  }
+}
+
+function outputName(name: string): string {
+  return name.replace(/[\\/]/g, '_').trim().slice(0, 200);
+}
+
+async function ingestRunOnce(
+  actor: Actor,
+  submissionId: string,
+  runId: string,
+  detail: AutocookRunDetail,
+): Promise<{ files: { id: string; name: string }[]; changed: boolean }> {
   const paths = deliverablePaths(detail);
   if (!paths.length) throw new ServiceError(502, 'Autocook finished but returned no downloadable files.');
+  const wanted = paths.map((item) => item.name);
+  const byName = new Map(paths.map((item) => [outputName(item.name), item]));
 
-  const existing = await listAiOutputs(db(), submissionId);
-  for (const file of existing) {
-    await removeAiOutput(actor, submissionId, file.id);
+  const previewEvent = await latestCookEvent(submissionId, 'autocook_ingested');
+  const previewExisting = await listAiOutputs(db(), submissionId);
+  const preview = ingestFilePlan(previewExisting, wanted, previewEvent?.runId === runId);
+  if (preview.add.length === 0 && preview.removeIds.length === 0) {
+    return { files: previewExisting.map((file) => ({ id: file.id, name: file.name })), changed: false };
   }
 
-  const attached: { id: string; name: string }[] = [];
-  for (const item of paths.slice(0, 8)) {
-    const downloaded = await downloadDeliverable(item.path);
-    const row = await addAiOutput(actor, submissionId, {
-      name: item.name,
-      mime: normaliseMime(item.name, downloaded.mime),
-      bytes: downloaded.bytes,
+  const downloaded = new Map<string, { name: string; mime: string; bytes: Uint8Array }>();
+  const failed: string[] = [];
+  for (const name of preview.add) {
+    const item = byName.get(name);
+    if (!item) {
+      failed.push(name);
+      continue;
+    }
+    try {
+      const file = await downloadDeliverable(item.path);
+      downloaded.set(name, { name: item.name, mime: normaliseMime(item.name, file.mime), bytes: file.bytes });
+    } catch (error) {
+      failed.push(name);
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[autocook-ingest] ${runId} ${name}: ${message}`);
+    }
+  }
+
+  // One task at a time. A second poll waits, then sees the names already stored and does not append.
+  const outcome = await db().transaction(async (tx) => {
+    await tx.execute(sql`select id from app.submissions where id = ${submissionId}::uuid for update`);
+    const already = await latestCookEvent(submissionId, 'autocook_ingested', tx);
+    const existing = await listAiOutputs(tx, submissionId);
+    const plan = ingestFilePlan(existing, wanted, already?.runId === runId);
+    const wrote = await writeCookOutputs(tx, actor, submissionId, {
+      removeIds: plan.removeIds,
+      add: plan.add.flatMap((name) => {
+        const file = downloaded.get(name);
+        return file ? [file] : [];
+      }),
     });
-    attached.push({ id: row.id, name: row.name });
-  }
-
-  await recordEvent(db(), submissionId, actor.id, 'autocook_ingested', {
-    runId,
-    files: attached.map((f) => f.name),
+    const changed = wrote.removedPaths.length > 0 || wrote.added > 0;
+    if (changed) {
+      await recordEvent(tx, submissionId, actor.id, 'autocook_ingested', {
+        runId,
+        files: wrote.files.map((file) => file.name),
+      });
+    }
+    return { files: wrote.files, changed, removedPaths: wrote.removedPaths, missing: plan.add.filter((name) => !downloaded.has(name)) };
   });
-  return attached;
+
+  await discardStoredObjects(outcome.removedPaths);
+  const landed = outcome.files.some((file) => byName.has(file.name));
+  const missing = [...new Set([...failed, ...outcome.missing])];
+  if (missing.length && !landed) throw new ServiceError(502, `Could not attach ${missing.join(', ')}.`);
+  return { files: outcome.files, changed: outcome.changed };
 }
 
 function progressOf(status: string | null | undefined): number | null {
@@ -235,8 +298,8 @@ export async function autocookStatus(actor: Actor, submissionId: string, runIdHi
   }
 
   if (status === 'exported') {
-    const files = await ingestRun(actor, submissionId, runId, detail);
-    return { runId, status, live: live || 'Done', progress: 100, error: null, files, ingested: true };
+    const ingested = await ingestRun(actor, submissionId, runId, detail);
+    return { runId, status, live: live || 'Done', progress: 100, error: null, files: ingested.files, ingested: true };
   }
 
   return {
@@ -284,9 +347,26 @@ export async function cancelOperatorCook(actor: Actor, runId: string): Promise<v
   }
 }
 
+/** Queues a failed cook again. Finished files stay; only the missing ones are written. */
+export async function retryOperatorCook(actor: Actor, runId: string): Promise<void> {
+  assertOperator(actor);
+  if (!/^run_[A-Za-z0-9_-]{4,80}$/.test(runId)) throw invalid('Unknown cook.');
+  const res = await fetch(`${baseUrl()}/api/runs/${encodeURIComponent(runId)}/actions`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'retry' }),
+    cache: 'no-store',
+  });
+  if (res.status === 404) throw notFound('That cook');
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new ServiceError(serviceStatus(res.status), json.error || `Autocook returned ${res.status}.`);
+  }
+}
+
 type PendingCook = { submissionId: string; runId: string; actorId: string | null };
 
-/** Latest autocook_started per submission that has not been ingested for that runId. */
+/** Latest autocook_started per submission. Failed cooks are closed. Exported cooks stay, so a file missing from the first upload can be attached on a later pass. */
 async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
   const rows = await db()
     .select({
@@ -307,8 +387,6 @@ async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
     seen.add(row.submissionId);
     const runId = typeof row.detail?.['runId'] === 'string' ? row.detail['runId'].trim() : '';
     if (!runId) continue;
-    const ingested = await latestCookEvent(row.submissionId, 'autocook_ingested');
-    if (ingested?.runId === runId) continue;
     const closed = await latestCookEvent(row.submissionId, 'autocook_closed');
     if (closed?.runId === runId) continue;
     pending.push({ submissionId: row.submissionId, runId, actorId: row.actorId });
@@ -319,8 +397,8 @@ async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
 
 /**
  * Background writeback: when Autocook exports, pull deliverables into AI outputs
- * without requiring the task page to be open. Safe to call on an interval —
- * idempotent via autocook_ingested.
+ * without requiring the task page to be open. Safe to call on an interval.
+ * A cook already ingested is checked again; only missing names are added.
  */
 export async function reconcilePendingAutocookIngests(): Promise<{
   checked: number;
@@ -363,9 +441,11 @@ export async function reconcilePendingAutocookIngests(): Promise<{
         failed += 1;
         continue;
       }
-      await ingestRun(actor, item.submissionId, item.runId, detail);
-      ingested += 1;
-      console.log(`[autocook-ingest] ingested ${item.runId} → ${item.submissionId}`);
+      const wrote = await ingestRun(actor, item.submissionId, item.runId, detail);
+      if (wrote.changed) {
+        ingested += 1;
+        console.log(`[autocook-ingest] ingested ${item.runId} → ${item.submissionId}`);
+      }
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
