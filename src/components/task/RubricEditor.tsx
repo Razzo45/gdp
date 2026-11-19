@@ -9,7 +9,7 @@ import { lintStatement } from '@/domain/lint';
 import { discriminationOf, isSoftSeat, seatedStrengthOf } from '@/domain/discrimination';
 import { ACCEPTANCE, acceptanceSelected, AUTO_OUTPUT, applyInferredScope, inferFileScope, TASK_BODY, taskBodySelected } from '@/domain/fileScope';
 import { jobProgressView } from '@/domain/freshness';
-import { MAX_ROUGH_CHARS, familyLabels, familyWord, honorSeatedTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, withSeatLabels, type Family } from '@/domain/rubric';
+import { MAX_ROUGH_CHARS, aliasTag, familyLabels, familyOfTag, familyWord, honorSeatedTag, isRubricTag, quotaCaption, quotaSpread, seatedFamily, seatLabel, seatsInDisplayOrder, tagStyleOf, tagsForStyle, withSeatLabels, type Family, type RubricTag, type TagStyle } from '@/domain/rubric';
 import { afterRubricSave, beginRubricSave, leftoverDirty, quietRubricConflict, type RubricSaveSource } from '@/domain/rubricSave';
 import { PasteRubricModal } from './PasteRubricModal';
 import { formatWeight, normalisedWeights, scoreSeats } from '@/domain/weights';
@@ -321,7 +321,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
       <section className="card scroll-mt-4 space-y-3" id="golden">
         <h2 className="font-semibold">Rubric Review</h2>
         <p className="text-sm text-muted">Read-only rubric the Reviewer Team is scoring against the AI output.</p>
-        <StatementGroups groups={groups} drafts={drafts} headings={headings} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
+        <StatementGroups groups={groups} drafts={drafts} headings={headings} style={style} view={view} editable={false} golden={golden} editing={null} proposal={null} busy={null} notify={notify} refresh={refresh} onEdit={() => undefined} onUpdate={() => undefined} onRewrite={() => undefined} onSwap={() => undefined} onReassess={() => undefined} onKeep={() => undefined} onDiscard={() => undefined} onDelete={() => undefined} onApplySwap={() => undefined} swapPick={null} softIds={softIds} strengths={strengths} weightById={weightById} />
       </section>
     );
   }
@@ -401,8 +401,10 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
 
       {editable && drafts.length > 0 && !spread.ready && (
         <div className="rounded-2xl border border-warn bg-warn-soft p-3 text-sm">
-          <strong>Seat {quotaCaption(style)}</strong>
-          <p className="mt-1 text-xs">{spread.warning}</p>
+          <strong>This rubric cannot be sent to review until the family mix is {quotaCaption(style)}.</strong>
+          <p className="mt-1 text-xs">
+            Changing a seat&apos;s tag moves it between Format, Content, and {familyWord(style)}. {spread.warning}
+          </p>
         </div>
       )}
 
@@ -498,6 +500,7 @@ export function RubricEditor({ view, refresh, notify }: PanelProps) {
         groups={groups}
         drafts={drafts}
         headings={headings}
+        style={style}
         view={view}
         editable={editable && !autorateLocked}
         golden={golden}
@@ -628,6 +631,7 @@ function StatementGroups(props: {
   groups: { family: Family; rows: Draft[] }[];
   drafts: Draft[];
   headings: Record<Family, string>;
+  style: TagStyle;
   view: PanelProps['view'];
   editable: boolean;
   golden: PanelProps['view']['golden'];
@@ -681,7 +685,7 @@ function StatementGroups(props: {
   );
 }
 
-function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard, onDelete, onApplySwap, swapPick }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts' | 'headings'>) {
+function SeatRow({ n, pad, d, style, view, editable, golden, editing, proposal, busy, notify, refresh, softIds, weightById, onEdit, onUpdate, onRewrite, onSwap, onReassess, onKeep, onDiscard, onDelete, onApplySwap, swapPick }: { n: number; pad: number; d: Draft } & Omit<Parameters<typeof StatementGroups>[0], 'groups' | 'drafts' | 'headings'>) {
   const lint = lintOf(d, view.rubric);
   const verdict = golden?.verdicts[d.id];
   const source = golden?.sources[d.id];
@@ -732,6 +736,13 @@ function SeatRow({ n, pad, d, view, editable, golden, editing, proposal, busy, n
       <div className="min-w-0 space-y-2">
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
           <div className="min-w-0 space-y-2">
+            <SeatTagSelect
+              tag={d.tag}
+              style={style}
+              editable={editable}
+              disabled={busy !== null}
+              onChange={(tag) => onUpdate(d.id, { tag, family: familyOfTag(tag) })}
+            />
             {open && editable ? (
               <textarea
                 className="input min-h-[3rem]"
@@ -945,5 +956,53 @@ function SeatScopeLine({ d, view, onUpdate }: { d: Draft; view: PanelProps['view
 
 function applyLiveScope(d: Draft, files: ReturnType<typeof catalogFiles>) {
   return applyInferredScope({ statement: d.statement, scope: d.scope, inputFileIds: d.inputFileIds, outputFile: d.outputFile }, files.inputs, files.goldens);
+}
+
+function SeatTagSelect({
+  tag,
+  style,
+  editable,
+  disabled,
+  onChange,
+}: {
+  tag: string;
+  style: TagStyle;
+  editable: boolean;
+  disabled?: boolean;
+  onChange: (tag: RubricTag) => void;
+}) {
+  const tags = tagsForStyle(style);
+  const current = aliasTag(tag, style) ?? (isRubricTag(tag) ? tag : null);
+  const options = current && !tags.includes(current) ? [current, ...tags] : tags;
+  if (!editable) {
+    return (
+      <p className="text-xs text-muted" data-seat-tag={tag}>
+        {tag}
+      </p>
+    );
+  }
+  return (
+    <label className="flex min-w-0 items-center gap-2">
+      <span className="shrink-0 text-xs font-medium text-muted">Tag</span>
+      <select
+        aria-label="Tag"
+        className="input h-8 w-[min(100%,16rem)] py-1 text-xs"
+        data-seat-tag={current ?? tag}
+        disabled={disabled}
+        value={current ?? ''}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (!isRubricTag(next)) return;
+          onChange(next);
+        }}
+      >
+        {options.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
