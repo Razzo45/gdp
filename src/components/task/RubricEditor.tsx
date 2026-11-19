@@ -734,15 +734,8 @@ function SeatRow({ n, pad, d, style, view, editable, golden, editing, proposal, 
         {String(n).padStart(pad, '0')}
       </div>
       <div className="min-w-0 space-y-2">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-stretch">
           <div className="min-w-0 space-y-2">
-            <SeatTagSelect
-              tag={d.tag}
-              style={style}
-              editable={editable}
-              disabled={busy !== null}
-              onChange={(tag) => onUpdate(d.id, { tag, family: familyOfTag(tag) })}
-            />
             {open && editable ? (
               <textarea
                 className="input min-h-[3rem]"
@@ -795,29 +788,58 @@ function SeatRow({ n, pad, d, style, view, editable, golden, editing, proposal, 
                 {audit.ai.evidence ? ` — ${audit.ai.evidence}` : ''}
               </p>
             )}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {editable ? (
+                <>
+                  <button className="seat-pill seat-pill-edit" type="button" onClick={() => onEdit(open ? null : d.id)}>{open ? 'Done' : 'Edit'}</button>
+                  <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'polish')}>Polish</button>
+                  <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'harden')}>Harden</button>
+                  <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>
+                    {swapPick?.rowId === d.id ? 'Hide swaps' : 'Swap'}
+                  </button>
+                  <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onDelete(d.id)}>
+                    Delete
+                  </button>
+                </>
+              ) : null}
+              <SeatTagSelect
+                tag={d.tag}
+                style={style}
+                editable={editable}
+                disabled={busy !== null}
+                onChange={(tag) => onUpdate(d.id, { tag, family: familyOfTag(tag) })}
+              />
+            </div>
           </div>
-          <div className="flex flex-col items-center justify-center gap-1.5 self-center">
-            <Choice
-              value={verdict ?? null}
-              disabled={!editable}
-              clearable={false}
-              onChange={(v) => {
-                if (v === null || v === verdict) return;
-                void persist(v, note);
-              }}
-            />
-            {weight !== undefined && (
-              <span className="tabular-nums text-xs text-muted" title="Percentage share of the rubric score">
-                {formatWeight(weight)}
-              </span>
-            )}
-            {source === 'ai' && (
-              <p className="text-[11px] text-quiet">
-                Source: AI{audit?.ai?.model ? ` · ${audit.ai.model}` : ''}
-              </p>
-            )}
-            {source === 'human' && <p className="text-[11px] text-quiet">Source: Human</p>}
-            {source === 'stale' && <p className="text-[11px] text-quiet">Source: Stale — statement edited</p>}
+          <div className="flex flex-col items-center self-stretch">
+            <div className="flex flex-1 flex-col items-center justify-center gap-1.5">
+              <Choice
+                value={verdict ?? null}
+                disabled={!editable}
+                clearable={false}
+                onChange={(v) => {
+                  if (v === null || v === verdict) return;
+                  void persist(v, note);
+                }}
+              />
+              {weight !== undefined && (
+                <span className="tabular-nums text-xs text-muted" title="Percentage share of the rubric score">
+                  {formatWeight(weight)}
+                </span>
+              )}
+              {source === 'ai' && (
+                <p className="text-[11px] text-quiet">
+                  Source: AI{audit?.ai?.model ? ` · ${audit.ai.model}` : ''}
+                </p>
+              )}
+              {source === 'human' && <p className="text-[11px] text-quiet">Source: Human</p>}
+              {source === 'stale' && <p className="text-[11px] text-quiet">Source: Stale — statement edited</p>}
+            </div>
+            {editable ? (
+              <button className="seat-act" disabled={busy !== null} type="button" onClick={() => onReassess(d)} title="Reassess only this statement against the Golden">
+                Reassess
+              </button>
+            ) : null}
           </div>
         </div>
         {lint.overall === 'fail' && (
@@ -868,22 +890,6 @@ function SeatRow({ n, pad, d, style, view, editable, golden, editing, proposal, 
                 </li>
               ))}
             </ul>
-          </div>
-        )}
-        {editable && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button className="seat-pill seat-pill-edit" type="button" onClick={() => onEdit(open ? null : d.id)}>{open ? 'Done' : 'Edit'}</button>
-            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'polish')}>Polish</button>
-            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onRewrite(d, 'harden')}>Harden</button>
-            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onSwap(d)}>
-              {swapPick?.rowId === d.id ? 'Hide swaps' : 'Swap'}
-            </button>
-            <button className="seat-pill" disabled={busy !== null} type="button" onClick={() => onDelete(d.id)}>
-              Delete
-            </button>
-            <button className="seat-act ml-auto" disabled={busy !== null} type="button" onClick={() => onReassess(d)} title="Reassess only this statement against the Golden">
-              Reassess
-            </button>
           </div>
         )}
         {error && (
@@ -976,17 +982,16 @@ function SeatTagSelect({
   const options = current && !tags.includes(current) ? [current, ...tags] : tags;
   if (!editable) {
     return (
-      <p className="text-xs text-muted" data-seat-tag={tag}>
+      <p className="seat-pill pointer-events-none ml-auto max-w-[14rem] shrink-0 truncate" data-seat-tag={tag} title={tag}>
         {tag}
       </p>
     );
   }
   return (
-    <label className="flex min-w-0 items-center gap-2">
-      <span className="shrink-0 text-xs font-medium text-muted">Tag</span>
+    <label className="seat-pill relative ml-auto max-w-[14rem] shrink-0 gap-1 pr-2">
       <select
         aria-label="Tag"
-        className="input h-8 w-[min(100%,16rem)] py-1 text-xs"
+        className="seat-tag-select"
         data-seat-tag={current ?? tag}
         disabled={disabled}
         value={current ?? ''}
@@ -1002,6 +1007,9 @@ function SeatTagSelect({
           </option>
         ))}
       </select>
+      <span className="pointer-events-none text-[10px] leading-none text-muted" aria-hidden="true">
+        ▾
+      </span>
     </label>
   );
 }

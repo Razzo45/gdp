@@ -131,6 +131,11 @@ select {
   @apply border-accent bg-accent-soft text-accent-text hover:bg-accent-soft;
 }
 
+.seat-tag-select {
+  @apply max-w-[12.5rem] min-w-0 cursor-pointer appearance-none truncate bg-transparent text-[13px] font-medium text-ink outline-none;
+  field-sizing: content;
+}
+
 .chip {
   @apply inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-wash px-3 text-[13px] font-medium text-muted transition-colors hover:bg-surface hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
 }

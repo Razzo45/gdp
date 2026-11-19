@@ -113,6 +113,22 @@ describe('seat tag dropdown', () => {
     expect(html).toContain('<option value="Craft - Composition">Craft - Composition</option>');
   });
 
+  it('puts a compact tag pill on the action row, after Delete and after the statement', () => {
+    const html = renderToStaticMarkup(
+      createElement(RubricEditor, panel(view([formatSeat, craftSeat]))),
+    );
+    const statementAt = html.indexOf('The delivered file is a PDF with embedded fonts.');
+    const deleteAt = html.indexOf('>Delete<');
+    const selectAt = html.search(/<select[^>]*aria-label="Tag"/);
+    const reassessAt = html.indexOf('>Reassess<');
+    expect(statementAt).toBeGreaterThan(-1);
+    expect(deleteAt).toBeGreaterThan(statementAt);
+    expect(selectAt).toBeGreaterThan(deleteAt);
+    expect(reassessAt).toBeGreaterThan(selectAt);
+    expect(html).toMatch(/seat-pill[^>]*>[\s\S]*<select[^>]*aria-label="Tag"/);
+    expect(html).not.toMatch(/>Tag<\/span>/);
+  });
+
   it('warns that an off-quota mix cannot be sent to review', () => {
     const html = renderToStaticMarkup(
       createElement(RubricEditor, panel(view([formatSeat, craftSeat]))),
@@ -125,7 +141,10 @@ describe('seat tag dropdown', () => {
     const html = renderToStaticMarkup(
       createElement(RubricEditor, panel(view([formatSeat], { editRubric: false }))),
     );
-    expect(html).toMatch(/data-seat-tag="Format\/File"/);
+    const statementAt = html.indexOf('The delivered file is a PDF with embedded fonts.');
+    const tagAt = html.search(/data-seat-tag="Format\/File"/);
+    expect(statementAt).toBeGreaterThan(-1);
+    expect(tagAt).toBeGreaterThan(statementAt);
     expect(html).not.toMatch(/<select[^>]*aria-label="Tag"/);
   });
 });
