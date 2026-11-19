@@ -95,10 +95,17 @@ const craftSeat = statement({
   statement: 'The wordmark uses the published Rowan serif on every board.',
 });
 
+const panel = (v: SubmissionView) => ({
+  view: v,
+  actorId: 'tester',
+  refresh: async () => undefined,
+  notify: () => undefined,
+});
+
 describe('seat tag dropdown', () => {
   it('lets an editor change the tag on a seated statement', () => {
     const html = renderToStaticMarkup(
-      createElement(RubricEditor, { view: view([formatSeat, craftSeat]), refresh: async () => undefined, notify: () => undefined }),
+      createElement(RubricEditor, panel(view([formatSeat, craftSeat]))),
     );
     expect(html).toMatch(/<select[^>]*aria-label="Tag"[^>]*>/);
     expect(html).toContain('<option value="Format/File" selected="">Format/File</option>');
@@ -108,7 +115,7 @@ describe('seat tag dropdown', () => {
 
   it('warns that an off-quota mix cannot be sent to review', () => {
     const html = renderToStaticMarkup(
-      createElement(RubricEditor, { view: view([formatSeat, craftSeat]), refresh: async () => undefined, notify: () => undefined }),
+      createElement(RubricEditor, panel(view([formatSeat, craftSeat]))),
     );
     expect(html).toMatch(/cannot be sent to review/i);
     expect(html).toMatch(/5 Format, 15 Content, 30 Craft/i);
@@ -116,11 +123,7 @@ describe('seat tag dropdown', () => {
 
   it('shows the tag as text when the rubric is read-only', () => {
     const html = renderToStaticMarkup(
-      createElement(RubricEditor, {
-        view: view([formatSeat], { editRubric: false }),
-        refresh: async () => undefined,
-        notify: () => undefined,
-      }),
+      createElement(RubricEditor, panel(view([formatSeat], { editRubric: false }))),
     );
     expect(html).toMatch(/data-seat-tag="Format\/File"/);
     expect(html).not.toMatch(/<select[^>]*aria-label="Tag"/);
