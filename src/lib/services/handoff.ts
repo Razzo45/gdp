@@ -64,8 +64,8 @@ export async function handoffView(database: DbOrTx, submission: Submission, load
   const gates = handoffGates({
     golden: golden?.gate ?? null,
     calibrationPercent: calibration?.scorePercent ?? null,
-    stability: stability?.gate ?? null,
-    stabilityAccepted: stability?.accepted != null,
+    stability: stability?.stale && stability.gate ? { ...stability.gate, ok: false } : (stability?.gate ?? null),
+    stabilityAccepted: stability?.accepted != null && !stability.stale,
   });
   return {
     gates,

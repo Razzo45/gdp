@@ -24,6 +24,8 @@ function view(partial: Partial<SubmissionView["can"]> & { jobs?: SubmissionView[
       groupId: null,
       calibrationGateActive: false,
       flipNotes: [],
+      stale: false,
+      staleReason: null,
     },
     review: { latest: null, submittedPercent: null, feedback: [] },
     handoff: {

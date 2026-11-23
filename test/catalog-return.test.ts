@@ -558,6 +558,16 @@ describe('Catalog return reconciliation', () => {
     expect(back.handoffStatus).toBe('bounced');
   });
 
+  it('records a Stability reopen even when the task is already on Stability', async () => {
+    const row = await submittedReturn();
+    await db.update(submissions).set({ stage: 'stability', handoffStatus: 'bounced', pushedAt: null }).where(eq(submissions.id, row.id));
+    await db.insert(rubrics).values({ submissionId: row.id, version: 1, isCurrent: true, createdBy: creator.id });
+    const again = await openReturnedWork(creator, row.id, 'stability');
+    expect(again.stage).toBe('stability');
+    const actions = (await db.select().from(submissionEvents).where(eq(submissionEvents.submissionId, row.id))).map((e) => e.action);
+    expect(actions.filter((action) => action === 'platform_return_opened_stability')).toHaveLength(1);
+  });
+
   it('refuses to open the rubric on a task that is still submitted', async () => {
     const row = await submittedReturn();
     await expectStatus(openReturnedWork(creator, row.id, 'rubric'), 409);

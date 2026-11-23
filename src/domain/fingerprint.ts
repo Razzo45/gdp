@@ -21,6 +21,11 @@ export function sha256(input: string | Uint8Array): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
+/** Stable identity of a file set: order-sensitive on the given array. */
+export function fileSetFingerprint(files: readonly { id: string; sha256: string }[]): string {
+  return sha256(files.map((file) => `${file.id}:${file.sha256}`).join('|'));
+}
+
 export function fingerprint(value: unknown): string {
   return sha256(canonicalJson(value));
 }

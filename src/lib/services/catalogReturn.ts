@@ -64,9 +64,9 @@ export async function openReturnedWork(actor: Actor, submissionId: string, targe
       await tx.select({ id: rubrics.id }).from(rubrics).where(and(eq(rubrics.submissionId, submissionId), eq(rubrics.isCurrent, true))).limit(1)
     )[0];
     if (target === 'stability' && current) await tx.delete(stabilityAcceptances).where(eq(stabilityAcceptances.rubricId, current.id));
+    await recordEvent(tx, submissionId, actor.id, target === 'rubric' ? 'platform_return_opened_rubric' : 'platform_return_opened_stability', {});
     if (submission.stage === target) return { previous: submission, next: submission };
     const [updated] = await tx.update(submissions).set({ stage: target, handoffStatus: 'bounced' }).where(eq(submissions.id, submissionId)).returning();
-    await recordEvent(tx, submissionId, actor.id, target === 'rubric' ? 'platform_return_opened_rubric' : 'platform_return_opened_stability', {});
     return { previous: submission, next: updated! };
   });
   scheduleWorkStatusSheet(result.previous, result.next);

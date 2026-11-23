@@ -7,6 +7,7 @@ import { acceptanceCriteriaText } from '@/domain/fileScope';
 import { tightenReportOf, type TightenReport } from '@/domain/tighten';
 import { jobs as jobsTable, profiles, submissionEvents, type AiOutputFile, type Job, type RubricStatement, type Submission, type SubmissionEvent } from '@/db/schema';
 import { progressKeyOf, type StatusPulse } from '@/domain/freshness';
+import { fileSetFingerprint } from '@/domain/fingerprint';
 import { canSubmitToDataPlatform, type GoldenGate, type HandoffGates, type StabilityGate, type Verdict } from '@/domain/gates';
 import { familyQuotas, RUBRIC_TARGET } from '@/domain/rubric';
 import { capsFor } from '@/lib/auth/workMode';
@@ -37,7 +38,7 @@ export interface SubmissionView {
   golden: { verdicts: Record<string, Verdict>; evidence: Record<string, string>; errors: Record<string, string>; sources: Record<string, 'ai' | 'human' | 'stale'>; audit: Record<string, { ai?: { verdict: boolean | null; evidence: string; model: string | null }; human?: { verdict: boolean | null; evidence: string } }>; gate: GoldenGate } | null;
   aiOutputs: AiOutputFile[];
   review: { latest: { id: string; answers: Record<string, boolean>; evidence: Record<string, string>; scorePercent: number; submitted: boolean; reviewerId: string | null; createdAt: string } | null; submittedPercent: number | null; feedback: { decision: string; feedback: string; reviewerId: string | null; createdAt: string }[] };
-  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string; basis: { statementsAt?: string } }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[] } | null;
+  stability: { groupId: string | null; passes: { passIndex: number; answers: Record<string, boolean | null>; evidence: Record<string, string>; errors: Record<string, string>; scorePercent: number | null; model: string | null; createdAt: string; basis: { statementsAt?: string } }[]; gate: StabilityGate | null; acceptedAt: string | null; calibrationGateActive: boolean; flipNotes: { statementId: string; action: string; note: string }[]; stale: boolean; staleReason: string | null } | null;
   handoff: { gates: HandoffGates; goldenPercent: number | null; calibrationPercent: number | null; stabilityScores: number[] | null };
   jobs: Pick<Job, 'id' | 'kind' | 'status' | 'progress' | 'error' | 'createdAt' | 'startedAt' | 'finishedAt' | 'attempts'>[];
   helper: { id: string; status: Job['status']; progress: Job['progress']; error: string | null; result: TightenReport | null } | null;
@@ -77,7 +78,7 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
   const database = db();
   const submission = await getVisibleSubmission(database, actor, id);
   const source = readSource(submission);
-  const [rubric, aiOutputs, feedback, jobs, events, helperJob] = await Promise.all([
+  const [rubric, aiOutputs, feedback, jobs, events, helperJob, stabilityInvalidateAt] = await Promise.all([
     currentRubric(database, id),
     listAiOutputs(database, id),
     feedbackFor(database, id),
@@ -90,6 +91,13 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
       .orderBy(desc(jobsTable.createdAt))
       .limit(1)
       .then((rows) => rows[0] ?? null),
+    database
+      .select({ createdAt: submissionEvents.createdAt })
+      .from(submissionEvents)
+      .where(and(eq(submissionEvents.submissionId, id), eq(submissionEvents.action, 'platform_return_opened_stability')))
+      .orderBy(desc(submissionEvents.createdAt))
+      .limit(1)
+      .then((rows) => rows[0]?.createdAt ?? null),
   ]);
   const statements = rubric ? await statementsOf(database, rubric.id) : [];
   const [golden, latest, submitted, stability] = rubric
@@ -97,7 +105,11 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
         goldenState(database, rubric.id, statements),
         latestCalibration(database, rubric.id),
         submittedCalibration(database, rubric.id),
-        stabilityView(database, rubric.id, { statements }),
+        stabilityView(database, rubric.id, {
+          statements,
+          currentAiFingerprint: fileSetFingerprint(aiOutputs),
+          invalidatedAt: stabilityInvalidateAt,
+        }),
       ])
     : [null, null, null, null];
   const handoff = await handoffView(database, submission, { rubric, statements, golden, calibration: submitted, stability });
@@ -179,6 +191,8 @@ export async function submissionView(actor: Actor, id: string): Promise<Submissi
             acceptedAt: stability.accepted?.createdAt ?? null,
             calibrationGateActive: stability.calibrationGateActive,
             flipNotes: stability.flipNotes.map((n) => ({ statementId: n.statementId, action: n.action, note: n.note })),
+            stale: stability.stale,
+            staleReason: stability.staleReason,
           },
     handoff: { gates: handoff.gates, goldenPercent: handoff.goldenPercent, calibrationPercent: handoff.calibrationPercent, stabilityScores: handoff.stabilityScores },
     jobs: (lens === 'reviewer' ? [] : lens === 'rubric' ? jobs.filter((j) => j.status === 'queued' || j.status === 'running') : jobs).map((j) => ({

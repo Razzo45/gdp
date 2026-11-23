@@ -191,6 +191,31 @@ export function stabilityRerunAllowed(input: { acceptedAt: string | null; platfo
   return input.acceptedAt == null;
 }
 
+export interface StabilityStaleInput {
+  latestPassAt: string | null;
+  gradedAiFingerprint: string | null;
+  currentAiFingerprint: string | null;
+  invalidatedAt: string | null;
+}
+
+/** Prior Stability is unusable after a Platform-return reopen or an AI-file change. */
+export function stabilityRunStale(input: StabilityStaleInput): boolean {
+  if (!input.latestPassAt) return false;
+  if (input.invalidatedAt && Date.parse(input.invalidatedAt) > Date.parse(input.latestPassAt)) return true;
+  if (input.gradedAiFingerprint && input.currentAiFingerprint && input.gradedAiFingerprint !== input.currentAiFingerprint) {
+    return true;
+  }
+  return false;
+}
+
+export function stabilityStaleReason(input: StabilityStaleInput): string | null {
+  if (!stabilityRunStale(input)) return null;
+  if (input.invalidatedAt && input.latestPassAt && Date.parse(input.invalidatedAt) > Date.parse(input.latestPassAt)) {
+    return 'This Stability run is from before the Platform return. Run Stability again.';
+  }
+  return 'The AI output files changed. This Stability result is stale — run it again.';
+}
+
 /** The score strip already stands in for handoff. Submit is available once every gate is closed. */
 export function canSubmitToDataPlatform(input: {
   golden: boolean;

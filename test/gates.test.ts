@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed } from '@/domain/gates';
+import { calibrationInBand, canConfirmStabilityPassFrom, canSubmitToDataPlatform, goldenGate, handoffGates, handoffTransitionGate, scoreBreakdown, stabilityGate, stabilityRerunAllowed, stabilityRunStale, stabilityStaleReason } from '@/domain/gates';
 import { mergeReviewDraft, reviewApprovalScore, reviewDisplayScore, reviewGradesEditable, reviewerReturnNote } from '@/domain/review';
 
 const ids = ['a', 'b', 'c', 'd', 'e'];
@@ -179,5 +179,70 @@ describe('handoff', () => {
     expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'stability_pass', pushedAt: '2026-10-12T00:00:00.000Z' })).toBe(false);
     expect(canSubmitToDataPlatform({ ...gates, golden: false, handoffStatus: 'stability_pass', pushedAt: null })).toBe(false);
     expect(canSubmitToDataPlatform({ ...gates, handoffStatus: 'ready_for_review', pushedAt: null })).toBe(false);
+  });
+});
+
+describe('stabilityRunStale', () => {
+  it('is fresh when the latest run matches the current AI files and was not reopened', () => {
+    expect(
+      stabilityRunStale({
+        latestPassAt: '2026-11-23T12:00:00.000Z',
+        gradedAiFingerprint: 'abc',
+        currentAiFingerprint: 'abc',
+        invalidatedAt: null,
+      }),
+    ).toBe(false);
+    expect(
+      stabilityStaleReason({
+        latestPassAt: '2026-11-23T12:00:00.000Z',
+        gradedAiFingerprint: 'abc',
+        currentAiFingerprint: 'abc',
+        invalidatedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('is stale when Stability was reopened after the last run', () => {
+    const input = {
+      latestPassAt: '2026-11-23T12:00:00.000Z',
+      gradedAiFingerprint: 'abc',
+      currentAiFingerprint: 'abc',
+      invalidatedAt: '2026-11-23T13:00:00.000Z',
+    };
+    expect(stabilityRunStale(input)).toBe(true);
+    expect(stabilityStaleReason(input)).toBe('This Stability run is from before the Platform return. Run Stability again.');
+  });
+
+  it('is stale when the AI output files changed after the last run', () => {
+    const input = {
+      latestPassAt: '2026-11-23T12:00:00.000Z',
+      gradedAiFingerprint: 'old',
+      currentAiFingerprint: 'new',
+      invalidatedAt: null,
+    };
+    expect(stabilityRunStale(input)).toBe(true);
+    expect(stabilityStaleReason(input)).toBe('The AI output files changed. This Stability result is stale — run it again.');
+  });
+
+  it('is fresh after a new run that lands after reopen', () => {
+    expect(
+      stabilityRunStale({
+        latestPassAt: '2026-11-23T14:00:00.000Z',
+        gradedAiFingerprint: 'new',
+        currentAiFingerprint: 'new',
+        invalidatedAt: '2026-11-23T13:00:00.000Z',
+      }),
+    ).toBe(false);
+  });
+
+  it('is not stale when there is no run yet', () => {
+    expect(
+      stabilityRunStale({
+        latestPassAt: null,
+        gradedAiFingerprint: null,
+        currentAiFingerprint: 'abc',
+        invalidatedAt: '2026-11-23T13:00:00.000Z',
+      }),
+    ).toBe(false);
   });
 });

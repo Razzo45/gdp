@@ -2,11 +2,13 @@ import 'server-only';
 
 import { and, desc, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { stabilityAcceptances, stabilityFlipNotes, stabilityPasses, submissions, type FlipNoteAction, type RubricStatement, type StabilityAcceptance, type StabilityFlipNote, type StabilityPass } from '@/db/schema';
+import { stabilityAcceptances, stabilityFlipNotes, stabilityPasses, submissionEvents, submissions, type FlipNoteAction, type RubricStatement, type StabilityAcceptance, type StabilityFlipNote, type StabilityPass } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { stabilityGate, type StabilityGate } from '@/domain/gates';
+import { fileSetFingerprint } from '@/domain/fingerprint';
+import { stabilityGate, stabilityRunStale, stabilityStaleReason, type StabilityGate } from '@/domain/gates';
 import { holdsRubricSeat, type Actor } from '@/lib/auth/permissions';
 import { conflict, forbidden, invalid } from './errors';
+import { listAiOutputs } from './files';
 import { submittedCalibration } from './review';
 import { currentRubric, statementsOf } from './rubric';
 import { scheduleReap } from '@/lib/ai/reaper';
@@ -29,6 +31,33 @@ export interface StabilityView {
   calibrationPercent: number | null;
   calibrationGateActive: boolean;
   flipNotes: StabilityFlipNote[];
+  stale: boolean;
+  staleReason: string | null;
+}
+
+function passAiFingerprint(pass: StabilityPass | undefined): string | null {
+  const value = (pass?.basis as { aiFingerprint?: unknown } | null)?.aiFingerprint;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function latestPassAt(passes: readonly { createdAt: string }[]): string | null {
+  let latest: string | null = null;
+  for (const pass of passes) {
+    if (!latest || Date.parse(pass.createdAt) > Date.parse(latest)) latest = pass.createdAt;
+  }
+  return latest;
+}
+
+async function lastStabilityInvalidateAt(database: DbOrTx, submissionId: string): Promise<string | null> {
+  const row = (
+    await database
+      .select({ createdAt: submissionEvents.createdAt })
+      .from(submissionEvents)
+      .where(and(eq(submissionEvents.submissionId, submissionId), eq(submissionEvents.action, 'platform_return_opened_stability')))
+      .orderBy(desc(submissionEvents.createdAt))
+      .limit(1)
+  )[0];
+  return row?.createdAt ?? null;
 }
 
 export async function latestGroup(database: DbOrTx, rubricId: string): Promise<StabilityPass[]> {
@@ -40,7 +69,13 @@ export async function latestGroup(database: DbOrTx, rubricId: string): Promise<S
 export async function stabilityView(
   database: DbOrTx,
   rubricId: string,
-  options: { calibrationGateActive?: boolean; statements?: Pick<RubricStatement, 'id'>[]; calibration?: { scorePercent: number } | null } = {},
+  options: {
+    calibrationGateActive?: boolean;
+    statements?: Pick<RubricStatement, 'id'>[];
+    calibration?: { scorePercent: number } | null;
+    currentAiFingerprint?: string | null;
+    invalidatedAt?: string | null;
+  } = {},
 ): Promise<StabilityView> {
   const [passes, statements, calibration] = await Promise.all([
     latestGroup(database, rubricId),
@@ -57,13 +92,29 @@ export async function stabilityView(
         calibrationGateActive,
       })
     : null;
+  const staleInput = {
+    latestPassAt: latestPassAt(passes),
+    gradedAiFingerprint: passAiFingerprint(passes[0]),
+    currentAiFingerprint: options.currentAiFingerprint ?? null,
+    invalidatedAt: options.invalidatedAt ?? null,
+  };
   const [accepted, flipNotes] = groupId
     ? await Promise.all([
         database.select().from(stabilityAcceptances).where(and(eq(stabilityAcceptances.rubricId, rubricId), eq(stabilityAcceptances.groupId, groupId))).limit(1).then((rows) => rows[0] ?? null),
         database.select().from(stabilityFlipNotes).where(and(eq(stabilityFlipNotes.rubricId, rubricId), eq(stabilityFlipNotes.groupId, groupId))),
       ])
     : [null, [] as StabilityFlipNote[]];
-  return { groupId, passes, gate, accepted, calibrationPercent: calibration?.scorePercent ?? null, calibrationGateActive, flipNotes };
+  return {
+    groupId,
+    passes,
+    gate,
+    accepted,
+    calibrationPercent: calibration?.scorePercent ?? null,
+    calibrationGateActive,
+    flipNotes,
+    stale: stabilityRunStale(staleInput),
+    staleReason: stabilityStaleReason(staleInput),
+  };
 }
 
 export async function acceptStability(actor: Actor, submissionId: string, groupId: string): Promise<void> {
@@ -74,8 +125,16 @@ export async function acceptStability(actor: Actor, submissionId: string, groupI
     if (submission.stage !== 'stability') throw conflict('The task is not in the stability stage.');
     const rubric = await currentRubric(tx, submissionId);
     if (!rubric) throw conflict('There is no rubric.');
-    const view = await stabilityView(tx, rubric.id);
+    const [outputs, invalidatedAt] = await Promise.all([
+      listAiOutputs(tx, submissionId),
+      lastStabilityInvalidateAt(tx, submissionId),
+    ]);
+    const view = await stabilityView(tx, rubric.id, {
+      currentAiFingerprint: fileSetFingerprint(outputs),
+      invalidatedAt,
+    });
     if (view.groupId !== groupId) throw conflict('A newer stability run exists; accept that one.');
+    if (view.stale) throw conflict(view.staleReason ?? 'This Stability result is stale. Run Stability again.');
     if (!view.gate?.ok) throw conflict(`Stability has not passed: ${view.gate?.reasons.join(' ') ?? 'no passes yet.'}`);
     if (!view.accepted) {
       const calibration = await submittedCalibration(tx, rubric.id);

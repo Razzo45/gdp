@@ -25,7 +25,7 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
   const canRun = view.can.runStability;
   const platformReturned = view.submission.handoffStatus === 'bounced' && view.submission.stage !== 'done';
   const canStart = canRun && stabilityRerunAllowed({ acceptedAt: stability?.acceptedAt ?? null, platformReturned });
-  const canAccept = official && canStart && view.submission.stage === 'stability';
+  const canAccept = official && canStart && view.submission.stage === 'stability' && !stability?.stale;
   const canContinue =
     official &&
     canRun &&
@@ -69,7 +69,11 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
             : `${STABILITY_PASSES} passes · each ${CALIBRATION_MIN_PERCENT}–${CALIBRATION_MAX_PERCENT}% · spread ≤ ${STABILITY_MAX_SPREAD_POINTS} pts. The human-score check applies after review.`}
         </span>
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          {gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)}
+          {stability?.stale ? (
+            <Pill tone="warn">stale</Pill>
+          ) : (
+            gate && (gate.ok ? <Pill tone="ok">passed</Pill> : gate.complete ? <Pill tone="bad">failed</Pill> : <Pill tone="muted">incomplete</Pill>)
+          )}
           {stability?.acceptedAt && <Pill tone="ok">accepted {formatDate(stability.acceptedAt)}</Pill>}
           {canContinue ? (
             <button
@@ -104,6 +108,8 @@ export function StabilityPanel({ view, refresh, notify }: PanelProps) {
           )}
         </span>
       </div>
+
+      {stability?.stale && stability.staleReason ? <p className="text-sm text-warn">{stability.staleReason}</p> : null}
 
       {liveNote ? (
         <div className="rounded-xl border border-line bg-accent-soft/40 p-3 text-sm">

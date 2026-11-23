@@ -332,10 +332,6 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
   if (ai.files.length === 0) throw new ServiceError(422, 'No AI output files are attached to this task.');
   const currentShas = (await listAiOutputs(database, job.submissionId)).map((f) => f.sha256).sort();
   const basisAi = [...((calibration?.basis as { aiOutputShas?: string[] } | undefined)?.aiOutputShas ?? [])].sort();
-  // Official runs must grade exactly what the reviewer evaluated by hand.
-  if (official && basisAi.length && JSON.stringify(basisAi) !== JSON.stringify(currentShas)) {
-    throw new ServiceError(409, 'The AI output files changed after the human AI evaluation. The reviewer must re-evaluate before stability can run.');
-  }
   const catalogInputs = readSource(submission)?.inputFiles ?? [];
   const grade = scopedStatements(statements, ai.files, catalogInputs, statements);
   const needed = neededFileIds(grade, ai.files, catalogInputs);
@@ -390,6 +386,7 @@ export async function runStability(ctx: JobContext): Promise<Record<string, unkn
         calibrationId: calibration?.id ?? null,
         calibrationGateActive: official,
         aiFingerprint: ai.fingerprint,
+        aiOutputShas: currentShas,
         aiOutputShasAtCalibration: basisAi,
         inputsFingerprint: inputs.fingerprint,
         delivery: Object.fromEntries(outputs.map((o) => [o.id, o.delivery])),

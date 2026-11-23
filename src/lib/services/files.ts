@@ -5,7 +5,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { aiOutputFiles, catalogFileCache, submissions, type AiOutputFile, type Submission } from '@/db/schema';
 import type { DbOrTx } from '@/db/types';
-import { sha256 } from '@/domain/fingerprint';
+import { fileSetFingerprint, sha256 } from '@/domain/fingerprint';
 import { canReuseStagedUri, catalogIdentityMatch } from '@/domain/jobs';
 import { canChangeAiOutputs, type Actor } from '@/lib/auth/permissions';
 import { downloadCatalogFile, probeCatalogFile } from '@/lib/catalog/client';
@@ -159,7 +159,7 @@ export async function prepareAiOutputs(database: DbOrTx, submissionId: string, r
     await rememberGeminiUse(prepared.sha256, submissionId);
     files.push(prepared);
   }
-  return { files, fingerprint: sha256(files.map((f) => `${f.id}:${f.sha256}`).join('|')) };
+  return { files, fingerprint: fileSetFingerprint(files) };
 }
 
 function urlExpired(url: string): boolean {
