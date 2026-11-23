@@ -122,14 +122,6 @@ export function BriefPanel({ view, refresh, notify, onHide }: PanelProps & { onH
         const next = await api<CookStatus>(`/api/submissions/${s.id}/autocook`);
         if (cancelled || !next.runId) return;
         if (next.ingested) {
-          // Only surface if this page load just attached files (e.g. modal was closed before ingest).
-          if (view.aiOutputs.length === 0 && next.files.length > 0) {
-            setCook(next);
-            setCookBusy(false);
-            setCookOpen(true);
-            notify(`Cook finished — ${next.files.length} AI file(s) attached.`);
-            await refresh();
-          }
           return;
         }
         if (next.status === 'failed' || next.status === 'rejected') {

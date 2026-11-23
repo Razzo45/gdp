@@ -234,6 +234,24 @@ describe('ingestFilePlan', () => {
     expect(plan.removeIds).toEqual([]);
     expect(plan.add).toEqual([]);
   });
+
+  it('does not put back a cook file the operator removed after that run landed', () => {
+    const plan = ingestFilePlan([], ['Hero.png'], true, ['Hero.png']);
+    expect(plan.add).toEqual([]);
+    expect(plan.removeIds).toEqual([]);
+  });
+
+  it('does not append the cook file next to a replacement the operator uploaded', () => {
+    const plan = ingestFilePlan([{ id: 'x', name: 'mine.html' }], ['cook.html'], true, ['cook.html']);
+    expect(plan.add).toEqual([]);
+    expect(plan.removeIds).toEqual([]);
+  });
+
+  it('still adds a name the first ingest never landed', () => {
+    const plan = ingestFilePlan([{ id: 'a', name: 'Deck.pptx' }], ['Deck.pptx', 'Hero.png'], true, ['Deck.pptx']);
+    expect(plan.add).toEqual(['Hero.png']);
+    expect(plan.removeIds).toEqual([]);
+  });
 });
 
 describe('mediaPathFromAbs', () => {

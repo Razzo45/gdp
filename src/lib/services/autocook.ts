@@ -10,6 +10,7 @@ import {
   COOK_ACTIVITY_ACTIONS,
   cookPromptFromFields,
   ingestFilePlan,
+  landedCookFiles,
   mediaPathFromAbs,
   operatorCookFromRun,
   sortOperatorCooks,
@@ -86,6 +87,12 @@ async function latestCookEvent(
   return { runId, detail: row.detail ?? {} };
 }
 
+async function closeCookIngest(actor: Actor, submissionId: string, runId: string): Promise<void> {
+  const closed = await latestCookEvent(submissionId, 'autocook_closed');
+  if (closed?.runId === runId) return;
+  await recordEvent(db(), submissionId, actor.id, 'autocook_closed', { runId, status: 'exported' });
+}
+
 async function fetchRun(runId: string): Promise<AutocookRunDetail> {
   const res = await fetch(`${baseUrl()}/api/runs/${encodeURIComponent(runId)}`, {
     headers: authHeaders(),
@@ -159,8 +166,10 @@ async function ingestRunOnce(
 
   const previewEvent = await latestCookEvent(submissionId, 'autocook_ingested');
   const previewExisting = await listAiOutputs(db(), submissionId);
-  const preview = ingestFilePlan(previewExisting, wanted, previewEvent?.runId === runId);
+  const previewSame = previewEvent?.runId === runId;
+  const preview = ingestFilePlan(previewExisting, wanted, previewSame, landedCookFiles(previewEvent?.detail));
   if (preview.add.length === 0 && preview.removeIds.length === 0) {
+    if (previewSame) await closeCookIngest(actor, submissionId, runId);
     return { files: previewExisting.map((file) => ({ id: file.id, name: file.name })), changed: false };
   }
 
@@ -187,7 +196,7 @@ async function ingestRunOnce(
     await tx.execute(sql`select id from app.submissions where id = ${submissionId}::uuid for update`);
     const already = await latestCookEvent(submissionId, 'autocook_ingested', tx);
     const existing = await listAiOutputs(tx, submissionId);
-    const plan = ingestFilePlan(existing, wanted, already?.runId === runId);
+    const plan = ingestFilePlan(existing, wanted, already?.runId === runId, landedCookFiles(already?.detail));
     const wrote = await writeCookOutputs(tx, actor, submissionId, {
       removeIds: plan.removeIds,
       add: plan.add.flatMap((name) => {
@@ -209,6 +218,7 @@ async function ingestRunOnce(
   const landed = outcome.files.some((file) => byName.has(file.name));
   const missing = [...new Set([...failed, ...outcome.missing])];
   if (missing.length && !landed) throw new ServiceError(502, `Could not attach ${missing.join(', ')}.`);
+  if (missing.length === 0) await closeCookIngest(actor, submissionId, runId);
   return { files: outcome.files, changed: outcome.changed };
 }
 
@@ -301,6 +311,11 @@ export async function autocookStatus(actor: Actor, submissionId: string, runIdHi
   }
 
   if (status === 'exported') {
+    const closed = await latestCookEvent(submissionId, 'autocook_closed');
+    if (closed?.runId === runId) {
+      const files = (await listAiOutputs(db(), submissionId)).map((file) => ({ id: file.id, name: file.name }));
+      return { runId, status, live: live || 'Done', progress: 100, error: null, files, ingested: true };
+    }
     const ingested = await ingestRun(actor, submissionId, runId, detail);
     return { runId, status, live: live || 'Done', progress: 100, error: null, files: ingested.files, ingested: true };
   }
@@ -396,7 +411,7 @@ export async function retryOperatorCook(actor: Actor, runId: string): Promise<vo
 
 type PendingCook = { submissionId: string; runId: string; actorId: string | null };
 
-/** Latest autocook_started per submission. Failed cooks are closed. Exported cooks stay, so a file missing from the first upload can be attached on a later pass. */
+/** Latest autocook_started per submission. Failed and fully ingested cooks are closed. */
 async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
   const rows = await db()
     .select({

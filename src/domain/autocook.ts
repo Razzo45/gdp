@@ -172,18 +172,29 @@ export function operatorCookFromRun(run: {
   };
 }
 
+function cookFileName(name: string): string {
+  return name.replace(/[\\/]/g, '_').trim().slice(0, 200);
+}
+
+/** Names Autocook already wrote onto the task for this run. */
+export function landedCookFiles(detail: Record<string, unknown> | undefined): string[] {
+  const files = detail?.['files'];
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((name) => (typeof name === 'string' && cookFileName(name) ? [cookFileName(name)] : []));
+}
+
 /**
  * One copy of each deliverable name.
- * A new run replaces the task's AI outputs. The same run only adds what is missing
- * and drops extra copies of those names, so a second upload cannot append duplicates
- * or wipe a file the first pass already stored.
+ * A new run replaces the task's AI outputs. The same run only adds names the first
+ * pass never landed, and drops extra copies. Files the operator later removed stay gone.
  */
 export function ingestFilePlan(
   existing: { id: string; name: string }[],
   wanted: string[],
   sameRun: boolean,
+  previouslyLanded: readonly string[] = [],
 ): { removeIds: string[]; add: string[] } {
-  const wantedNames = wanted.map((name) => name.replace(/[\\/]/g, '_').trim().slice(0, 200)).filter(Boolean);
+  const wantedNames = wanted.map(cookFileName).filter(Boolean);
   if (!sameRun) return { removeIds: existing.map((file) => file.id), add: wantedNames };
   const byName = new Map<string, string[]>();
   for (const file of existing) {
@@ -197,7 +208,8 @@ export function ingestFilePlan(
     if (!wantedSet.has(name)) continue;
     removeIds.push(...ids.slice(1));
   }
-  return { removeIds, add: wantedNames.filter((name) => !byName.has(name)) };
+  const landed = new Set(previouslyLanded.map(cookFileName).filter(Boolean));
+  return { removeIds, add: wantedNames.filter((name) => !byName.has(name) && !landed.has(name)) };
 }
 
 /** Autocook deliverable abs paths → `/api/media?path=` relative form. */
