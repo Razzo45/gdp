@@ -35,9 +35,39 @@ export interface OperatorCookRow {
   phase: string;
   createdAt: string;
   updatedAt: string;
+  /** Start, land, or fail — not Autocook's open/heartbeat `updated_at`. */
+  activityAt: string;
   prompt: string;
   brain: 'Argon' | 'Carbon';
   active: boolean;
+}
+
+/** GDP events that mean the cook actually moved, not that someone opened the task. */
+export const COOK_ACTIVITY_ACTIONS = ['autocook_ingested', 'autocook_closed'] as const;
+
+export interface CookActivityEvent {
+  runId: string;
+  action: string;
+  createdAt: string;
+}
+
+const COOK_ACTIVITY_ACTION_SET = new Set<string>(COOK_ACTIVITY_ACTIONS);
+
+/** Finished cooks stamp land/fail. Live cooks keep created time so opening a task cannot reshuffle them. */
+export function applyCookActivity(cooks: OperatorCookRow[], events: readonly CookActivityEvent[]): OperatorCookRow[] {
+  const latest = new Map<string, string>();
+  for (const event of events) {
+    if (!COOK_ACTIVITY_ACTION_SET.has(event.action)) continue;
+    const runId = event.runId.trim();
+    const at = event.createdAt.trim();
+    if (!runId || !at) continue;
+    const have = latest.get(runId);
+    if (!have || at > have) latest.set(runId, at);
+  }
+  return cooks.map((cook) => ({
+    ...cook,
+    activityAt: cook.active ? cook.createdAt : (latest.get(cook.id) ?? cook.createdAt),
+  }));
 }
 
 function cookBrainLabel(model: string | null | undefined): 'Argon' | 'Carbon' {
@@ -78,12 +108,34 @@ export function sortOperatorCooks(cooks: OperatorCookRow[]): OperatorCookRow[] {
   const finished = cooks
     .filter((row) => !row.active)
     .sort((a, b) => {
-      const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
-      if (byUpdated) return byUpdated;
+      const byActivity = b.activityAt.localeCompare(a.activityAt);
+      if (byActivity) return byActivity;
       return b.id.localeCompare(a.id);
     })
     .slice(0, 20);
   return [...active, ...finished];
+}
+
+/** True when the panel would look the same. Autocook heartbeat `updated_at` is ignored. */
+export function cookListUnchanged(prev: readonly OperatorCookRow[], next: readonly OperatorCookRow[]): boolean {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i]!;
+    const b = next[i]!;
+    if (
+      a.id !== b.id ||
+      a.status !== b.status ||
+      a.line !== b.line ||
+      a.phase !== b.phase ||
+      a.active !== b.active ||
+      a.activityAt !== b.activityAt ||
+      a.brain !== b.brain ||
+      a.sessionId !== b.sessionId
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** One row for the operator's cook list. Drops anything that is not a run id. */
@@ -103,17 +155,20 @@ export function operatorCookFromRun(run: {
   const status = run.status?.trim() || 'unknown';
   const line = run.live?.text?.trim() || run.error?.trim() || status;
   const updatedAt = run.updated_at?.trim() || '';
+  const createdAt = run.created_at?.trim() || updatedAt;
+  const active = !FINISHED_COOK.has(status);
   return {
     id,
     sessionId: run.session_id?.trim() || '',
     status,
     line,
     phase: cookPhase(status, line),
-    createdAt: run.created_at?.trim() || updatedAt,
+    createdAt,
     updatedAt,
+    activityAt: createdAt,
     prompt: (run.initial_prompt ?? '').replace(/\s+/g, ' ').trim(),
     brain: cookBrainLabel(run.script_model),
-    active: !FINISHED_COOK.has(status),
+    active,
   };
 }
 

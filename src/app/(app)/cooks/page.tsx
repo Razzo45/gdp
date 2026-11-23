@@ -15,7 +15,7 @@ export default async function CooksPage() {
   return (
     <Page>
       <div className="space-y-5">
-        <PageHeader title="Cooks">Your Autocook runs. Status updates on its own. Cancel is the same control as Delete on a run.</PageHeader>
+        <PageHeader title="Cooks">Your Autocook runs. The list moves when a cook writes files or lands, not when someone opens the task. Cancel is the same control as Delete on a run.</PageHeader>
         <CooksPanel />
       </div>
     </Page>

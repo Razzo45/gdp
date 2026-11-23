@@ -1,16 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTOCOOK_OPERATOR_EMAIL,
+  applyCookActivity,
   brainFromModelTag,
   canAutocookEmail,
   cookPhase,
   cookPromptFromFields,
   ingestFilePlan,
   mediaPathFromAbs,
+  cookListUnchanged,
   operatorCookFromRun,
   sortOperatorCooks,
   type OperatorCookRow,
 } from '@/domain/autocook';
+
+function cook(partial: Partial<OperatorCookRow> & Pick<OperatorCookRow, 'id' | 'active'>): OperatorCookRow {
+  return {
+    sessionId: `sess_${partial.id}`,
+    status: partial.active ? 'generating' : 'exported',
+    line: partial.active ? 'Argon is writing the deliverables…' : 'Exported',
+    phase: partial.active ? 'Writing files' : 'Done',
+    createdAt: '2026-11-16T13:00:00.000Z',
+    updatedAt: '2026-11-16T13:00:00.000Z',
+    activityAt: '2026-11-16T13:00:00.000Z',
+    prompt: 'Task',
+    brain: 'Argon',
+    ...partial,
+  };
+}
 
 describe('operatorCookFromRun', () => {
   it('keeps an active cook and its status line', () => {
@@ -29,6 +46,7 @@ describe('operatorCookFromRun', () => {
     expect(row?.line).toMatch(/join_videos/);
     expect(row?.phase).toBe('Tool · join_videos');
     expect(row?.id).toBe('run_e5a063de');
+    expect(row?.activityAt).toBe('2026-11-16T11:00:00.000Z');
   });
 
   it('drops a row that is not a run id', () => {
@@ -58,31 +76,71 @@ describe('cookPhase', () => {
 
 describe('sortOperatorCooks', () => {
   it('keeps active cooks in created order when updated_at moves', () => {
-    const older: OperatorCookRow = {
+    const older = cook({
       id: 'run_aaaa',
-      sessionId: 'sess_a',
-      status: 'generating',
-      line: 'Argon is writing the deliverables…',
-      phase: 'Writing files',
+      active: true,
       createdAt: '2026-11-16T13:00:00.000Z',
       updatedAt: '2026-11-16T13:10:00.000Z',
-      prompt: 'Older',
-      brain: 'Argon',
-      active: true,
-    };
-    const newer: OperatorCookRow = {
+      activityAt: '2026-11-16T13:00:00.000Z',
+    });
+    const newer = cook({
       id: 'run_bbbb',
-      sessionId: 'sess_b',
-      status: 'generating',
-      line: 'Carbon is reading the task…',
-      phase: 'Planning',
+      active: true,
+      brain: 'Carbon',
       createdAt: '2026-11-16T13:05:00.000Z',
       updatedAt: '2026-11-16T13:11:00.000Z',
-      prompt: 'Newer',
-      brain: 'Carbon',
-      active: true,
-    };
+      activityAt: '2026-11-16T13:05:00.000Z',
+    });
     expect(sortOperatorCooks([newer, older]).map((row) => row.id)).toEqual(['run_aaaa', 'run_bbbb']);
+  });
+
+  it('does not reshuffle finished cooks when Autocook updated_at heartbeats', () => {
+    const landedFirst = cook({
+      id: 'run_old',
+      active: false,
+      createdAt: '2026-11-16T12:00:00.000Z',
+      activityAt: '2026-11-16T12:30:00.000Z',
+      updatedAt: '2026-11-16T14:00:02.000Z',
+    });
+    const landedLater = cook({
+      id: 'run_new',
+      active: false,
+      createdAt: '2026-11-16T12:10:00.000Z',
+      activityAt: '2026-11-16T12:40:00.000Z',
+      updatedAt: '2026-11-16T14:00:01.000Z',
+    });
+    expect(sortOperatorCooks([landedFirst, landedLater]).map((row) => row.id)).toEqual(['run_new', 'run_old']);
+  });
+});
+
+describe('cookListUnchanged', () => {
+  it('treats an Autocook updated_at heartbeat as no panel change', () => {
+    const before = cook({ id: 'run_same', active: false, updatedAt: '2026-11-16T12:00:00.000Z' });
+    const after = cook({ id: 'run_same', active: false, updatedAt: '2026-11-16T14:00:00.000Z' });
+    expect(cookListUnchanged([before], [after])).toBe(true);
+  });
+});
+
+describe('applyCookActivity', () => {
+  it('uses land/close time for finished cooks and ignores open/heartbeat updated_at', () => {
+    const finished = cook({
+      id: 'run_landed',
+      active: false,
+      createdAt: '2026-11-16T12:00:00.000Z',
+      updatedAt: '2026-11-16T14:00:00.000Z',
+    });
+    const stillCooking = cook({
+      id: 'run_live',
+      active: true,
+      createdAt: '2026-11-16T12:05:00.000Z',
+      updatedAt: '2026-11-16T14:00:00.000Z',
+    });
+    const next = applyCookActivity([finished, stillCooking], [
+      { runId: 'run_landed', action: 'autocook_ingested', createdAt: '2026-11-16T12:40:00.000Z' },
+      { runId: 'run_live', action: 'autocook_ingested', createdAt: '2026-11-16T12:50:00.000Z' },
+    ]);
+    expect(next.find((row) => row.id === 'run_landed')?.activityAt).toBe('2026-11-16T12:40:00.000Z');
+    expect(next.find((row) => row.id === 'run_live')?.activityAt).toBe('2026-11-16T12:05:00.000Z');
   });
 });
 

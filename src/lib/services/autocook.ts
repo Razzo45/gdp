@@ -1,16 +1,19 @@
 import 'server-only';
 
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { submissionEvents } from '@/db/schema';
 import {
+  applyCookActivity,
   brainFromModelTag,
   canAutocookEmail,
+  COOK_ACTIVITY_ACTIONS,
   cookPromptFromFields,
   ingestFilePlan,
   mediaPathFromAbs,
   operatorCookFromRun,
   sortOperatorCooks,
+  type CookActivityEvent,
   type OperatorCookRow,
 } from '@/domain/autocook';
 import { actorById } from '@/lib/auth/identity';
@@ -318,7 +321,33 @@ function assertOperator(actor: Actor): void {
   if (!autocookConfigured()) throw invalid('Autocook is not configured on this GDP instance.');
 }
 
-/** The operator's own cooks, active first. */
+async function cookActivityEvents(runIds: string[]): Promise<CookActivityEvent[]> {
+  if (runIds.length === 0) return [];
+  const rows = await db()
+    .select({
+      action: submissionEvents.action,
+      detail: submissionEvents.detail,
+      createdAt: submissionEvents.createdAt,
+    })
+    .from(submissionEvents)
+    .where(
+      and(
+        inArray(submissionEvents.action, [...COOK_ACTIVITY_ACTIONS]),
+        sql`${submissionEvents.detail}->>'runId' in (${sql.join(
+          runIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      ),
+    )
+    .orderBy(desc(submissionEvents.id))
+    .limit(2000);
+  return rows.flatMap((row) => {
+    const runId = typeof row.detail?.['runId'] === 'string' ? row.detail['runId'].trim() : '';
+    return runId ? [{ runId, action: row.action, createdAt: row.createdAt }] : [];
+  });
+}
+
+/** The operator's own cooks, active first. Opening a task does not move them. */
 export async function listOperatorCooks(actor: Actor): Promise<OperatorCookRow[]> {
   assertOperator(actor);
   const res = await fetch(`${baseUrl()}/api/runs`, { headers: authHeaders(), cache: 'no-store' });
@@ -328,7 +357,8 @@ export async function listOperatorCooks(actor: Actor): Promise<OperatorCookRow[]
   const cooks = rows
     .map((row) => (row && typeof row === 'object' ? operatorCookFromRun(row as Parameters<typeof operatorCookFromRun>[0]) : null))
     .filter((row): row is OperatorCookRow => row !== null);
-  return sortOperatorCooks(cooks);
+  const events = await cookActivityEvents(cooks.map((cook) => cook.id));
+  return sortOperatorCooks(applyCookActivity(cooks, events));
 }
 
 /** Removes one of the operator's cooks. Same call as Delete on the Autocook run page. */

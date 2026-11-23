@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { cookListUnchanged } from '@/domain/autocook';
 import { api } from './client';
 import { TimeAgo } from './TimeAgo';
 
@@ -12,6 +13,7 @@ interface Cook {
   phase: string;
   createdAt: string;
   updatedAt: string;
+  activityAt: string;
   prompt: string;
   brain: 'Argon' | 'Carbon';
   active: boolean;
@@ -40,7 +42,7 @@ export function CooksPanel() {
   const load = useCallback(async () => {
     try {
       const next = await api<{ cooks: Cook[] }>('/api/cooks');
-      setCooks(next.cooks);
+      setCooks((prev) => (prev && cookListUnchanged(prev, next.cooks) ? prev : next.cooks));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load cooks.');
@@ -133,9 +135,9 @@ function CookList({
                 <span className={badge(cook.status)}>{cook.phase || cook.status}</span>
                 <span className="badge badge-muted">{cook.brain ?? 'Argon'}</span>
                 {task ? <span className="text-xs font-medium text-ink">{task}</span> : null}
-                {cook.updatedAt ? (
+                {cook.activityAt || cook.createdAt ? (
                   <span className="text-xs text-muted">
-                    <TimeAgo iso={cook.updatedAt} />
+                    <TimeAgo iso={cook.activityAt || cook.createdAt} />
                   </span>
                 ) : null}
               </div>
