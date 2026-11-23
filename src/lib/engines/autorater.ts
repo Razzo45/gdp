@@ -77,6 +77,8 @@ const Inventory = z.object({ defects: z.array(z.string()).max(18) });
 
 /** Enough tokens for the model to inspect before it answers. 0 was a blurt. */
 export const AUTORATE_THINKING_BUDGET = 2048;
+/** First ping and the one solo retry share this so the JSON verdict still fits after thinking. */
+export const AUTORATE_OUTPUT_TOKENS = 8192;
 export const INVENTORY_UNAVAILABLE = '__inventory_unavailable__';
 
 export const AUTORATER_SYSTEM = `You are a rubric autorater. You have no preference for Yes or No, no target
@@ -344,8 +346,9 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
     const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs, entry.briefs), statementsBlock(batch)];
     const wanted = new Set(batch.map((s) => s.id));
+    const temperature = input.temperature ?? 0.2;
     try {
-      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 8192, thinkingBudget: AUTORATE_THINKING_BUDGET });
+      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingBudget: AUTORATE_THINKING_BUDGET });
       record(result, response);
       for (const verdict of response.value.verdicts) {
         const statement = matchStatement(batch, verdict.id);
@@ -364,11 +367,11 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
         return;
       }
     }
-    // Statements the model skipped (or a failed batch) are retried alone, once.
+    // Same token cap as the first ping. 1024 with a 2048 thinking budget returned `{verdicts:[]}`.
     for (const id of wanted) {
       const statement = batch.find((s) => s.id === id)!;
       try {
-        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: [...parts.slice(0, -1), statementsBlock([statement])], schema: Verdicts, temperature: input.temperature ?? 0.2, maxOutputTokens: 1024, thinkingBudget: AUTORATE_THINKING_BUDGET });
+        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: [...parts.slice(0, -1), statementsBlock([statement])], schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingBudget: AUTORATE_THINKING_BUDGET });
         record(result, response);
         const verdict = response.value.verdicts.find((v) => matchStatement([statement], v.id)) ?? response.value.verdicts[0];
         if (!verdict) throw new GeminiError('invalid_output', 'Gemini returned no verdict for the statement.');
