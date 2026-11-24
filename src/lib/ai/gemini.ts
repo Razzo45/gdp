@@ -444,7 +444,7 @@ const FILE_TTL_MS = 47 * 60 * 60_000; // provider keeps files 48h
 const INLINE_LIMIT = 12 * 1024 * 1024;
 const PDF_INLINE_LIMIT = 2 * 1024 * 1024;
 
-/** Video/audio never travel in the generateContent body. Fat PDFs are staged too. Archive members of a large zip always stage. */
+/** Video/audio never travel in the generateContent body. Fat PDFs are staged too. Archive members always stage. */
 export function shouldInlineMedia(mime: string, bytes: number, opts?: { stage?: boolean }): boolean {
   if (opts?.stage) return false;
   if (/^(video|audio)\//.test(mime)) return false;

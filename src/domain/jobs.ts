@@ -5,7 +5,7 @@ export const STATEMENT_LANE_MAX = 8;
 
 /** Video/audio (any size) or a 100 MB+ non-zip file — staging plus grade pings are long. */
 export const HEAVY_FILE_BYTES = 100 * 1024 * 1024;
-/** Site zips above this unpack into many HTML/CSS/JS parts; those members go to the Files API instead of the generate body. */
+/** Site zips above this are treated as a fat archive fixture in tests. Members of every archive job go to the Files API. */
 export const ARCHIVE_STAGE_BYTES = 8 * 1024 * 1024;
 /** Video and site-zip share this cap. Light jobs keep the remaining worker slots. */
 export const HEAVY_RUNNING_MAX = 2;
@@ -58,8 +58,8 @@ export function stabilityGradesInParallel(payload: Record<string, unknown> | nul
   return !isArchiveJobPayload(payload);
 }
 
-export function archiveMembersStayStaged(archiveBytes: number): boolean {
-  return archiveBytes >= ARCHIVE_STAGE_BYTES;
+export function archiveMembersStayStaged(_archiveBytes: number): boolean {
+  return true;
 }
 
 /** No Stability lane batches seats. Packing seats in one call bleeds verdicts. */

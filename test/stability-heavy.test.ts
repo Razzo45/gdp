@@ -97,6 +97,21 @@ describe('b290-sized zip Stability', () => {
     expect(B290_ZIP.size).toBeGreaterThan(ARCHIVE_STAGE_BYTES);
   });
 
+  it('stages HTML from a small site zip instead of inlining it in the grade body', async () => {
+    stagedParts.calls = [];
+    const zip = new JSZip();
+    zip.file('index.html', '<!DOCTYPE html><html><body><h1>Delmarva</h1></body></html>');
+    zip.file('app.js', 'document.body.dataset.ready = "1";');
+    const bytes = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+    expect(bytes.byteLength).toBeLessThan(ARCHIVE_STAGE_BYTES);
+    const prepared = await prepareFile({ id: 'z', name: 'index.zip', mime: 'application/zip', bytes }, 'CONSIDERED OUTPUT');
+    const inspect = inspectSendParts(prepared.parts);
+    expect(prepared.delivery).toBe('archive');
+    expect(inspect.inline).toBe(0);
+    expect(inspect.uris).toBeGreaterThan(0);
+    expect(stagedParts.calls.some((call) => call.name.includes('index.html') && call.stage === true)).toBe(true);
+  });
+
   it('stages HTML from a fat site zip instead of inlining it in the grade body', async () => {
     stagedParts.calls = [];
     const bytes = await fatSiteZip();

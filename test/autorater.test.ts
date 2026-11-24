@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mediaResolutionFor } from '@/lib/ai/gemini';
-import { AUTORATE_THINKING_LEVEL, AUTORATER_SYSTEM, INVENTORY_UNAVAILABLE, inventoryPromptBlock, inventoryRelevantTo, statementsBlock } from '@/lib/engines/autorater';
+import { AUTORATE_THINKING_LEVEL, AUTORATER_SYSTEM, AutorateVerdicts, INVENTORY_UNAVAILABLE, inventoryPromptBlock, inventoryRelevantTo, statementsBlock } from '@/lib/engines/autorater';
 
 describe('autorater policy', () => {
   it('grades the statement only — no Yes/No preference, no Golden score target', () => {
@@ -57,6 +57,15 @@ describe('autorater policy', () => {
     expect(inventoryPromptBlock(['logo is stretched'])).toMatch(/optional hints, not verdicts/i);
     expect(inventoryPromptBlock([INVENTORY_UNAVAILABLE])).toMatch(/unavailable/i);
     expect(inventoryPromptBlock([INVENTORY_UNAVAILABLE])).toMatch(/do not treat/i);
+  });
+
+  it('does not treat an empty verdicts array as a grade', () => {
+    expect(AutorateVerdicts.safeParse({ verdicts: [] }).success).toBe(false);
+    expect(
+      AutorateVerdicts.safeParse({
+        verdicts: [{ id: 's001', answer: 'No', evidence: 'The screenshot does not show the claimed state.' }],
+      }).success,
+    ).toBe(true);
   });
 
   it('does not treat the defect inventory as a universal finding', () => {

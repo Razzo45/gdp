@@ -80,7 +80,7 @@ describe('heavy media jobs', () => {
   it('stages fat zip members and serialises only archive passes; video still overlaps one-seat calls', () => {
     expect(archiveMembersStayStaged(100_899_604)).toBe(true);
     expect(archiveMembersStayStaged(8 * 1024 * 1024)).toBe(true);
-    expect(archiveMembersStayStaged(200_000)).toBe(false);
+    expect(archiveMembersStayStaged(200_000)).toBe(true);
     expect(stabilityGradesInParallel({ archive: true })).toBe(false);
     expect(stabilityGradesInParallel({ heavy: true })).toBe(true);
     expect(stabilityGradesInParallel({})).toBe(true);

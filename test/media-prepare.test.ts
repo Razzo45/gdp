@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 import { officeEmbeddedImages } from '@/lib/ai/office';
 import { prepareFile } from '@/lib/ai/media';
+
+vi.mock('@/lib/ai/gemini', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/ai/gemini')>();
+  return {
+    ...real,
+    mediaPart: async (input: { bytes?: Uint8Array; mime: string; sha256: string; name: string; label: string; stage?: boolean }) => {
+      if (input.stage) return { kind: 'uri' as const, mime: input.mime, data: `files/${input.sha256}`, label: input.label };
+      return real.mediaPart(input);
+    },
+  };
+});
 
 describe('prepareFile edge cases', () => {
   it('refuses an empty file instead of sending it as evidence', async () => {
@@ -108,7 +119,8 @@ describe('prepareFile edge cases', () => {
     expect(prepared.delivery).toBe('archive');
     expect(text).toMatch(/index\.html[\s\S]*HTML attached in full/);
     expect(text).toContain('Classic Stack');
-    expect(media.some((part) => 'mime' in part && part.mime === 'text/html')).toBe(true);
+    expect(media.some((part) => 'mime' in part && part.mime === 'text/html' && part.kind === 'uri')).toBe(true);
+    expect(media.filter((part) => typeof part !== 'string' && 'kind' in part && part.kind === 'inline')).toHaveLength(0);
     expect(text).not.toMatch(/further file\(s\) in the archive were not attached/);
     expect(text).not.toMatch(/index\.html[\s\S]{0,200}NOT ATTACHED/);
     expect(text).not.toMatch(/dishes\.js[\s\S]{0,200}NOT ATTACHED/);

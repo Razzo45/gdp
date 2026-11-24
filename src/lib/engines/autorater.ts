@@ -63,15 +63,18 @@ export interface GradeResult {
   inventoryByKey: Record<string, string[]>;
 }
 
-const Verdicts = z.object({
-  verdicts: z.array(
-    z.object({
-      id: z.string(),
-      answer: z.enum(['Yes', 'No']),
-      evidence: z.string(),
-    }),
-  ),
+export const AutorateVerdicts = z.object({
+  verdicts: z
+    .array(
+      z.object({
+        id: z.string(),
+        answer: z.enum(['Yes', 'No']),
+        evidence: z.string(),
+      }),
+    )
+    .min(1),
 });
+const Verdicts = AutorateVerdicts;
 
 const Inventory = z.object({ defects: z.array(z.string()).max(18) });
 
