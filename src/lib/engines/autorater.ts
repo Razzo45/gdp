@@ -75,8 +75,8 @@ const Verdicts = z.object({
 
 const Inventory = z.object({ defects: z.array(z.string()).max(18) });
 
-/** Enough tokens for the model to inspect before it answers. 0 was a blurt. */
-export const AUTORATE_THINKING_BUDGET = 2048;
+/** Gemini 3 ignores a token budget above 0 and thinks HIGH; LOW is the bound. */
+export const AUTORATE_THINKING_LEVEL = 'LOW' as const;
 /** First ping and the one solo retry share this so the JSON verdict still fits after thinking. */
 export const AUTORATE_OUTPUT_TOKENS = 8192;
 export const INVENTORY_UNAVAILABLE = '__inventory_unavailable__';
@@ -150,8 +150,11 @@ Rules:
   or a free-of check.
 - MULTIPLE DELIVERABLES: if a statement applies to all deliverables and any one
   of them fails the claim, answer No.
-- DEFECT_INVENTORY: use a listed defect only when it actually falsifies this
-  statement. An unavailable inventory is not proof the file is clean.
+- DEFECT_INVENTORY is a hint list, not a finding. Use a listed defect only when
+  it actually falsifies THIS statement (the statement is about that fault). Never
+  No a seat because an unrelated defect is listed. Never quote the inventory as
+  evidence for a claim it does not address. An unavailable inventory is not proof
+  the file is clean.
 - A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
   that file; answer No and say why.
 - FILE FACTS are authoritative for file size, slide/page counts, packaged aspect, fonts,
@@ -180,7 +183,103 @@ export function inventoryPromptBlock(inventory: string[]): string | null {
   }
   const defects = inventory.map((row) => row.trim()).filter((row) => row && row !== INVENTORY_UNAVAILABLE);
   if (!defects.length) return null;
-  return `DEFECT_INVENTORY:\n${defects.map((row) => `- ${row}`).join('\n')}`;
+  return `DEFECT_INVENTORY (optional hints, not verdicts). Cite a listed defect in evidence only when this statement is about that defect. A listed defect that this statement does not mention is irrelevant — ignore it. Evidence must describe the attached files.\n${defects.map((row) => `- ${row}`).join('\n')}`;
+}
+
+const INVENTORY_GENERIC = new Set([
+  'about',
+  'after',
+  'also',
+  'been',
+  'button',
+  'buttons',
+  'color',
+  'colors',
+  'could',
+  'delivered',
+  'does',
+  'each',
+  'every',
+  'file',
+  'files',
+  'from',
+  'have',
+  'html',
+  'image',
+  'images',
+  'index',
+  'into',
+  'mobile',
+  'none',
+  'onto',
+  'only',
+  'other',
+  'output',
+  'over',
+  'page',
+  'pages',
+  'same',
+  'screen',
+  'should',
+  'show',
+  'shown',
+  'shows',
+  'such',
+  'text',
+  'than',
+  'that',
+  'their',
+  'them',
+  'then',
+  'there',
+  'these',
+  'this',
+  'those',
+  'used',
+  'using',
+  'view',
+  'views',
+  'website',
+  'when',
+  'which',
+  'while',
+  'wide',
+  'width',
+  'with',
+  'would',
+]);
+
+function inventoryTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 5 && !INVENTORY_GENERIC.has(token));
+}
+
+function inventoryRowFits(statement: string, defect: string): boolean {
+  const claim = inventoryTokens(statement);
+  const row = inventoryTokens(defect);
+  let hits = 0;
+  let distinctive = false;
+  for (const a of claim) {
+    for (const b of row) {
+      if (a !== b && !a.startsWith(b) && !b.startsWith(a)) continue;
+      hits += 1;
+      if (Math.max(a.length, b.length) >= 8) distinctive = true;
+    }
+  }
+  return distinctive || hits >= 2;
+}
+
+/** Drop inventory rows that cannot falsify these seats, so they never become a global No. */
+export function inventoryRelevantTo(statements: Pick<GradeStatement, 'statement'>[], inventory: string[]): string[] {
+  if (inventory.includes(INVENTORY_UNAVAILABLE)) return [INVENTORY_UNAVAILABLE];
+  const claims = statements.map((s) => s.statement);
+  return inventory.filter((row) => {
+    const defect = row.trim();
+    return defect && claims.some((claim) => inventoryRowFits(claim, defect));
+  });
 }
 
 const INVENTORY_SYSTEM = `You inspect CONSIDERED OUTPUT attachments (and any SUBMITTED INPUT attachments).
@@ -286,7 +385,7 @@ export async function defectInventory(input: Pick<GradeInput, 'outputs' | 'input
         schema: Inventory,
         temperature: 0.1,
         maxOutputTokens: 2048,
-        thinkingBudget: AUTORATE_THINKING_BUDGET,
+        thinkingLevel: AUTORATE_THINKING_LEVEL,
       });
       return result.value.defects.map((d) => d.trim()).filter(Boolean);
     } catch {
@@ -344,11 +443,12 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     }
     const inventory = result.inventoryByKey[entry.key] ?? [];
     result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
-    const parts = [...evidenceParts(files, input.taskContext, inventory, entry.allOutputs, entry.briefs), statementsBlock(batch)];
+    const scoped = inventoryRelevantTo(batch, inventory);
+    const parts = [...evidenceParts(files, input.taskContext, scoped, entry.allOutputs, entry.briefs), statementsBlock(batch)];
     const wanted = new Set(batch.map((s) => s.id));
     const temperature = input.temperature ?? 0.2;
     try {
-      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingBudget: AUTORATE_THINKING_BUDGET });
+      const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts, schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingLevel: AUTORATE_THINKING_LEVEL });
       record(result, response);
       for (const verdict of response.value.verdicts) {
         const statement = matchStatement(batch, verdict.id);
@@ -371,7 +471,8 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     for (const id of wanted) {
       const statement = batch.find((s) => s.id === id)!;
       try {
-        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: [...parts.slice(0, -1), statementsBlock([statement])], schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingBudget: AUTORATE_THINKING_BUDGET });
+        const retryParts = [...evidenceParts(files, input.taskContext, inventoryRelevantTo([statement], inventory), entry.allOutputs, entry.briefs), statementsBlock([statement])];
+        const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: retryParts, schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingLevel: AUTORATE_THINKING_LEVEL });
         record(result, response);
         const verdict = response.value.verdicts.find((v) => matchStatement([statement], v.id)) ?? response.value.verdicts[0];
         if (!verdict) throw new GeminiError('invalid_output', 'Gemini returned no verdict for the statement.');

@@ -6,12 +6,12 @@ vi.hoisted(() => {
   process.env['AUTH_MODE'] = 'local';
 });
 
-const calls = vi.hoisted(() => [] as { thinkingBudget?: number; maxOutputTokens?: number }[]);
+const calls = vi.hoisted(() => [] as { thinkingLevel?: string; thinkingBudget?: number; maxOutputTokens?: number; parts: string }[]);
 
 vi.mock('@/lib/ai/gemini', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/ai/gemini')>()),
-  generateJson: async (input: { parts: unknown[]; thinkingBudget?: number; maxOutputTokens?: number }) => {
-    calls.push({ thinkingBudget: input.thinkingBudget, maxOutputTokens: input.maxOutputTokens });
+  generateJson: async (input: { parts: unknown[]; thinkingLevel?: string; thinkingBudget?: number; maxOutputTokens?: number }) => {
+    calls.push({ thinkingLevel: input.thinkingLevel, thinkingBudget: input.thinkingBudget, maxOutputTokens: input.maxOutputTokens, parts: input.parts.map(String).join('\n') });
     const ids = [...String(input.parts.at(-1)).matchAll(/^\[([^\]]+)\]/gm)].map((m) => m[1]!);
     const empty = { value: { verdicts: [] }, model: 'm', usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 }, durationMs: 0 };
     if (calls.length === 1 || (input.maxOutputTokens ?? 0) < 8192) return empty;
@@ -45,6 +45,33 @@ describe('gradeStatements retry ping', () => {
     expect(result.evidence.a).toMatch(/screenshot/i);
     expect(calls).toHaveLength(2);
     expect(calls[1]?.maxOutputTokens).toBeGreaterThanOrEqual(8192);
-    expect(calls[1]?.thinkingBudget).toBe(calls[0]?.thinkingBudget);
+    expect(calls[0]?.thinkingLevel).toBe('LOW');
+    expect(calls[1]?.thinkingLevel).toBe('LOW');
+    expect(calls[0]?.thinkingBudget).toBeUndefined();
+    expect(calls[1]?.thinkingBudget).toBeUndefined();
+  });
+
+  it('does not attach an unrelated defect inventory row to the grade ping', async () => {
+    calls.length = 0;
+    await gradeStatements({
+      statements: [
+        {
+          id: 'a',
+          seat: 2,
+          tag: 'Format/File',
+          statement: 'Each of the Rajdhani and Poppins fonts is embedded in the delivered Complete Directory PDF.',
+          scope: 'output',
+          inputFileIds: [],
+          outputFile: null,
+        },
+      ],
+      outputs: [html],
+      inputs: [],
+      taskContext: 'Task: Site',
+      defectInventory: ['Floating section bar navigation buttons overlap and collide into an unreadable tangle on mobile viewport (390px wide screenshot).'],
+      batchSize: 1,
+    });
+    expect(calls[0]?.parts).not.toMatch(/Floating section bar/i);
+    expect(calls[0]?.parts).not.toMatch(/DEFECT_INVENTORY/i);
   });
 });
