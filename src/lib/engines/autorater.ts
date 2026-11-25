@@ -101,6 +101,11 @@ do not keep a running score, and do not pattern-match the list. For each,
 answer exactly Yes or No and give ONE SENTENCE of evidence citing the specific
 element of the attached files you used.
 
+The user message always includes a STATEMENTS TO GRADE block. Grade those
+claims. Reciting an unrelated FILE FACT, code constant, regex or colour list
+is not a grade. If you cannot see the numbered statements, answer No and say
+which claim you could not verify — do not invent a different claim.
+
 Yes = you located the claim on the files and confirmed it holds.
 No = the statement does not hold, OR you cannot verify it from the files.
 Never answer N/A. Every statement always applies. An unverified claim is No.
@@ -285,6 +290,29 @@ export function inventoryRelevantTo(statements: Pick<GradeStatement, 'statement'
   });
 }
 
+const META_NO_STATEMENT = /no numbered (affirmative )?statements|contains no numbered statements/i;
+const CANNOT_VERIFY = /cannot verify|does not show|not (shown|visible|displayed)|static screenshot|no (screenshot|still|frame)/i;
+
+function sharesClaimToken(statement: string, evidence: string): boolean {
+  const claim = inventoryTokens(statement);
+  const said = inventoryTokens(evidence);
+  for (const a of claim) {
+    for (const b of said) {
+      if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+    }
+  }
+  return false;
+}
+
+/** False when evidence is a meta-refusal or a recited fact that does not address the claim. */
+export function evidenceGradesStatement(statement: string, evidence: string): boolean {
+  const text = evidence.trim();
+  if (!text) return false;
+  if (META_NO_STATEMENT.test(text)) return false;
+  if (sharesClaimToken(statement, text)) return true;
+  return CANNOT_VERIFY.test(text);
+}
+
 const INVENTORY_SYSTEM = `You inspect CONSIDERED OUTPUT attachments (and any SUBMITTED INPUT attachments).
 List concrete, falsifiable defects you can actually see. You have no preference
 for finding defects or calling the file clean.
@@ -353,6 +381,33 @@ export function statementsBlock(statements: GradeStatement[]): string {
       ? 'ISOLATE EACH STATEMENT. Grade each bracketed id as if it were sent alone. Do not reuse a verdict, evidence sentence, or score from a neighbouring line. A Yes on one seat is not evidence for another.\n'
       : '';
   return `${isolation}STATEMENTS TO GRADE (${statements.length}):\n${statements.map((s) => `[${promptId(s)}] (${s.tag}) ${s.statement}`).join('\n')}`;
+}
+
+function fatObservation(files: { outputs: PreparedFile[]; inputs: PreparedFile[] }): boolean {
+  return files.outputs.some((file) => file.delivery === 'archive') || files.inputs.some((file) => file.delivery === 'archive');
+}
+
+function gradeCallParts(
+  files: { outputs: PreparedFile[]; inputs: PreparedFile[] },
+  taskContext: string,
+  inventory: string[],
+  allOutputs: boolean,
+  briefs: Briefs,
+  statements: GradeStatement[],
+): (string | MediaPart)[] {
+  const asked = statementsBlock(statements);
+  const after = fatObservation(files)
+    ? 'GRADE ONLY THE STATEMENT(S) ABOVE AND REPEATED BELOW. An unrelated FILE FACT, code constant, regex or colour list is not evidence for a different claim.'
+    : 'GRADE ONLY THE STATEMENT(S) ABOVE AND REPEATED BELOW.';
+  return [asked, ...evidenceParts(files, taskContext, inventory, allOutputs, briefs), after, asked];
+}
+
+function acceptVerdict(statement: GradeStatement, evidence: string, files: { outputs: PreparedFile[]; inputs: PreparedFile[] }, firstPing: boolean): boolean {
+  if (!evidence) return false;
+  if (!firstPing) return true;
+  if (META_NO_STATEMENT.test(evidence)) return false;
+  if (!fatObservation(files)) return true;
+  return evidenceGradesStatement(statement.statement, evidence);
 }
 
 /** One inventory per distinct observation, reused across Stability passes. */
@@ -447,7 +502,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     const inventory = result.inventoryByKey[entry.key] ?? [];
     result.defectInventory = [...new Set([...result.defectInventory, ...inventory.filter((row) => row !== INVENTORY_UNAVAILABLE)])];
     const scoped = inventoryRelevantTo(batch, inventory);
-    const parts = [...evidenceParts(files, input.taskContext, scoped, entry.allOutputs, entry.briefs), statementsBlock(batch)];
+    const parts = gradeCallParts(files, input.taskContext, scoped, entry.allOutputs, entry.briefs, batch);
     const wanted = new Set(batch.map((s) => s.id));
     const temperature = input.temperature ?? 0.2;
     try {
@@ -457,7 +512,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
         const statement = matchStatement(batch, verdict.id);
         if (!statement || !wanted.has(statement.id)) continue;
         const evidence = verdict.evidence.trim();
-        if (!evidence) continue;
+        if (!acceptVerdict(statement, evidence, files, true)) continue;
         result.answers[statement.id] = verdict.answer === 'Yes';
         result.evidence[statement.id] = evidence;
         wanted.delete(statement.id);
@@ -474,7 +529,7 @@ export async function gradeStatements(input: GradeInput): Promise<GradeResult> {
     for (const id of wanted) {
       const statement = batch.find((s) => s.id === id)!;
       try {
-        const retryParts = [...evidenceParts(files, input.taskContext, inventoryRelevantTo([statement], inventory), entry.allOutputs, entry.briefs), statementsBlock([statement])];
+        const retryParts = gradeCallParts(files, input.taskContext, inventoryRelevantTo([statement], inventory), entry.allOutputs, entry.briefs, [statement]);
         const response = await generateJson({ model, system: AUTORATER_SYSTEM, parts: retryParts, schema: Verdicts, temperature, maxOutputTokens: AUTORATE_OUTPUT_TOKENS, thinkingLevel: AUTORATE_THINKING_LEVEL });
         record(result, response);
         const verdict = response.value.verdicts.find((v) => matchStatement([statement], v.id)) ?? response.value.verdicts[0];

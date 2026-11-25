@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mediaResolutionFor } from '@/lib/ai/gemini';
-import { AUTORATE_THINKING_LEVEL, AUTORATER_SYSTEM, AutorateVerdicts, INVENTORY_UNAVAILABLE, inventoryPromptBlock, inventoryRelevantTo, statementsBlock } from '@/lib/engines/autorater';
+import { AUTORATE_THINKING_LEVEL, AUTORATER_SYSTEM, AutorateVerdicts, INVENTORY_UNAVAILABLE, evidenceGradesStatement, inventoryPromptBlock, inventoryRelevantTo, statementsBlock } from '@/lib/engines/autorater';
 
 describe('autorater policy', () => {
   it('grades the statement only — no Yes/No preference, no Golden score target', () => {
@@ -72,6 +72,18 @@ describe('autorater policy', () => {
     expect(AUTORATER_SYSTEM).toMatch(/hint list, not a finding/i);
     expect(AUTORATER_SYSTEM).toMatch(/unrelated defect/i);
     expect(inventoryPromptBlock(['logo is stretched'])).toMatch(/this statement is about that defect/i);
+  });
+
+  it('does not treat a recited file fact as a grade of the statement', () => {
+    expect(AUTORATER_SYSTEM).toMatch(/STATEMENTS TO GRADE/i);
+    expect(AUTORATER_SYSTEM).toMatch(/unrelated/i);
+    const offline = 'Double-clicking the main HTML page of the delivered website opens the full site with no server, setup step or internet connection.';
+    const fonts = 'Each of the Rajdhani and Poppins fonts is embedded in the delivered Complete Directory PDF.';
+    expect(evidenceGradesStatement(offline, 'The app.js file defines a constant named RESOURCES which contains 26 objects representing resource records.')).toBe(false);
+    expect(evidenceGradesStatement(fonts, 'The function uses the regular expression /(?:1[-.\\s]?)?(?:\\(\\d{3}\\)|\\d{3})[-.\\s]?\\d{3}[-.\\s]?\\d{4}/ to extract phone numbers.')).toBe(false);
+    expect(evidenceGradesStatement(offline, 'No numbered statements were provided in the user prompt to evaluate against the attached files.')).toBe(false);
+    expect(evidenceGradesStatement(offline, 'The website is static local files linked via relative paths with no server or CDN.')).toBe(true);
+    expect(evidenceGradesStatement('Hovering the filter chip highlights it.', 'The screenshot does not show that state.')).toBe(true);
   });
 
   it('keeps only inventory rows that could falsify the statement', () => {
