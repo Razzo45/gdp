@@ -7,6 +7,7 @@ import {
   applyCookActivity,
   brainFromModelTag,
   canAutocookEmail,
+  closeBlocksCookWatch,
   COOK_ACTIVITY_ACTIONS,
   cookPromptFromFields,
   ingestFilePlan,
@@ -89,7 +90,8 @@ async function latestCookEvent(
 
 async function closeCookIngest(actor: Actor, submissionId: string, runId: string): Promise<void> {
   const closed = await latestCookEvent(submissionId, 'autocook_closed');
-  if (closed?.runId === runId) return;
+  const closedStatus = typeof closed?.detail?.['status'] === 'string' ? closed.detail['status'] : null;
+  if (closeBlocksCookWatch(closed ? { runId: closed.runId, status: closedStatus } : null, runId)) return;
   await recordEvent(db(), submissionId, actor.id, 'autocook_closed', { runId, status: 'exported' });
 }
 
@@ -312,7 +314,8 @@ export async function autocookStatus(actor: Actor, submissionId: string, runIdHi
 
   if (status === 'exported') {
     const closed = await latestCookEvent(submissionId, 'autocook_closed');
-    if (closed?.runId === runId) {
+    const closedStatus = typeof closed?.detail?.['status'] === 'string' ? closed.detail['status'] : null;
+    if (closeBlocksCookWatch(closed ? { runId: closed.runId, status: closedStatus } : null, runId)) {
       const files = (await listAiOutputs(db(), submissionId)).map((file) => ({ id: file.id, name: file.name }));
       return { runId, status, live: live || 'Done', progress: 100, error: null, files, ingested: true };
     }
@@ -407,11 +410,25 @@ export async function retryOperatorCook(actor: Actor, runId: string): Promise<vo
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ServiceError(serviceStatus(res.status), json.error || `Autocook returned ${res.status}.`);
   }
+  const prior = (
+    await db()
+      .select({
+        submissionId: submissionEvents.submissionId,
+        actorId: submissionEvents.actorId,
+      })
+      .from(submissionEvents)
+      .where(and(eq(submissionEvents.action, 'autocook_started'), sql`${submissionEvents.detail}->>'runId' = ${runId}`))
+      .orderBy(desc(submissionEvents.id))
+      .limit(1)
+  )[0];
+  if (prior) {
+    await recordEvent(db(), prior.submissionId, prior.actorId, 'autocook_started', { runId, retry: true });
+  }
 }
 
 type PendingCook = { submissionId: string; runId: string; actorId: string | null };
 
-/** Latest autocook_started per submission. Failed and fully ingested cooks are closed. */
+/** Latest autocook_started per submission. An exported close leaves the list. A failed close stays, behind cooks that are still open, so a retry of the same run can be attached. */
 async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
   const rows = await db()
     .select({
@@ -426,18 +443,22 @@ async function listPendingCookIngests(limit = 20): Promise<PendingCook[]> {
     .limit(200);
 
   const seen = new Set<string>();
-  const pending: PendingCook[] = [];
+  const open: PendingCook[] = [];
+  const retryable: PendingCook[] = [];
   for (const row of rows) {
     if (seen.has(row.submissionId)) continue;
     seen.add(row.submissionId);
     const runId = typeof row.detail?.['runId'] === 'string' ? row.detail['runId'].trim() : '';
     if (!runId) continue;
     const closed = await latestCookEvent(row.submissionId, 'autocook_closed');
-    if (closed?.runId === runId) continue;
-    pending.push({ submissionId: row.submissionId, runId, actorId: row.actorId });
-    if (pending.length >= limit) break;
+    const closedStatus = typeof closed?.detail?.['status'] === 'string' ? closed.detail['status'] : null;
+    if (closeBlocksCookWatch(closed ? { runId: closed.runId, status: closedStatus } : null, runId)) continue;
+    const item = { submissionId: row.submissionId, runId, actorId: row.actorId };
+    if (closed?.runId === runId && (closedStatus === 'failed' || closedStatus === 'rejected')) retryable.push(item);
+    else open.push(item);
+    if (open.length >= limit) break;
   }
-  return pending;
+  return [...open, ...retryable].slice(0, limit);
 }
 
 /**
@@ -463,6 +484,12 @@ export async function reconcilePendingAutocookIngests(): Promise<{
       const detail = await fetchRun(item.runId);
       const status = detail.run?.status ?? null;
       if (status === 'failed' || status === 'rejected') {
+        const closed = await latestCookEvent(item.submissionId, 'autocook_closed');
+        const closedStatus = typeof closed?.detail?.['status'] === 'string' ? closed.detail['status'] : null;
+        if (closed?.runId === item.runId && (closedStatus === 'failed' || closedStatus === 'rejected')) {
+          skipped += 1;
+          continue;
+        }
         await recordEvent(db(), item.submissionId, item.actorId, 'autocook_closed', {
           runId: item.runId,
           status,

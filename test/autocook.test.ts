@@ -4,6 +4,7 @@ import {
   applyCookActivity,
   brainFromModelTag,
   canAutocookEmail,
+  closeBlocksCookWatch,
   cookPhase,
   cookPromptFromFields,
   ingestFilePlan,
@@ -251,6 +252,21 @@ describe('ingestFilePlan', () => {
     const plan = ingestFilePlan([{ id: 'a', name: 'Deck.pptx' }], ['Deck.pptx', 'Hero.png'], true, ['Deck.pptx']);
     expect(plan.add).toEqual(['Hero.png']);
     expect(plan.removeIds).toEqual([]);
+  });
+});
+
+describe('closeBlocksCookWatch', () => {
+  it('lets a retried cook be watched after a failed close', () => {
+    expect(closeBlocksCookWatch(null, 'run_abc')).toBe(false);
+    expect(closeBlocksCookWatch({ runId: 'run_other', status: 'failed' }, 'run_abc')).toBe(false);
+    expect(closeBlocksCookWatch({ runId: 'run_abc', status: 'failed' }, 'run_abc')).toBe(false);
+    expect(closeBlocksCookWatch({ runId: 'run_abc', status: 'rejected' }, 'run_abc')).toBe(false);
+  });
+
+  it('leaves the watch list once the cook is exported, and when an older close has no status', () => {
+    expect(closeBlocksCookWatch({ runId: 'run_abc', status: 'exported' }, 'run_abc')).toBe(true);
+    expect(closeBlocksCookWatch({ runId: 'run_abc', status: null }, 'run_abc')).toBe(true);
+    expect(closeBlocksCookWatch({ runId: 'run_abc' }, 'run_abc')).toBe(true);
   });
 });
 

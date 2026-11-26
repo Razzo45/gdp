@@ -212,6 +212,19 @@ export function ingestFilePlan(
   return { removeIds, add: wantedNames.filter((name) => !byName.has(name) && !landed.has(name)) };
 }
 
+/**
+ * An exported close leaves the watch list. A failed or rejected close does not:
+ * retry keeps the same run id, including a retry pressed on Autocook, and that
+ * cook can still export. A close with no status leaves the list too.
+ */
+export function closeBlocksCookWatch(
+  close: { runId?: string | null; status?: string | null } | null | undefined,
+  runId: string,
+): boolean {
+  if (!close?.runId || close.runId !== runId) return false;
+  return close.status !== 'failed' && close.status !== 'rejected';
+}
+
 /** Autocook deliverable abs paths → `/api/media?path=` relative form. */
 export function mediaPathFromAbs(abs: string): string {
   const normalized = abs.replaceAll('\\', '/');
