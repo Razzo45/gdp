@@ -165,6 +165,9 @@ Rules:
   the file is clean.
 - A file marked NOT ATTACHED cannot support a Yes on a statement that depends on
   that file; answer No and say why.
+- Source files may arrive as several "part N/M" text blocks; together they are the
+  whole file. Do not say a listed CONSIDERED OUTPUT was truncated or not attached
+  unless a NOT ATTACHED line names that file.
 - FILE FACTS are authoritative for file size, slide/page counts, packaged aspect, fonts,
   embedded-media presence, embedded-picture stretch or squash (Pictures lines), duration, codec, channel layout, loudness, peak/RMS
   level, left-right channel level difference, clipping, silence gaps, stereo
@@ -292,6 +295,17 @@ export function inventoryRelevantTo(statements: Pick<GradeStatement, 'statement'
 
 const META_NO_STATEMENT = /no numbered (affirmative )?statements|contains no numbered statements/i;
 const CANNOT_VERIFY = /cannot verify|does not show|not (shown|visible|displayed)|static screenshot|no (screenshot|still|frame)/i;
+const CLAIMS_UNATTACHED_OR_TRUNCATED =
+  /(styles\.css|index\.html|stylesheet|html source|html file).{0,80}not (provided|attached)|not (provided|attached).{0,80}(styles\.css|index\.html|stylesheet)|truncated html|html[^.!?]{0,80}truncated|truncated (html|source|markup)/i;
+
+function observationMarksUnattached(files: { outputs: PreparedFile[]; inputs: PreparedFile[] }): boolean {
+  for (const file of [...files.outputs, ...files.inputs]) {
+    for (const part of file.parts) {
+      if (typeof part === 'string' && /NOT ATTACHED/i.test(part)) return true;
+    }
+  }
+  return false;
+}
 
 function sharesClaimToken(statement: string, evidence: string): boolean {
   const claim = inventoryTokens(statement);
@@ -406,6 +420,7 @@ function acceptVerdict(statement: GradeStatement, evidence: string, files: { out
   if (!evidence) return false;
   if (!firstPing) return true;
   if (META_NO_STATEMENT.test(evidence)) return false;
+  if (!observationMarksUnattached(files) && CLAIMS_UNATTACHED_OR_TRUNCATED.test(evidence)) return false;
   if (!fatObservation(files)) return true;
   return evidenceGradesStatement(statement.statement, evidence);
 }

@@ -252,6 +252,10 @@ export function inspectSendParts(parts: (string | MediaPart)[]): { textChars: nu
   return { textChars, textParts, inline, uris, videoInline };
 }
 
+function isVisualMedia(mime: string): boolean {
+  return /^(image|video|audio)\//.test(mime) || mime === 'application/pdf';
+}
+
 function toParts(parts: (string | MediaPart)[]): Part[] {
   const out: Part[] = [];
   for (const part of tightenSendParts(parts)) {
@@ -259,9 +263,13 @@ function toParts(parts: (string | MediaPart)[]): Part[] {
       out.push(createPartFromText(part));
       continue;
     }
-    const resolution = mediaResolution(part.mime);
     out.push(createPartFromText(`ATTACHED: ${part.label}`));
-    out.push(part.kind === 'uri' ? createPartFromUri(part.data, part.mime, resolution) : createPartFromBase64(part.data, part.mime, resolution));
+    if (isVisualMedia(part.mime)) {
+      const resolution = mediaResolution(part.mime);
+      out.push(part.kind === 'uri' ? createPartFromUri(part.data, part.mime, resolution) : createPartFromBase64(part.data, part.mime, resolution));
+      continue;
+    }
+    out.push(part.kind === 'uri' ? createPartFromUri(part.data, part.mime) : createPartFromBase64(part.data, part.mime));
   }
   return out;
 }

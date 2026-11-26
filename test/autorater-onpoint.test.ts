@@ -15,14 +15,20 @@ vi.mock('@/lib/ai/gemini', async (importOriginal) => ({
     calls.push({ parts });
     const ids = [...String(input.parts.at(-1)).matchAll(/^\[([^\]]+)\]/gm)].map((m) => m[1]!);
     const offPoint = ids.map((id) => ({ id, answer: 'Yes' as const, evidence: 'The app.js RESOURCES array contains 26 objects.' }));
+    const truncated = ids.map((id) => ({
+      id,
+      answer: 'No' as const,
+      evidence: 'The truncated HTML provided prevents confirmation that those options are in the select menu.',
+    }));
     const onPoint = ids.map((id) => ({
       id,
       answer: 'No' as const,
       evidence: 'Relative paths link the HTML, CSS and JS with no server, setup step or CDN.',
     }));
-    const ping = calls.filter((call) => call.parts.includes('Double-clicking')).length;
+    const zipPing = calls.filter((call) => call.parts.includes('Double-clicking')).length;
+    const htmlPing = calls.filter((call) => call.parts.includes('county filter')).length;
     return {
-      value: { verdicts: ping === 1 ? offPoint : onPoint },
+      value: { verdicts: htmlPing === 1 ? truncated : zipPing === 1 ? offPoint : onPoint },
       model: 'm',
       usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 },
       durationMs: 0,
@@ -78,6 +84,32 @@ describe('gradeStatements on-point evidence', () => {
     expect(result.evidence.a).toMatch(/relative paths|no server/i);
     expect(result.evidence.a).not.toMatch(/RESOURCES/);
     expect(calls.length).toBe(2);
+  });
+
+  it('does not keep a first ping that says the attached HTML was truncated or missing', async () => {
+    calls.length = 0;
+    const result = await gradeStatements({
+      statements: [
+        {
+          id: 'a',
+          seat: 15,
+          tag: 'Content - Structural',
+          statement: 'The county filter on the Directory page includes an option that selects all counties of a single state at once.',
+          scope: 'output' as const,
+          inputFileIds: [] as string[],
+          outputFile: null,
+        },
+      ],
+      outputs: [html],
+      inputs: [],
+      taskContext: 'Task: Site',
+      defectInventory: [],
+      batchSize: 1,
+    });
+    expect(result.errors).toEqual({});
+    expect(calls.length).toBe(2);
+    expect(result.evidence.a).toMatch(/relative paths|no server/i);
+    expect(result.evidence.a).not.toMatch(/truncated|not attached|not provided/i);
   });
 
   it('keeps a native first ping even when evidence is a recited file fact', async () => {

@@ -184,10 +184,10 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
     if (mime.startsWith('text/') || /javascript|\/json$/.test(mime)) {
       const text = Buffer.from(file.bytes).toString('utf8');
       const html = mime === 'text/html' || /\.html?$/i.test(file.name);
-      // Long text (especially HTML prototypes) must not go in the prompt
-      // string. tightenSendParts clips every string to 12k, which cut this
-      // task's 84k HTML at the Categories label and made raters invent
-      // incomplete_generation. Attach the file like a PDF instead.
+      // tightenSendParts clips every string to 12k. A URI/inline HTML part is
+      // not prompt text — Gemini then reports "truncated HTML" / "styles.css
+      // was not attached" while other seats quote the same files. Split the
+      // source across 12k text parts so the whole file is in the prompt.
       if (html) {
         const shots = await htmlScreenshots(file, digest, siblings).catch(() => []);
         const shotParts = await Promise.all(
@@ -218,8 +218,8 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
           ...base,
           delivery: 'native',
           parts: [
-            `${label}\n${facts}\nHTML attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.\n${renderNote}`,
-            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label, stage }),
+            `${label}\n${facts}\nHTML source follows in full (${text.length} chars), split across parts so the 12k send clip cannot cut it. Do not say this HTML was truncated or not attached.\n${renderNote}`,
+            ...sourceFileParts(file.name, text),
             ...shotParts,
           ],
         };
@@ -229,8 +229,8 @@ export async function prepareFile(file: SourceFile, role: string, depth = 0, sib
           ...base,
           delivery: 'native',
           parts: [
-            `${label}\n${facts}\nText attached in full (${text.length} chars). Inspect the attached file, not a clipped digest.`,
-            await mediaPart({ bytes: file.bytes, mime, sha256: digest, name: file.name, label, stage }),
+            `${label}\n${facts}\n${file.name} source follows in full (${text.length} chars), split across parts so the 12k send clip cannot cut it. Do not say this file was truncated or not attached.`,
+            ...sourceFileParts(file.name, text),
           ],
         };
       }
@@ -523,3 +523,18 @@ async function prepareArchive(file: SourceFile, role: string, label: string, bas
 
 const mb = (n: number) => Math.round(n / 1_048_576);
 const clip = (text: string, limit = MAX_TEXT_CHARS) => (text.length > limit ? `${text.slice(0, limit)}\n…(truncated at ${limit} chars)` : text);
+
+/** One prompt string per slice, each ≤ SEND_TEXT_CHARS, so tightenSendParts cannot drop the tail. */
+function sourceFileParts(name: string, text: string): string[] {
+  const short = name.split('/').pop() || name;
+  const footer = '\n--- end ---';
+  const header = (index: number, count: number) => `--- ${short} part ${index}/${count} (${text.length} chars total) ---\n`;
+  const guess = Math.max(1, Math.ceil(text.length / Math.max(1024, SEND_TEXT_CHARS - 200)));
+  const size = Math.max(1024, SEND_TEXT_CHARS - header(guess, guess).length - footer.length);
+  const count = Math.max(1, Math.ceil(text.length / size));
+  const parts: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    parts.push(`${header(i + 1, count)}${text.slice(i * size, (i + 1) * size)}${footer}`);
+  }
+  return parts;
+}

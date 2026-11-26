@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
+import { SEND_TEXT_CHARS, tightenSendParts } from '@/lib/ai/gemini';
 import { officeEmbeddedImages } from '@/lib/ai/office';
 import { prepareFile } from '@/lib/ai/media';
 
@@ -22,17 +23,17 @@ describe('prepareFile edge cases', () => {
   });
 
   it('attaches a long CSV the same way so the 12k send clip cannot slice it', async () => {
-    const body = `name,score\n${'alpha,1\n'.repeat(2_000)}`;
+    const body = `name,score\n${'alpha,1\n'.repeat(2_000)}tail-row,99\n`;
     expect(body.length).toBeGreaterThan(12_000);
     expect(body.length).toBeLessThan(40_000);
     const prepared = await prepareFile({ id: 'c', name: 'scores.csv', mime: 'text/csv', bytes: new TextEncoder().encode(body) }, 'SUBMITTED INPUT');
-    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('');
-    const media = prepared.parts.filter((part) => typeof part !== 'string');
+    const tight = tightenSendParts(prepared.parts);
+    const text = tight.filter((part): part is string => typeof part === 'string').join('\n');
     expect(prepared.delivery).toBe('native');
     expect(text).not.toMatch(/truncated at/);
-    expect(text.length).toBeLessThan(4_000);
-    expect(media).toHaveLength(1);
-    expect(media[0]).toMatchObject({ kind: 'inline', mime: 'text/csv' });
+    expect(text).toContain('tail-row,99');
+    expect(tight.filter((part) => typeof part === 'string').every((part) => part.length <= SEND_TEXT_CHARS)).toBe(true);
+    expect(tight.some((part) => typeof part !== 'string')).toBe(false);
   });
 
   it('attaches a long SVG instead of putting markup in the clipped prompt string', async () => {
@@ -62,22 +63,21 @@ describe('prepareFile edge cases', () => {
     expect(media[0]).toMatchObject({ mime: 'image/jpeg' });
   });
 
-  it('attaches a long HTML file in full instead of clipping it to a text digest', async () => {
-    const body = `<!DOCTYPE html>\n<html><body>${'<p>card</p>'.repeat(8_000)}</body></html>`;
+  it('keeps the end of a long HTML file in the prompt after the 12k send clip', async () => {
+    const marker = 'STATE:VA-ALL-COUNTIES-MARKER';
+    const body = `<!DOCTYPE html>\n<html><body>${'<p>card</p>'.repeat(8_000)}<option value="STATE:VA">${marker}</option></body></html>`;
     const bytes = new TextEncoder().encode(body);
-    expect(bytes.byteLength).toBeGreaterThan(40_000);
-    const prepared = await prepareFile({ id: 'h', name: 'site.html', mime: 'text/html', bytes }, 'CONSIDERED OUTPUT');
+    expect(body.length).toBeGreaterThan(40_000);
+    const prepared = await prepareFile({ id: 'h', name: 'index.html', mime: 'text/html', bytes }, 'CONSIDERED OUTPUT');
+    const tight = tightenSendParts(prepared.parts);
+    const text = tight.filter((part): part is string => typeof part === 'string').join('\n');
     expect(prepared.delivery).toBe('native');
-    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('');
-    const media = prepared.parts.filter((part) => typeof part !== 'string');
+    expect(text).toContain(marker);
+    expect(text).toContain('<p>card</p>');
     expect(text).not.toMatch(/truncated at/);
-    expect(text.length).toBeLessThan(4_000);
-    expect(media).toHaveLength(1);
-    expect(media[0]).toMatchObject({ kind: 'inline', mime: 'text/html' });
     expect(text).toMatch(/no screenshot/i);
-    expect(text).toMatch(/Answer visual, canvas, WebGL, three\.js, animation, and gameplay statements No/i);
-    expect(text).not.toMatch(/check the source for them/i);
-    expect(text).not.toMatch(/Judge visual statements from the source only/i);
+    expect(tight.filter((part) => typeof part === 'string').every((part) => part.length <= SEND_TEXT_CHARS)).toBe(true);
+    expect(tight.some((part) => typeof part !== 'string' && 'mime' in part && part.mime === 'text/html')).toBe(false);
   });
 
   it('sends SVG as markup, not as a native image', async () => {
@@ -85,6 +85,20 @@ describe('prepareFile edge cases', () => {
     const prepared = await prepareFile({ id: 's', name: 'mark.svg', mime: 'image/svg+xml', bytes: svg }, 'CONSIDERED OUTPUT');
     expect(prepared.delivery).toBe('text_digest');
     expect(prepared.parts.join('')).toContain('<svg');
+  });
+
+  it('keeps a CSS rule past the 12k clip when the stylesheet lives inside a site zip', async () => {
+    const marker = '.btn-primary-blue:hover{transform:none}';
+    const css = `${'body{margin:0}'.repeat(2_000)}\n${marker}`;
+    expect(css.length).toBeGreaterThan(12_000);
+    const zip = new JSZip();
+    zip.file('index.html', '<!DOCTYPE html><html><link rel="stylesheet" href="styles.css"></html>');
+    zip.file('styles.css', css);
+    const bytes = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+    const prepared = await prepareFile({ id: 'z', name: 'index.zip', mime: 'application/zip', bytes }, 'CONSIDERED OUTPUT');
+    const text = tightenSendParts(prepared.parts).filter((part): part is string => typeof part === 'string').join('\n');
+    expect(text).toContain(marker);
+    expect(text).not.toMatch(/styles\.css[\s\S]{0,200}NOT ATTACHED/);
   });
 
   it('opens a site zip and attaches the CSS and JS inside so the grader can read them', async () => {
@@ -99,6 +113,7 @@ describe('prepareFile edge cases', () => {
     expect(prepared.delivery).toBe('archive');
     expect(text).toContain('@media (min-width: 769px)');
     expect(text).toContain('document.body.dataset.ready');
+    expect(tightenSendParts(prepared.parts).filter((part): part is string => typeof part === 'string').join('\n')).toContain('@media (min-width: 769px)');
     expect(text).toContain('JakartaSans.woff2');
     expect(text).not.toMatch(/style\.css[\s\S]{0,200}NOT ATTACHED/);
     expect(text).not.toMatch(/app\.js[\s\S]{0,200}NOT ATTACHED/);
@@ -117,9 +132,10 @@ describe('prepareFile edge cases', () => {
     const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
     const media = prepared.parts.filter((part) => typeof part !== 'string');
     expect(prepared.delivery).toBe('archive');
-    expect(text).toMatch(/index\.html[\s\S]*HTML attached in full/);
+    expect(text).toMatch(/index\.html/);
+    expect(text).toContain('<body data-menu="stackd"></body>');
     expect(text).toContain('Classic Stack');
-    expect(media.some((part) => 'mime' in part && part.mime === 'text/html' && part.kind === 'uri')).toBe(true);
+    expect(media.some((part) => typeof part !== 'string' && 'mime' in part && part.mime === 'text/html')).toBe(false);
     expect(media.filter((part) => typeof part !== 'string' && 'kind' in part && part.kind === 'inline')).toHaveLength(0);
     expect(text).not.toMatch(/further file\(s\) in the archive were not attached/);
     expect(text).not.toMatch(/index\.html[\s\S]{0,200}NOT ATTACHED/);

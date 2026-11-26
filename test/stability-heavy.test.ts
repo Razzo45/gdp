@@ -97,7 +97,7 @@ describe('b290-sized zip Stability', () => {
     expect(B290_ZIP.size).toBeGreaterThan(ARCHIVE_STAGE_BYTES);
   });
 
-  it('stages HTML from a small site zip instead of inlining it in the grade body', async () => {
+  it('puts HTML from a small site zip in the grade body as text, not a Files API object', async () => {
     stagedParts.calls = [];
     const zip = new JSZip();
     zip.file('index.html', '<!DOCTYPE html><html><body><h1>Delmarva</h1></body></html>');
@@ -106,24 +106,24 @@ describe('b290-sized zip Stability', () => {
     expect(bytes.byteLength).toBeLessThan(ARCHIVE_STAGE_BYTES);
     const prepared = await prepareFile({ id: 'z', name: 'index.zip', mime: 'application/zip', bytes }, 'CONSIDERED OUTPUT');
     const inspect = inspectSendParts(prepared.parts);
+    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
     expect(prepared.delivery).toBe('archive');
+    expect(text).toContain('<h1>Delmarva</h1>');
     expect(inspect.inline).toBe(0);
-    expect(inspect.uris).toBeGreaterThan(0);
-    expect(stagedParts.calls.some((call) => call.name.includes('index.html') && call.stage === true)).toBe(true);
+    expect(stagedParts.calls.some((call) => call.mime === 'text/html')).toBe(false);
   });
 
-  it('stages HTML from a fat site zip instead of inlining it in the grade body', async () => {
+  it('puts HTML from a fat site zip in the grade body as text, not a Files API object', async () => {
     stagedParts.calls = [];
     const bytes = await fatSiteZip();
     expect(bytes.byteLength).toBeGreaterThanOrEqual(ARCHIVE_STAGE_BYTES);
     const prepared = await prepareFile({ id: 'z', name: 'maison-ai-output.zip', mime: 'application/zip', bytes }, 'CONSIDERED OUTPUT');
-    const media = prepared.parts.filter((part): part is { kind: 'uri' | 'inline'; mime: string; data: string; label: string } => typeof part !== 'string');
     const inspect = inspectSendParts(prepared.parts);
+    const text = prepared.parts.filter((part): part is string => typeof part === 'string').join('\n');
     expect(prepared.delivery).toBe('archive');
+    expect(text).toContain('<h1>Maison</h1>');
     expect(inspect.inline).toBe(0);
-    expect(inspect.uris).toBeGreaterThan(0);
-    expect(media.every((part) => part.kind === 'uri')).toBe(true);
-    expect(stagedParts.calls.some((call) => call.name.includes('index.html') && call.stage === true)).toBe(true);
+    expect(stagedParts.calls.some((call) => call.mime === 'text/html')).toBe(false);
   });
 });
 
