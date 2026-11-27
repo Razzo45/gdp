@@ -81,7 +81,8 @@ export function shareFields(
   const seen = new Set(visible.map((field) => field.key));
   const missing = ACCEPTANCE_SHARE_FIELDS.flatMap((field) => {
     if (seen.has(field.key)) return [];
-    const text = typeof values?.[field.key] === 'string' ? values[field.key].trim() : '';
+    const raw = values?.[field.key];
+    const text = typeof raw === 'string' ? raw.trim() : '';
     if (!text) return [];
     return [{ key: field.key, label: field.label, text }];
   });
