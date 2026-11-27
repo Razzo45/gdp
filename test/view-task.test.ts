@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogViewTask, withCatalogViewTask } from '@/lib/catalog/export';
-import { briefVisibleFields, shareTaskText, shareVisibleFields } from '@/domain/sharePack';
+import { briefVisibleFields, shareFields, shareTaskText, shareVisibleFields } from '@/domain/sharePack';
 import { viewTaskHref, viewTaskToken, viewTaskTokenMatches } from '@/domain/viewTask';
 
 describe('viewTask link', () => {
@@ -63,7 +63,7 @@ describe('share task text', () => {
 });
 
 describe('share visible fields', () => {
-  it('drops the task brief (already the page title and Task section), plus expert review, acceptance criteria, preview and notes', () => {
+  it('drops the task brief, expert review, preview and notes, and keeps acceptance criteria', () => {
     const kept = shareVisibleFields([
       { key: 'task', label: 'Task', text: 'Deliverable: One editable 18-slide PowerPoint presentation.' },
       { key: 'prompt', label: 'Prompt', text: 'Make a deck.' },
@@ -71,9 +71,31 @@ describe('share visible fields', () => {
       { key: 'expertReview', label: 'Expert Review', text: 'Question 1: Answer: Yes' },
       { key: 'previewImage', label: 'Preview image', text: '[file: shot.png]' },
       { key: 'acceptanceCriteria', label: 'Acceptance criteria', text: 'Does the finished video…' },
+      { key: 'creatorAcceptanceCriteria', label: 'Additional acceptance criteria', text: 'Logo stays in the safe area.' },
       { key: 'notes', label: 'Notes', text: 'These two have a partial redundancy.' },
     ]);
-    expect(kept.map((f) => f.key)).toEqual(['generalInformation']);
+    expect(kept.map((f) => f.key)).toEqual(['generalInformation', 'acceptanceCriteria', 'creatorAcceptanceCriteria']);
+  });
+});
+
+describe('share fields', () => {
+  it('shows acceptance criteria from the raw values when the catalog status hid them', () => {
+    const fields = shareFields(
+      [{ key: 'creatorAcceptanceCriteria', label: 'Additional acceptance criteria', text: 'Logo stays in the safe area.' }],
+      { acceptanceCriteria: 'Does the deck include every section?', creatorAcceptanceCriteria: 'Logo stays in the safe area.' },
+    );
+    expect(fields.map((field) => field.key)).toEqual(['acceptanceCriteria', 'creatorAcceptanceCriteria']);
+    expect(fields[0]).toEqual({
+      key: 'acceptanceCriteria',
+      label: 'Acceptance criteria',
+      text: 'Does the deck include every section?',
+    });
+  });
+
+  it('shows both criteria when the status hid both, and skips an empty one', () => {
+    expect(
+      shareFields([], { acceptanceCriteria: '  ', creatorAcceptanceCriteria: 'Keep the contact line.' }).map((field) => field.text),
+    ).toEqual(['Keep the contact line.']);
   });
 });
 
